@@ -32,3 +32,13 @@ impl Item {
             .await
     }
 }
+
+pub async fn get_item_by_name(universe_id: ObjectId, item_name: &str) -> mongodb::error::Result<Option<Item>> {
+    let db_client = get_db_client().await;
+    let filter = doc! {"_id": universe_id, "name": item_name};
+    db_client
+        .database(VERSEENGINE_DB_NAME)
+        .collection::<Item>(ITEM_COLLECTION_NAME)
+        .find_one(filter)
+        .await
+}

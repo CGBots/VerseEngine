@@ -10,14 +10,14 @@ use crate::item::ItemUsage;
 use crate::tr;
 use crate::utility::reply::reply;
 
-#[poise::command(slash_command, guild_only, required_permissions= "ADMINISTRATOR")]
+#[poise::command(slash_command, guild_only, required_permissions= "ADMINISTRATOR", rename="item_create")]
 pub async fn create(
     ctx: Context<'_>,
     name: String,
     usage: ItemUsage,
     into_wiki: bool,
     image: Option<Attachment>,
-    description: Option<String>,
+    item_description: Option<String>,
     secret_informations: Option<String>,
 ) -> Result<(), Error> {
     let url = match image{
@@ -33,7 +33,7 @@ pub async fn create(
         item_name: name.clone(),
         item_usage: usage.clone(),
         effects: vec![],
-        description: description.clone(),
+        description: item_description.clone(),
         image: url.clone(),
         wiki_post_id: None,
         secret_informations: secret_informations
@@ -46,7 +46,7 @@ pub async fn create(
 
     let embed = CreateEmbed::new()
         .title(name.clone())
-        .description(description.clone().unwrap_or("".to_string()))
+        .description(item_description.clone().unwrap_or("".to_string()))
         .field(tr!(ctx.clone(), "item_usage_title"), tr!(ctx.clone(), usage.name()), true)
         .colour(Colour::from_rgb(25, 125, 255))
         .thumbnail(url.clone().unwrap_or("".to_string()));

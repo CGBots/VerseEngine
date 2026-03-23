@@ -18,10 +18,77 @@ start_message = Start Message
     Dans un setup partiel, seule la catégorie route et les rôles seront créés.
     Dans un setup complet, les catégories Admin, hors rp, rp et leurs selons sont également créés en plus.
 
+#Tables de loot
+loot_table = loot_table
+    .description = Gérer les tables de butin
+loot_table_edit = modifier
+    .description = Créer ou modifier une table de butin pour un salon
+    .channel_id = id_salon
+    .channel_id-description = ID du salon (Catégorie de lieu, salon de route, ou sous-salon de lieu)
+loot_table__modal_title = Éditeur de table de butin
+loot_table__modal_field_name = Contenu de la table de butin
+loot_table__modal_placeholder = # Guide de syntaxe des Tables de Butin
+    - Les Tables de butins peuvent contenir deux types d'éléments. Les **items** et les **sets**.
+    ## Items
+    ```
+    ­[nom de l'item]:[probabilité en %], [intervalle min-max], stock:[nombre], secret
+    ```
+    - Le nom des items sert à identifier les objets et est sensible à la casse.
+    - La probabilité de chaque item est **absolue** et donnée en % de façon implicite (inutile de préciser %): `40`
+    - Chaque ligne de la table de butin a une chance d'être tirée indépendamment des autres. La somme des probabilités peut donc être supérieure à 100%.
+    - Lorsqu'un item looté a un intervalle, le nombre d'items obtenus correspond à un nombre aléatoire est choisi dans cet intervalle.
+    - L'intervalle `min-max` peut être remplacé par un chiffre unique si min et max sont identiques: `2-2` devient `2`
+    - __Facultatif__ : Si le butin est en quantité limitée, le paramètre stock peut être indiqué: `stock:10`
+    - __Facultatif__ : Le mot-clé `secret` peut être utilisé pour que l'item n'apparaisse pas dans les tables de butin dans le wiki.
+    - Si un stock tombe à 0, les items sont supprimés de la table et un message est envoyé dans le salon de logs.
+    ~~-----------------------------------------------------------------~~
+    ## Sets
+    ```
+    ­[nom du set]:[probabilité en %], [min-max], stock:[nombre] , secret
+    - [nom de l'item]:[poids], [min-max], stock:[nombre], secret
+    - ...
+    ```
+    - La déclaration du set est identique à celle d'un item.
+    - Le nom des sets est purement technique et ne sera pas affiché dans les wiki.
+    - Les sets contiennent une liste d'items.
+    - Les items des sets ont la même syntaxe que les items seuls.
+    - Les items des sets sont **exclusifs** entre eux.
+    - La probabilité des éléments des sets est **relative** au total.
+    - Si un intervalle est défini pour le set, les items sont piochés indépendamment dans le set autant de fois que le nombre aléatoire tiré dans l'intervalle.
+    - Chaque item d'un set peut posséder son propre stock.
+    - Le set peut posséder son propre stock. Si le stock du set tombe à 0, le set est supprimé même si des items du set ont encore du stock.
+    - Chaque item du set est distingué des autres items seuls de la table de butin par un '-' au début.
+    ~~-----------------------------------------------------------------~~
+    Exemple en pratique :
+    ```
+    or: 40, 5-20
+    epee legendaire: 5, 1, stock:1, secret
+
+    armure_chevalier: 20, 1-5, stock:5
+    - plastron: 5, 1,  stock:4
+    - jambiere: 5, 1-2
+    - gantelet: 5, 1-2 stock:6
+    - grimoire: 1, 1, secret
+    - chevalière: 1, 1, stock:1, secret
+    ```
+    Notes:
+    - L'intervalle du set 1-5 indique que jusqu'à 5 items du set peuvent être piochés de façon indépendante.
+    - Le stock du set (5) est inférieur au stock total du set (4+6+1 = 11). Cela implique que le set sera probablement détruit avant l'écoulement des stocks des items.
+    - La somme des poids est de 5+5+5+1+1 = 17. Cela signifie que les `plastron`, `jambière` et `gantelet` ont une chance de 5/17 d'être piochés, tandis que le `grimoire` et la `chevalière` ont une chance de 1/17 d'être piochés.
+    - Si la chevalière est piochée, son stock arrivera à 0. Donc la somme des poids est alors de 16, ce qui chanque les probabilités: 5/16 pour les `plastron`, `jambière` et `gantelet`, et 1/16 pour le `grimoire`.
+
+loot_table__server_not_found = Serveur non trouvé
+loot_table__no_permission = Vous n'avez pas la permission de gérer les tables de butin
+loot_table__target_not_found = Cible invalide : doit être une catégorie de lieu, un salon de route ou un sous-salon de lieu
+loot_table__slash_only = Cette commande ne peut être utilisée que comme commande slash
+loot_table__success = Table de butin enregistrée avec succès
+loot_table__invalid_min_max = Plage de quantité invalide : {$min} à {$max}. Min doit être <= max.
+loot_table__invalid_item_name = Nom d'objet ou de set invalide : {$name}
+
 #Stats
 stat_insert__failed = Échec de l'insertion des statistiques
     .title = Ajout de la stat échouée
-    .description = La stat n'as pas pu être ajouté.
+    .description = La stat n'as pas pu être ajoutée.
 resolve_stat__character_not_found = Personnage non trouvé lors de la résolution de la stat
     .title = Erreur de statistique
     .message = Impossible de trouver le personnage pour calculer ses statistiques.
@@ -34,7 +101,7 @@ reply__reply_success = Succès
     .message = L'opération a été effectuée avec succès.
 reply__reply_failed = Échec de l'envoi de la réponse
     .title = Réponse échouée
-    .description = La réponse à échouée
+    .description = La réponse a échouée
 #Universe
 universe = univers
     .description = Commandes de gestion de l'univers.
@@ -110,19 +177,19 @@ id__nothing_to_delete = Rien à supprimer
 id__role_delete_success = Rôle supprimé avec succès
     .title = Suppression réussie
     .message = Le rôle a été supprimé avec succès
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 id__role_delete_failed = Échec de la suppression du rôle
     .title = Erreur de suppression
     .message = Impossible de supprimer le rôle
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 id__channel_delete_sucess = Salon supprimé avec succès
     .title = Suppression réussie
     .message = Le salon a été supprimé avec succès
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 id__channel_delete_failed = Échec de la suppression du salon
     .title = Erreur de suppression
     .message = Impossible de supprimer le salon
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 
 #Setup
 SetupType = SetupType
@@ -132,7 +199,7 @@ cancel_setup = Annuler
 continue_setup = Continuer 
 setup__continue_setup_message = Continuer la configuration ?
     .title = Continuer la configuration
-    .message = Voulez-vous continuer la configuration malgré un précédent setup ?  Les salon et rôles inexistants seront créés.
+    .message = Voulez-vous continuer la configuration malgré un précédent setup ?  Les salons et rôles inexistants seront créés.
 setup__server_already_setup_timeout = Délai de configuration dépassé
     .title = Délai dépassé
     .message = Le délai pour continuer la configuration a expiré
@@ -153,87 +220,87 @@ setup_server__success = Configuration réussie
 setup_server__failed = Échec de la configuration
     .title = Erreur
     .message = La configuration du serveur a échoué
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 setup__full_setup_success = Configuration complète réussie
     .title = Configuration terminée
     .message = La configuration complète du serveur a été effectuée avec succès
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 admin_category_name = Administration
     .title = Administration
     .message = Catégorie d'administration
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 setup__admin_category_not_created = Catégorie d'administration non créée
     .title = Erreur de création
     .message = Impossible de créer la catégorie d'administration
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 nrp_category_name = Hors RP
 setup__nrp_category_not_created = Catégorie Hors RP non créée
     .title = Erreur de création
     .message = Impossible de créer la catégorie Hors RP
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 rp_category_name = RP
 setup__rp_category_not_created = Catégorie RP non créée
     .title = Erreur de création
     .message = Impossible de créer la catégorie RP
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 setup__roles_setup_failed = Échec de la configuration des rôles
     .title = Erreur de configuration
     .message = La configuration des rôles a échoué
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 log_channel_name = Logs
 setup__log_channel_not_created = Salon de logs non créé
     .title = Erreur de création
     .message = Impossible de créer le salon de log
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 commands_channel_name = Commandes
 setup__commands_channel_not_created = Salon de commandes non créé
     .title = Erreur de création
     .message = Impossible de créer le salon de commandes
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 moderation_channel_name = Moderation
 setup__moderation_channel_not_created = Salon de modération non créé
     .title = Erreur de création
     .message = Impossible de créer le salon de modération
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 nrp_general_channel_name = General
 setup__nrp_general_channel_not_created = Salon général Hors RP non créé
     .title = Erreur de création
     .message = Impossible de créer le salon général Hors RP
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 rp_character_channel_name = Fiches personnages
 setup__rp_character_channel_not_created = Salon de fiches personnages non créé
     .title = Erreur de création
     .message = Impossible de créer le salon de fiches personnages
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 universal_time_channel_name = Temps universel
 setup__universal_time_channel_not_created = Salon de temps universel non créé
     .title = Erreur de création
     .message = Impossible de créer le salon de temps universel
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 rp_wiki_channel_name = Wiki
 setup__wiki_channel_not_created = Salon wiki non créé
     .title = Erreur de création
     .message = Impossible de créer le salon wiki
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 setup__rollback_failed = Échec de l'annulation des modifications
     .title = Erreur d'annulation
     .message = Impossible d'annuler les modifications effectuées
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 setup__channel_setup_failed = Échec de la configuration des salons
     .title = Erreur de configuration
     .message = La configuration des salons a échoué
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 guild_only = Commande réservée aux serveurs.
 admin_role_name = Administrateur
 setup__admin_role_not_created = Rôle Administrateur non créé
     .title = Erreur de création
     .message = Impossible de créer le rôle Administrateur
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 moderator_role_name = Modérateur
 setup__moderator_role_not_created = Rôle Modérateur non créé
     .title = Erreur de création
     .message = Impossible de créer le rôle Modérateur
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support}
 spectator_role_name = Spectateur
 setup__spectator_role_not_created = Rôle Spectateur non créé
     .title = Erreur de création
@@ -512,6 +579,23 @@ time__noon = **_Il est midi. Le soleil est au zénith._**
 time__sunset = **_Le soleil se couche, les ombres s'allongent._**
 
 #Create Item
+item = item
+    .description = Groupe de commandes concernant les items.
+item_create= creer
+    .description = Permet de créer un nouvel item
+    .name = nom
+    .name-description = Nom de l'objet. Il est unique et servira d'identifiant pour les butins.
+    .usage = usage
+    .usage-description = Type d'usage de l'objet.
+    .into_wiki = wiki
+    .into_wiki-description = Indique s'il faut ajouter l'objet au wiki.
+    .image = illustation
+    .image-description = Illustration qui sera affiché pour donner un visuel à l'item.
+    .item_description = description
+    .item_description-description = Description de l'item.
+    .secret_informations = informations_secretes
+    .secret_informations-description = Permet de donner des informations secrètes en plus aux joueurs. Il ne sera pas affiché dans le wiki.
+
 item_usage_title = Type d'usage
 ItemUsage = ItemUsage
 Consumable = Consommable

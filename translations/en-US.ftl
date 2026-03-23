@@ -18,6 +18,71 @@ start_message = Start Message
             In a partial setup, only the road category and roles will be created.
             In a full setup, the Admin, out of rp, rp categories and their channels are also created.
 
+#Loot tables
+loot_table = loot_table
+    .description = Manage loot tables
+loot_table_edit = edit
+    .description = Create or edit a loot table for a channel
+    .channel_id = channel_id
+    .channel_id-description = Channel ID (Place category, Road channel, or Place's sub-channel)
+loot_table__modal_title = Loot Table Editor
+loot_table__modal_field_name = Loot Table Content
+loot_table__modal_placeholder = # Loot Table Syntax Guide
+    - Loot Tables can contain two types of elements: **items** and **sets**.
+    - The probability of each line is **absolute** (except in sets) and given in % implicitly (no need to specify %): `40`
+    - Each line of the loot table has a chance to be drawn independently of the others. The sum of probabilities can therefore exceed 100%.
+    - The `min-max` range can be replaced by a single number if min and max are identical: `2-2` becomes `2`
+    - __Optional__: If the loot is in limited quantity, the stock parameter can be indicated: `stock:10`
+    - __Optional__: The `secret` keyword can be used so that the item does not appear in loot tables in the wiki.
+    - If a stock drops to 0, items are removed from the table and a message is sent to the logs channel.
+    ## Items
+    - Item names are used to identify objects and are case-sensitive.
+    Example template for an item:
+    ```
+    ­[item name]:[probability in %], [min-max range], stock:[number], secret
+    ```
+    ## Sets
+    - Contain a list of items.
+    - Set names are purely technical and will not be displayed in the wiki.
+    - Set elements are **mutually exclusive**.
+    - The probability of set elements is **relative** to the total.
+    - Set elements have the same syntax as objects.
+    - If a range is defined for the set, items are drawn independently as many times as the random number drawn in the range.
+    - A stock can be defined for each item independently of the set. If the set's stock drops to 0, it is deleted, even if there were items in stock in that set.
+    - Each set element is distinguished from other loot table objects by a '-' at the beginning.
+    Example template for a set:
+    ```
+    ­[set name]:[probability in %], [min-max], stock:[number], secret
+    - [item name]:[probability in %], [min-max], stock:[number], secret
+    - ...
+    ```
+    Practical example:
+    ```
+    gold: 40, 5-20
+    legendary_sword: 5, 1, stock:1, secret
+
+    knight_armor: 20, 1-5, stock:5
+    - breastplate: 5, 1,  stock:4
+    - greaves: 5, 1-2
+    - gauntlets: 5, 1-2 stock:6
+    - grimoire: 1, 1, secret
+    - signet_ring: 1, 1, stock:1, secret
+    ```
+    Notes:
+    - The set range 1-5 indicates that up to 5 elements of the set can be drawn independently.
+    - For each draw in the set, it is possible to draw multiple items according to the ranges.
+    - The set stock (5) is lower than the total set stock (4+6+1 = 11). This implies that the set will probably be destroyed before the item stocks are depleted.
+    - The sum of relative probabilities is 5+5+5+1+1 = 17. This means that breastplate, greaves and gauntlets have a 5/17 chance of being drawn, while grimoire and signet_ring have a 1/17 chance of being drawn.
+
+
+loot_table__server_not_found = Server not found
+loot_table__no_permission = You do not have permission to manage loot tables
+loot_table__target_not_found = Invalid target: must be a place category, a road channel, or a place sub-channel
+loot_table__slash_only = This command can only be used as a slash command
+loot_table__success = Loot table saved successfully
+loot_table__invalid_min_max = Invalid quantity range: {$min} to {$max}. Min must be <= max.
+loot_table__invalid_item_name = Invalid item or set name: {$name}
+
 #Stats
 stat_insert__failed = Failed to insert statistics
     .title = Failed to add stat
@@ -511,6 +576,22 @@ time__noon = **_It is noon. The sun is at its zenith._**
 time__sunset = **_The sun sets, the shadows grow longer._**
 
 #Create Item
+item = item
+    .description = Manage items
+item-create = create
+    .description = Create a new item
+    .name = name
+    .name-description = Item name
+    .usage = usage
+    .usage-description = Item usage type
+    .into_wiki = into_wiki
+    .into_wiki-description = Whether to add the item to the wiki
+    .image = image
+    .image-description = Item image
+    .description = description
+    .description-description = Item description
+    .secret_informations = secret_informations
+    .secret_informations-description = Secret information only visible to owners
 item_usage_title = Usage type
 ItemUsage = ItemUsage
 Consumable = Consumable
