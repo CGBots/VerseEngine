@@ -29,51 +29,53 @@ loot_table__modal_title = Loot Table Editor
 loot_table__modal_field_name = Loot Table Content
 loot_table__modal_placeholder = # Loot Table Syntax Guide
     - Loot Tables can contain two types of elements: **items** and **sets**.
-    - The probability of each line is **absolute** (except in sets) and given in % implicitly (no need to specify %): `40`
-    - Each line of the loot table has a chance to be drawn independently of the others. The sum of probabilities can therefore exceed 100%.
-    - The `min-max` range can be replaced by a single number if min and max are identical: `2-2` becomes `2`
-    - __Optional__: If the loot is in limited quantity, the stock parameter can be indicated: `stock:10`
-    - __Optional__: The `secret` keyword can be used so that the item does not appear in loot tables in the wiki.
-    - If a stock drops to 0, items are removed from the table and a message is sent to the logs channel.
     ## Items
-    - Item names are used to identify objects and are case-sensitive.
-    Example template for an item:
     ```
     ­[item name]:[probability in %], [min-max range], stock:[number], secret
     ```
+    - Item names are used to identify objects and are case-sensitive.
+    - The probability of each item is **absolute** and given in % implicitly (no need to specify %): `40`
+    - Each line in the loot table has a chance to be rolled independently of others. The sum of probabilities can therefore exceed 100%.
+    - When a looted item has a range, the number of items obtained corresponds to a random number chosen within that range.
+    - The `min-max` range can be replaced by a single number if min and max are identical: `2-2` becomes `2`
+    - __Optional__: If the loot is in limited quantity, the stock parameter can be specified: `stock:10`
+    - __Optional__: The `secret` keyword can be used so that the item does not appear in loot tables in the wiki.
+    - If a stock drops to 0, items are removed from the table and a message is sent to the log channel.
+    ~~-----------------------------------------------------------------~~
     ## Sets
-    - Contain a list of items.
-    - Set names are purely technical and will not be displayed in the wiki.
-    - Set elements are **mutually exclusive**.
-    - The probability of set elements is **relative** to the total.
-    - Set elements have the same syntax as objects.
-    - If a range is defined for the set, items are drawn independently as many times as the random number drawn in the range.
-    - A stock can be defined for each item independently of the set. If the set's stock drops to 0, it is deleted, even if there were items in stock in that set.
-    - Each set element is distinguished from other loot table objects by a '-' at the beginning.
-    Example template for a set:
     ```
     ­[set name]:[probability in %], [min-max], stock:[number], secret
-    - [item name]:[probability in %], [min-max], stock:[number], secret
+    - [item name]:[weight], [min-max], stock:[number], secret
     - ...
     ```
+    - The set declaration is identical to that of an item.
+    - Set names are purely technical and will not be displayed in the wiki.
+    - Sets contain a list of items.
+    - Items in sets have the same syntax as standalone items.
+    - Items in sets are **mutually exclusive**.
+    - The probability of set elements is **relative** to the total.
+    - If a range is defined for the set, items are drawn independently from the set as many times as the random number drawn from the range.
+    - Each item in a set can have its own stock.
+    - The set can have its own stock. If the set's stock drops to 0, the set is removed even if items in the set still have stock.
+    - Each item in the set is distinguished from other standalone items in the loot table by a '-' at the beginning.
+    ~~-----------------------------------------------------------------~~
     Practical example:
     ```
     gold: 40, 5-20
-    legendary_sword: 5, 1, stock:1, secret
+    legendary sword: 5, 1, stock:1, secret
 
     knight_armor: 20, 1-5, stock:5
-    - breastplate: 5, 1,  stock:4
+    - breastplate: 5, 1, stock:4
     - greaves: 5, 1-2
-    - gauntlets: 5, 1-2 stock:6
+    - gauntlet: 5, 1-2 stock:6
     - grimoire: 1, 1, secret
-    - signet_ring: 1, 1, stock:1, secret
+    - signet ring: 1, 1, stock:1, secret
     ```
     Notes:
-    - The set range 1-5 indicates that up to 5 elements of the set can be drawn independently.
-    - For each draw in the set, it is possible to draw multiple items according to the ranges.
-    - The set stock (5) is lower than the total set stock (4+6+1 = 11). This implies that the set will probably be destroyed before the item stocks are depleted.
-    - The sum of relative probabilities is 5+5+5+1+1 = 17. This means that breastplate, greaves and gauntlets have a 5/17 chance of being drawn, while grimoire and signet_ring have a 1/17 chance of being drawn.
-
+    - The set's 1-5 range indicates that up to 5 items from the set can be drawn independently.
+    - The set's stock (5) is lower than the total stock of the set (4+6+1 = 11). This implies that the set will probably be destroyed before the items' stocks are depleted.
+    - The sum of weights is 5+5+5+1+1 = 17. This means that the `breastplate`, `greaves`, and `gauntlet` have a 5/17 chance of being drawn, while the `grimoire` and `signet ring` have a 1/17 chance of being drawn.
+    - If the signet ring is drawn, its stock will reach 0. So the sum of weights becomes 16, which changes the probabilities: 5/16 for the `breastplate`, `greaves`, and `gauntlet`, and 1/16 for the `grimoire`.
 
 loot_table__server_not_found = Server not found
 loot_table__no_permission = You do not have permission to manage loot tables
