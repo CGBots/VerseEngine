@@ -8,7 +8,9 @@ use crate::discord::channels::{ITEM_TAG, PLACE_TAG};
 use crate::discord::poise_structs::{Context, Error};
 use crate::item::ItemUsage;
 use crate::tr;
-use crate::utility::reply::reply;
+use crate::utility::reply::{reply, reply_with_args};
+use crate::utility::loot_table_parser::VALID_NAME_RE;
+use fluent::FluentArgs;
 
 #[poise::command(slash_command, guild_only, required_permissions= "ADMINISTRATOR", rename="item_create")]
 pub async fn create(
@@ -20,6 +22,13 @@ pub async fn create(
     item_description: Option<String>,
     secret_informations: Option<String>,
 ) -> Result<(), Error> {
+    if !VALID_NAME_RE.is_match(&name) {
+        let mut args = FluentArgs::new();
+        args.set("name", name);
+        let _ = reply_with_args(ctx, Err("create_item__invalid_name".into()), Some(args)).await;
+        return Ok(());
+    }
+
     let url = match image{
         None => {None}
         Some(image) => {Some(image.url)}

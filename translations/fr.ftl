@@ -18,7 +18,7 @@ start_message = Start Message
     Dans un setup partiel, seule la catégorie route et les rôles seront créés.
     Dans un setup complet, les catégories Admin, hors rp, rp et leurs selons sont également créés en plus.
 
-#Tables de loot
+#Tables de loot_table
 loot_table = loot_table
     .description = Gérer les tables de butin
 loot_table_edit = modifier
@@ -78,17 +78,76 @@ loot_table__modal_placeholder = # Guide de syntaxe des Tables de Butin
     - Si la chevalière est piochée, son stock arrivera à 0. Donc la somme des poids est alors de 16, ce qui chanque les probabilités: 5/16 pour les `plastron`, `jambière` et `gantelet`, et 1/16 pour le `grimoire`.
 
 loot_table__server_not_found = Serveur non trouvé
-loot_table__no_permission = Vous n'avez pas la permission de gérer les tables de butin
-loot_table__target_not_found = Cible invalide : doit être une catégorie de lieu, un salon de route ou un sous-salon de lieu
-loot_table__slash_only = Cette commande ne peut être utilisée que comme commande slash
-loot_table__success = Table de butin enregistrée avec succès
-loot_table__invalid_min_max = Plage de quantité invalide : {$min} à {$max}. Min doit être <= max.
-loot_table__invalid_item_name = Nom d'objet ou de set invalide : {$name}
+    .title = Serveur non trouvé
+    .message = Le serveur n'as pas été trouvé.
+        Veuillez réessayer ou contacter le support si le problème persiste : {support}
+loot_table__no_permission = Permissions insuffisantes
+    .title = Permissions insuffisantes
+    .message = Vous n'avez pas la permission de gérer les tables de butin.
+loot_table__target_not_found = Cible inconnue
+    .title = Cible inconnue
+    .message = Cible invalide : doit être une catégorie de lieu, un salon de route ou un sous-salon de lieu
+loot_table__slash_only = Slash commande
+    .title = Slash commande
+    .message = Cette commande ne peut être utilisée que comme commande slash
+loot_table__success = Table de butin enregistrée
+    .title = Table de butin enregistrée
+    .message = Table de butin enregistrée avec succès
+loot_table__invalid_min_max = Plage invalide
+    .title = Plage invalide
+    .message = Plage de quantité invalide : {$min} à {$max}. Min doit être <= max.
+loot_table__invalid_item_name = Nom d'item invalide
+    .title = Nom d'item invalide.
+    .message = Nom d'objet ou de set invalide : {$name}
+loot_table__modified = Loot table modifiée
+    .title = Loot table modifiée
+    .message = La loot table à été modifiée avec succès.
+loot_table__not_in_guild = Pas une guilde
+    .title = Pas une guilde
+    .message = Cette commande doit être utilisée dans un serveur.
+loot_table__universe_not_found = Univers non trouvé
+    .title = Univers non trouvé
+    .message = L'univers associé à ce serveur n'a pas pu être trouvé.
+loot_table__character_not_found = Personnage non trouvé
+    .title = Personnage non trouvé
+    .message = Vous n'avez pas de personnage dans cet univers. Veuillez en créer un d'abord.
+loot_table__error_fetching_universe = Erreur lors de la récupération de l'univers
+    .title = Erreur de base de données
+    .message = Une erreur s'est produite lors de la récupération de l'univers : {$error}
+loot_table__error_fetching_character = Erreur lors de la récupération du personnage
+    .title = Erreur de base de données
+    .message = Une erreur s'est produite lors de la récupération de votre personnage : {$error}
+loot_table__error_fetching_channel_table = Erreur de table de butin du salon
+    .title = Erreur de base de données
+    .message = Une erreur s'est produite lors de la récupération de la table de butin du salon : {$error}
+loot_table__error_fetching_category_table = Erreur de table de butin de la catégorie
+    .title = Erreur de base de données
+    .message = Une erreur s'est produite lors de la récupération de la table de butin de la catégorie : {$error}
+loot_table__error_adding_inventory = Erreur d'inventaire
+    .title = Erreur de base de données
+    .message = Une erreur s'est produite lors de l'ajout des objets à votre inventaire : {$error}
+loot_table__setup_channel = Salon de configuration
+    .title = Salon de configuration
+    .message = Vous ne pouvez pas fouiller dans un salon de configuration.
+loot_table__no_loot_found = Rien trouvé
+    .title = Rien trouvé
+    .message = Vous avez fouillé partout, mais vous n'avez rien trouvé cette fois-ci.
+loot_table__loot_success = Fouille réussie
+    .title = Fouille réussie
+    .message = Vous avez trouvé des objets !
+               {$items}
+loot_table__deleted_log = La table de butin du salon <#{$channel_id}> a été supprimée car elle est désormais vide.
+loot_table__rate_limited = Temps de recharge
+    .title = Temps de recharge
+    .message = Vous devez attendre encore {$error} secondes avant de pouvoir fouiller à nouveau cette zone.
+create_item__invalid_name = Nom d'objet invalide
+    .title = Nom d'objet invalide
+    .message = Nom d'objet invalide : {$name}. Seuls les caractères alphanumériques, espaces, tirets et underscores sont autorisés.
 
 #Stats
 stat_insert__failed = Échec de l'insertion des statistiques
     .title = Ajout de la stat échouée
-    .description = La stat n'as pas pu être ajoutée.
+    .message = La stat n'as pas pu être ajoutée.
 resolve_stat__character_not_found = Personnage non trouvé lors de la résolution de la stat
     .title = Erreur de statistique
     .message = Impossible de trouver le personnage pour calculer ses statistiques.
@@ -101,7 +160,7 @@ reply__reply_success = Succès
     .message = L'opération a été effectuée avec succès.
 reply__reply_failed = Échec de l'envoi de la réponse
     .title = Réponse échouée
-    .description = La réponse a échouée
+    .message = La réponse a échouée
 #Universe
 universe = univers
     .description = Commandes de gestion de l'univers.
@@ -581,6 +640,10 @@ time__sunset = **_Le soleil se couche, les ombres s'allongent._**
 #Create Item
 item = item
     .description = Groupe de commandes concernant les items.
+item_lookup = regarder
+    .description = Affiche les détails d'un item possédé via son ID d'inventaire
+    .id = id
+    .id-description = L'ID de la ligne d'inventaire (reçu par DM)
 item_create= creer
     .description = Permet de créer un nouvel item
     .name = nom
@@ -603,3 +666,34 @@ Usable = Utilisable
 Wearable = Equipable
 Placeable = Plaçable
 None = Autre
+inventory__empty = Inventaire vide
+    .title = Inventaire vide
+    .message = Vous n'avez aucun objet dans votre inventaire.
+inventory__lookup_hint = Utilisez `/item lookup [id]` pour plus de précision.
+inventory__sent_dm = Inventaire envoyé
+    .title = Inventaire envoyé
+    .message = Votre inventaire vous a été envoyé en message privé.
+item__not_found = Objet non trouvé
+    .title = Objet non trouvé
+    .message = Aucun objet portant ce nom n'a été trouvé dans cet univers.
+item__not_found_in_inventory = Objet non trouvé dans l'inventaire
+    .title = Objet non trouvé dans l'inventaire
+    .message = Cet ID ne correspond à aucun objet que vous possédez actuellement.
+item__not_your_item = Pas votre objet
+    .title = Pas votre objet
+    .message = Cet objet ne vous appartient pas.
+item__invalid_id = ID invalide
+    .title = ID invalide
+    .message = L'ID d'inventaire fourni est invalide.
+item__no_search_criteria = Critères manquants
+    .title = Critères manquants
+    .message = Veuillez fournir un nom ou un ID pour la recherche.
+item__server_not_found = Serveur non trouvé
+    .title = Serveur non trouvé
+    .message = Le serveur n'a pas été trouvé.
+create_item__db_error = Erreur de base de données
+    .title = Erreur de création
+    .message = Une erreur s'est produite lors de la création de l'objet en base de données.
+item_db_error = Erreur de base de données
+    .title = Erreur de base de données
+    .message = Une erreur s'est produite lors de l'accès aux données des objets.

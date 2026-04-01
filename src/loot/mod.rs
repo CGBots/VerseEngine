@@ -1,0 +1,595 @@
+use crate::database::items::get_item_by_name;
+use crate::database::inventory::Inventory;
+use rand::RngExt;
+use crate::database::characters::get_character_by_user_id;
+use crate::database::loot_tables::{get_loot_table_by_channel_id, LootTable, LootTableEntry};
+use crate::database::server::get_server_by_id;
+use crate::database::universe::{get_universe_by_server_id, get_servers_from_universe};
+use crate::discord::poise_structs::{Context, Error};
+use crate::utility::reply::{reply_with_args, reply_with_args_and_ephemeral};
+use fluent::FluentArgs;
+use std::collections::HashMap;
+use serenity::all::ChannelId;
+use futures::TryStreamExt;
+
+#[poise::command(slash_command, guild_only, rename = "loot")]
+pub async fn loot(ctx: Context<'_>) -> Result<(), Error> {
+    let result = _loot(ctx).await;
+    match result {
+        Ok(args) => {
+            reply_with_args_and_ephemeral(ctx, Ok("loot_table__loot_success"), Some(args), true).await?;
+        }
+        Err(e) => {
+            let err_msg = e.to_string();
+            reply_with_args(ctx, Err(err_msg.into()), None).await?;
+        }
+    }
+    Ok(())
+}
+
+pub async fn _loot(ctx: Context<'_>) -> Result<FluentArgs<'_>, Error> {
+    // check for universe
+    // Check for character,
+    // check channel
+    // check loot tables (place and/or category or road)
+    // Roll through all loots.
+    // Save all loots to player => create if not exists, else, edit quantity
+
+    let Some(channel) = ctx.guild_channel().await else {return Err("loot_table__not_in_guild".into())}; //Channel n'est pas dans une guilde
+
+    let guild_id = ctx.guild_id().unwrap();
+    let user_id = ctx.author().id;
+
+    let universe_res = get_universe_by_server_id(guild_id.get()).await;
+    let universe = match universe_res {
+        Ok(Some(u)) => u,
+        Ok(None) => return Err("loot_table__universe_not_found".into()),
+        Err(e) => {
+            eprintln!("Error fetching universe for guild {}: {:?}", guild_id, e);
+            return Err(format!("error:loot_table__error_fetching_universe:{}", e).into());
+        }
+    };
+    let character_res = get_character_by_user_id(universe.universe_id, user_id.get()).await;
+    let character = match character_res {
+        Ok(Some(c)) => c,
+        Ok(None) => return Err("loot_table__character_not_found".into()),
+        Err(e) => {
+            eprintln!("Error fetching character for user {}: {:?}", user_id, e);
+            return Err(format!("error:loot_table__error_fetching_character:{}", e).into());
+        }
+    };
+
+    let channel_loot_table_res = get_loot_table_by_channel_id(universe.universe_id, channel.id.get()).await;
+    let channel_loot_table = match channel_loot_table_res {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Error fetching channel loot table for universe {} and channel {}: {:?}", universe.universe_id, channel.id, e);
+            return Err(format!("error:loot_table__error_fetching_channel_table:{}", e).into());
+        }
+    };
+
+    let category_loot_table = match channel.parent_id{
+        None => {None}
+        Some(category_id) => {
+            let Some(server) = get_server_by_id(guild_id.get()).await? else {return Err("loot_table__server_not_found".into())};
+            if server.contains_id(channel.id.get()){
+                return Err("loot_table__setup_channel".into()); //Channel corresponding to a setup channel.
+            }
+            let category_loot_table_res = get_loot_table_by_channel_id(universe.universe_id, category_id.get()).await;
+            match category_loot_table_res {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("Error fetching category loot table for universe {} and category {}: {:?}", universe.universe_id, category_id, e);
+                    return Err(format!("error:loot_table__error_fetching_category_table:{}", e).into());
+                }
+            }
+        }
+    };
+    let mut all_looted_items = Vec::new();
+
+    if let Some(mut channel_table) = channel_loot_table {
+        if let Some(limit) = channel_table.rate_limit {
+            if let Some(last_loots) = &channel_table.last_loot {
+                if let Some(last_loot_time) = last_loots.get(&character._id.to_string()) {
+                    let now = chrono::Utc::now();
+                    let elapsed = now.signed_duration_since(*last_loot_time).num_seconds() as u64;
+                    if elapsed < limit {
+                        return Err(format!("error:loot_table__rate_limited:{}", limit - elapsed).into());
+                    }
+                }
+            }
+        }
+
+        let (items, updated) = channel_table.roll();
+        if channel_table.entries.is_empty() {
+            channel_table.delete().await?;
+            
+            // Notification dans les logs de l'univers
+            let mut servers_cursor = get_servers_from_universe(&universe.universe_id).await?;
+            let mut log_args = FluentArgs::new();
+            log_args.set("channel_id", channel.id.get());
+            
+            while let Some(server) = servers_cursor.try_next().await? {
+                if let Some(log_channel_id) = server.log_channel_id {
+                    let _ = ChannelId::new(log_channel_id.id).send_message(&ctx, 
+                        serenity::all::CreateMessage::new().content(
+                            crate::translation::get(ctx, "loot_table__deleted_log", None, Some(&log_args))
+                        )
+                    ).await;
+                }
+            }
+        } else if updated || channel_table.rate_limit.is_some() {
+            if channel_table.rate_limit.is_some() {
+                let mut last_loots = channel_table.last_loot.unwrap_or_default();
+                last_loots.insert(character._id.to_string(), chrono::Utc::now());
+                channel_table.last_loot = Some(last_loots);
+            }
+            channel_table.save_or_update().await?;
+        }
+        all_looted_items.extend(items);
+    }
+
+    if let Some(mut category_table) = category_loot_table {
+        if let Some(limit) = category_table.rate_limit {
+            if let Some(last_loots) = &category_table.last_loot {
+                if let Some(last_loot_time) = last_loots.get(&character._id.to_string()) {
+                    let now = chrono::Utc::now();
+                    let elapsed = now.signed_duration_since(*last_loot_time).num_seconds() as u64;
+                    if elapsed < limit {
+                        // Si le canal a déjà donné du loot, on ne bloque pas forcément par la catégorie,
+                        // mais ici le comportement attendu est probablement de bloquer si l'un des deux est limité.
+                        // Cependant, si on a déjà looté sur le canal, on ne veut peut-être pas bloquer après coup.
+                        // Vu la structure, on vérifie avant de roll.
+                        if all_looted_items.is_empty() {
+                            return Err(format!("error:loot_table__rate_limited:{}", limit - elapsed).into());
+                        }
+                    }
+                }
+            }
+        }
+
+        let (items, updated) = category_table.roll();
+        if category_table.entries.is_empty() {
+            category_table.delete().await?;
+
+            // Notification dans les logs de l'univers
+            let mut servers_cursor = get_servers_from_universe(&universe.universe_id).await?;
+            let mut log_args = FluentArgs::new();
+            let category_id = channel.parent_id.unwrap().get();
+            log_args.set("channel_id", category_id);
+
+            while let Some(server) = servers_cursor.try_next().await? {
+                if let Some(log_channel_id) = server.log_channel_id {
+                    let _ = ChannelId::new(log_channel_id.id).send_message(&ctx,
+                        serenity::all::CreateMessage::new().content(
+                            crate::translation::get(ctx, "loot_table__deleted_log", None, Some(&log_args))
+                        )
+                    ).await;
+                }
+            }
+        } else if updated || category_table.rate_limit.is_some() {
+            if category_table.rate_limit.is_some() {
+                let mut last_loots = category_table.last_loot.unwrap_or_default();
+                last_loots.insert(character._id.to_string(), chrono::Utc::now());
+                category_table.last_loot = Some(last_loots);
+            }
+            category_table.save_or_update().await?;
+        }
+        all_looted_items.extend(items);
+    }
+
+    if all_looted_items.is_empty() {
+        return Err("loot_table__no_loot_found".into());
+    }
+
+    let mut item_counts = HashMap::new();
+    for item_name in all_looted_items {
+        *item_counts.entry(item_name).or_insert(0) += 1;
+    }
+
+    let mut item_list = String::new();
+    for (item_name, quantity) in item_counts {
+        let item_data_res = get_item_by_name(universe.universe_id, &item_name).await;
+        let item_data = match item_data_res {
+            Ok(Some(i)) => Some(i),
+            Ok(None) => None,
+            Err(e) => {
+                eprintln!("Error fetching item '{}' for universe {}: {:?}", item_name, universe.universe_id, e);
+                item_list.push_str(&format!("- {} (x{}) (Erreur de base de données: {})\n", item_name, quantity, e));
+                continue;
+            }
+        };
+
+        if let Some(item_data) = item_data {
+            if let Err(e) = Inventory::add_item(universe.universe_id, character._id, item_data._id, quantity).await {
+                eprintln!("Error adding item to inventory for character {}: {:?}", character._id, e);
+                return Err(format!("error:loot_table__error_adding_inventory:{}", e).into());
+            }
+            if quantity > 1 {
+                item_list.push_str(&format!("- {} (x{})\n", item_name, quantity));
+            } else {
+                item_list.push_str(&format!("- {}\n", item_name));
+            }
+        } else {
+            item_list.push_str(&format!("- {} (x{}) (Objet inexistant dans la base de données)\n", item_name, quantity));
+        }
+    }
+
+    let mut args = FluentArgs::new();
+    args.set("items", item_list);
+
+    Ok(args)
+}
+
+impl LootTable {
+    pub fn roll(&mut self) -> (Vec<String>, bool) {
+        let mut rng = rand::rng();
+        let mut rolled_items = Vec::new();
+        let mut updated = false;
+
+        for entry in self.entries.iter_mut() {
+            if entry.is_out_of_stock() {
+                continue;
+            }
+
+            match entry {
+                LootTableEntry::Item(item) => {
+                    if rng.random_range(0.0..100.0) <= item.probability {
+                        let quantity = rng.random_range(item.min..=item.max);
+                        for _ in 0..quantity {
+                            rolled_items.push(item.name.clone());
+                        }
+
+                        if item.decrement_stock() {
+                            updated = true;
+                        }
+                    }
+                }
+                LootTableEntry::Set(set) => {
+                    if rng.random_range(0.0..100.0) <= set.probability {
+                        let num_picks = rng.random_range(set.min..=set.max);
+
+                        for _ in 0..num_picks {
+                            let total_weight: f64 = set.items.iter()
+                                .filter(|i| !i.is_out_of_stock())
+                                .map(|i| i.probability)
+                                .sum();
+
+                            if total_weight > 0.0 {
+                                let mut weight_roll = rng.random_range(0.0..total_weight);
+                                if let Some(item) = set.items.iter_mut()
+                                    .filter(|i| !i.is_out_of_stock())
+                                    .find(|i| {
+                                        if weight_roll < i.probability {
+                                            true
+                                        } else {
+                                            weight_roll -= i.probability;
+                                            false
+                                        }
+                                    })
+                                {
+                                    let quantity = rng.random_range(item.min..=item.max);
+                                    for _ in 0..quantity {
+                                        rolled_items.push(item.name.clone());
+                                    }
+
+                                    if item.decrement_stock() {
+                                        updated = true;
+                                    }
+                                }
+                            }
+                        }
+
+                        let old_items_len = set.items.len();
+                        set.items.retain(|i| !i.is_out_of_stock());
+                        if set.items.len() != old_items_len {
+                            updated = true;
+                        }
+
+                        if set.decrement_stock() {
+                            updated = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        let old_len = self.entries.len();
+        self.entries.retain(|e| {
+            if e.is_out_of_stock() {
+                return false;
+            }
+            if let LootTableEntry::Set(s) = e {
+                if s.items.is_empty() {
+                    return false;
+                }
+            }
+            true
+        });
+        if self.entries.len() != old_len {
+            updated = true;
+        }
+
+        (rolled_items, updated)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mongodb::bson::oid::ObjectId;
+    use crate::database::loot_tables::{LootTable, LootTableEntry, LootTableItem, LootTableSet};
+
+    #[test]
+    fn test_roll_min_max_inclusive() {
+        // Test Item
+        for _ in 0..100 {
+            let mut found_item_1 = false;
+            let mut found_item_2 = false;
+            let mut table = LootTable {
+                _id: None,
+                universe_id: ObjectId::new(),
+                channel_id: 123,
+                entries: vec![LootTableEntry::Item(LootTableItem {
+                    name: "I".to_string(),
+                    probability: 100.0,
+                    min: 1,
+                    max: 2,
+                    stock: None,
+                    secret: false,
+                })],
+                raw_text: "".to_string(),
+                rate_limit: None,
+                last_loot: None,
+            };
+
+            for _ in 0..1000 {
+                let (items, _) = table.roll();
+                if items.len() == 1 { found_item_1 = true; }
+                if items.len() == 2 { found_item_2 = true; }
+                if found_item_1 && found_item_2 { break; }
+            }
+            assert!(found_item_1, "Item min (1) non tiré");
+            assert!(found_item_2, "Item max (2) non tiré");
+        }
+
+        // Test Set Picks
+        for _ in 0..100 {
+            let mut found_set_picks_1 = false;
+            let mut found_set_picks_2 = false;
+            let mut table = LootTable {
+                _id: None,
+                universe_id: ObjectId::new(),
+                channel_id: 123,
+                entries: vec![LootTableEntry::Set(LootTableSet {
+                    name: "S".to_string(),
+                    probability: 100.0,
+                    min: 1,
+                    max: 2,
+                    stock: None,
+                    items: vec![LootTableItem {
+                        name: "SI".to_string(),
+                        probability: 100.0,
+                        min: 1,
+                        max: 1,
+                        stock: None,
+                        secret: false,
+                    }],
+                    secret: false,
+                })],
+                raw_text: "".to_string(),
+                rate_limit: None,
+                last_loot: None,
+            };
+
+            for _ in 0..1000 {
+                let (items, _) = table.roll();
+                if items.len() == 1 { found_set_picks_1 = true; }
+                if items.len() == 2 { found_set_picks_2 = true; }
+                if found_set_picks_1 && found_set_picks_2 { break; }
+            }
+            assert!(found_set_picks_1, "Set picks min (1) non tiré");
+            assert!(found_set_picks_2, "Set picks max (2) non tiré");
+        }
+
+        // Test Set Item Qty
+        for _ in 0..100 {
+            let mut found_set_item_qty_1 = false;
+            let mut found_set_item_qty_2 = false;
+            let mut table = LootTable {
+                _id: None,
+                universe_id: ObjectId::new(),
+                channel_id: 123,
+                entries: vec![LootTableEntry::Set(LootTableSet {
+                    name: "S".to_string(),
+                    probability: 100.0,
+                    min: 1,
+                    max: 1,
+                    stock: None,
+                    items: vec![LootTableItem {
+                        name: "SI".to_string(),
+                        probability: 100.0,
+                        min: 1,
+                        max: 2,
+                        stock: None,
+                        secret: false,
+                    }],
+                    secret: false,
+                })],
+                raw_text: "".to_string(),
+                rate_limit: None,
+                last_loot: None,
+            };
+
+            for _ in 0..1000 {
+                let (items, _) = table.roll();
+                if items.len() == 1 { found_set_item_qty_1 = true; }
+                if items.len() == 2 { found_set_item_qty_2 = true; }
+                if found_set_item_qty_1 && found_set_item_qty_2 { break; }
+            }
+            assert!(found_set_item_qty_1, "Set item qty min (1) non tiré");
+            assert!(found_set_item_qty_2, "Set item qty max (2) non tiré");
+        }
+    }
+
+    #[test]
+    fn test_roll_item_no_stock() {
+        let mut table = LootTable {
+            _id: None,
+            universe_id: ObjectId::new(),
+            channel_id: 123,
+            entries: vec![LootTableEntry::Item(LootTableItem {
+                name: "Gold".to_string(),
+                probability: 100.0,
+                min: 10,
+                max: 10,
+                stock: None,
+                secret: false,
+            })],
+            raw_text: "".to_string(),
+            rate_limit: None,
+            last_loot: None,
+        };
+
+        let (items, updated) = table.roll();
+        assert_eq!(items.len(), 10);
+        assert_eq!(items[0], "Gold");
+        assert!(!updated); // No stock, so no update
+    }
+
+    #[test]
+    fn test_roll_item_with_stock() {
+        let mut table = LootTable {
+            _id: None,
+            universe_id: ObjectId::new(),
+            channel_id: 123,
+            entries: vec![LootTableEntry::Item(LootTableItem {
+                name: "Sword".to_string(),
+                probability: 100.0,
+                min: 1,
+                max: 1,
+                stock: Some(1),
+                secret: false,
+            })],
+            raw_text: "".to_string(),
+            rate_limit: None,
+            last_loot: None,
+        };
+
+        let (items, updated) = table.roll();
+        assert_eq!(items.len(), 1);
+        assert!(updated);
+        assert!(table.entries.is_empty()); // Stock reached 0, entry removed
+    }
+
+    #[test]
+    fn test_roll_set_weighted() {
+        let mut table = LootTable {
+            _id: None,
+            universe_id: ObjectId::new(),
+            channel_id: 123,
+            entries: vec![LootTableEntry::Set(LootTableSet {
+                name: "ArmorSet".to_string(),
+                probability: 100.0,
+                min: 2,
+                max: 2,
+                stock: None,
+                items: vec![
+                    LootTableItem {
+                        name: "Helmet".to_string(),
+                        probability: 1.0, // Weight 1
+                        min: 1,
+                        max: 1,
+                        stock: None,
+                        secret: false,
+                    },
+                    LootTableItem {
+                        name: "Boots".to_string(),
+                        probability: 99.0, // Weight 99
+                        min: 1,
+                        max: 1,
+                        stock: None,
+                        secret: false,
+                    },
+                ],
+                secret: false,
+            })],
+            raw_text: "".to_string(),
+            rate_limit: None,
+            last_loot: None,
+        };
+
+        let (items, _updated) = table.roll();
+        assert_eq!(items.len(), 2);
+        // Statistically, it's almost always Boots, but we can't be 100% sure in one run.
+        // But we check that it piocher exactly 2 items from the set as requested by min/max.
+    }
+
+    #[test]
+    fn test_roll_set_stock_depletion() {
+        let mut table = LootTable {
+            _id: None,
+            universe_id: ObjectId::new(),
+            channel_id: 123,
+            entries: vec![LootTableEntry::Set(LootTableSet {
+                name: "LimitedSet".to_string(),
+                probability: 100.0,
+                min: 1,
+                max: 1,
+                stock: Some(1),
+                items: vec![
+                    LootTableItem {
+                        name: "RareItem".to_string(),
+                        probability: 100.0,
+                        min: 1,
+                        max: 1,
+                        stock: None,
+                        secret: false,
+                    },
+                ],
+                secret: false,
+            })],
+            raw_text: "".to_string(),
+            rate_limit: None,
+            last_loot: None,
+        };
+
+        let (items, updated) = table.roll();
+        assert_eq!(items.len(), 1);
+        assert!(updated);
+        assert!(table.entries.is_empty()); // Set stock depleted
+    }
+
+    #[test]
+    fn test_roll_set_empty_items_depletion() {
+        let mut table = LootTable {
+            _id: None,
+            universe_id: ObjectId::new(),
+            channel_id: 123,
+            entries: vec![LootTableEntry::Set(LootTableSet {
+                name: "One-time Set".to_string(),
+                probability: 100.0,
+                min: 1,
+                max: 1,
+                stock: None,
+                items: vec![LootTableItem {
+                    name: "Unique Item".to_string(),
+                    probability: 100.0,
+                    min: 1,
+                    max: 1,
+                    stock: Some(1),
+                    secret: false,
+                }],
+                secret: false,
+            })],
+            raw_text: "".to_string(),
+            rate_limit: None,
+            last_loot: None,
+        };
+
+        let (items, updated) = table.roll();
+        assert_eq!(items.len(), 1);
+        assert!(updated);
+        assert!(table.entries.is_empty()); // Item stock reached 0 -> Set items empty -> Set removed
+    }
+}

@@ -7,7 +7,7 @@ use once_cell::sync::Lazy;
 use tokio::sync::{Mutex};
 use tokio::task::JoinHandle;
 use crate::database::travel::{PlayerMove, SpaceType};
-use crate::database::characters::Character;
+use crate::database::characters::get_character_by_user_id;
 use chrono::{Local, Timelike, Utc};
 use fluent::FluentArgs;
 use tokio::time::sleep;
@@ -137,7 +137,7 @@ fn move_process(delay: u64) -> JoinHandle<()> {
                             tokio::spawn(async move {
                                 let http_arc = http.clone();
                                 if let Ok(user) = http_arc.get_user(UserId::new(user_id)).await {
-                                    let character_name = if let Ok(Some(char)) = Character::get_character_by_user_id(universe_id, user_id).await {
+                                    let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
                                         char.name
                                     } else {
                                         let member_nick = http_arc.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
@@ -510,7 +510,7 @@ pub async fn setup(){
                             tokio::spawn(async move {
                                 let http_arc = http.clone();
                                 if let Ok(user) = http_arc.get_user(UserId::new(user_id)).await {
-                                    let character_name = if let Ok(Some(char)) = Character::get_character_by_user_id(universe_id, user_id).await {
+                                    let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
                                         char.name
                                     } else {
                                         let member_nick = http_arc.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
@@ -711,7 +711,7 @@ pub async fn add_travel(http: Arc<Http>, guild_id: u64, mut player_move: PlayerM
                              println!("[Invitation Debug] Found channel {} on road server {}. Creating invite.", target_channel.id, start_guild_id);
                              let url = get_or_create_invite(&http_arc, start_guild_id, target_channel.id).await;
                              
-                             let character_name = if let Ok(Some(char)) = Character::get_character_by_user_id(universe_id, user_id).await {
+                             let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
                                  char.name
                              } else {
                                  let member_nick = http_arc.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
@@ -754,7 +754,7 @@ pub async fn add_travel(http: Arc<Http>, guild_id: u64, mut player_move: PlayerM
                                 println!("[Invitation Debug] Found channel {} for destination {} on server {}. Creating invite.", target_channel.id, did, dest_guild_id);
                                 let url = get_or_create_invite(&http_arc, dest_guild_id, target_channel.id).await;
                                 
-                                let character_name = if let Ok(Some(char)) = Character::get_character_by_user_id(universe_id, user_id).await {
+                                let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
                                     char.name
                                 } else {
                                     let member_nick = http_arc.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
@@ -790,7 +790,7 @@ pub async fn add_travel(http: Arc<Http>, guild_id: u64, mut player_move: PlayerM
                 
         tokio::spawn(async move {
             if let Ok(user) = http_clone.get_user(UserId::new(user_id)).await {
-                let character_name = if let Ok(Some(char)) = Character::get_character_by_user_id(universe_id, user_id).await {
+                let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
                     char.name
                 } else {
                     let member_nick = http_clone.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());

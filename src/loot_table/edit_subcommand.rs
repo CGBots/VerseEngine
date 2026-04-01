@@ -13,6 +13,7 @@ use futures::TryStreamExt;
 pub async fn edit(
     ctx: Context<'_>,
     channel_id: ChannelId,
+    #[description = "Temps de recharge en secondes entre deux loots"] rate_limit: Option<u64>,
 ) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap();
     let server = get_server_by_id(guild_id.get()).await?.ok_or("loot_table__server_not_found")?;
@@ -36,12 +37,12 @@ pub async fn edit(
     }
 
     // 2. Est-ce un canal de route ?
-    if !is_valid_target && get_road_by_channel_id(server.universe_id, channel_id_u64).await?.is_some() {
+    else if get_road_by_channel_id(server.universe_id, channel_id_u64).await?.is_some() {
         is_valid_target = true;
     }
 
     // 3. Est-ce un salon dans une catégorie de lieu ?
-    if !is_valid_target {
+    else {
         if let Ok(Channel::Guild(guild_channel)) = ctx.serenity_context().http.get_channel(channel_id).await {
             if let Some(parent_id) = guild_channel.parent_id {
                 if get_place_by_category_id(server.universe_id, parent_id.get()).await?.is_some() {
@@ -56,7 +57,8 @@ pub async fn edit(
     }
 
     let existing_lt = get_loot_table_by_channel_id(server.universe_id, channel_id_u64).await?;
-    let default_content = existing_lt.map(|lt| lt.raw_text).unwrap_or_default();
+    let default_content = existing_lt.as_ref().map(|lt| lt.raw_text.clone()).unwrap_or_default();
+    let last_loot = existing_lt.and_then(|lt| lt.last_loot);
 
     let modal_result = match ctx {
         poise::Context::Application(app_ctx) => {
@@ -69,22 +71,18 @@ pub async fn edit(
         let entries = LootTableParser::parse(&modal_data.content, server.universe_id).await;
         match entries {
             Ok(entries) => {
-                // Save loot table
+                // Save loot_table table
                 let loot_table = LootTable {
                     _id: None,
                     universe_id: server.universe_id,
                     channel_id: channel_id_u64,
                     entries: entries.clone(),
                     raw_text: modal_data.content,
+                    rate_limit,
+                    last_loot,
                 };
                 loot_table.save_or_update().await?;
 
-                let servers = if let Ok(cursor) = server.get_other_servers().await {
-                    cursor.try_collect::<Vec<_>>().await.unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
-                
                 let _ = reply(ctx, Ok("loot_table__success")).await;
             }
             Err(e) => {

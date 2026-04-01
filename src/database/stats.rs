@@ -418,7 +418,7 @@ impl Stat {
         let mut apply_modifiers = |modifiers: &Vec<Modifier>, multipliers: &mut f64, bases: &mut f64, flats: &mut f64| {
             grouped_modifiers.append(modifiers.clone().as_mut());
             for modifier in modifiers {
-                if modifier.stat == stat_id {
+                if modifier.stat_id == stat_id {
                     match modifier.modifier_type {
                         ModifierType::Multiplier => *multipliers *= modifier.value.as_f64(),
                         ModifierType::Base => *bases += modifier.value.as_f64(),
@@ -480,6 +480,13 @@ impl Stat {
             StatValue::I64(_) => Ok((StatValue::I64(value.round() as i64), shortest_modifier_end_timestamp)),
             _ => Ok((StatValue::F64(value), shortest_modifier_end_timestamp)),
         }
+    }
+    pub async fn get_stat_by_id(id: ObjectId) -> mongodb::error::Result<Option<Stat>> {
+        let db_client = get_db_client().await;
+        db_client.database(VERSEENGINE_DB_NAME)
+            .collection::<Stat>(STATS_COLLECTION_NAME)
+            .find_one(doc! { "_id": id })
+            .await
     }
 }
 
