@@ -18,6 +18,131 @@ start_message = Start Message
             In a partial setup, only the road category and roles will be created.
             In a full setup, the Admin, out of rp, rp categories and their channels are also created.
 
+#Loot tables
+loot_table = loot_table
+    .description = Manage loot tables
+loot_table_edit = edit
+    .description = Create or edit a loot table for a channel
+    .channel_id = channel_id
+    .channel_id-description = Channel ID (Place category, Road channel, or Place's sub-channel)
+loot_table__modal_title = Loot Table Editor
+loot_table__modal_field_name = Loot Table Content
+loot_table__modal_placeholder = # Loot Table Syntax Guide
+    - Loot Tables can contain two types of elements: **items** and **sets**.
+    ## Items
+    ```
+    ­[item name]:[probability in %], [min-max range], stock:[number], secret
+    ```
+    - Item names are used to identify objects and are case-sensitive.
+    - The probability of each item is **absolute** and given in % implicitly (no need to specify %): `40`
+    - Each line in the loot table has a chance to be rolled independently of others. The sum of probabilities can therefore exceed 100%.
+    - When a looted item has a range, the number of items obtained corresponds to a random number chosen within that range.
+    - The `min-max` range can be replaced by a single number if min and max are identical: `2-2` becomes `2`
+    - __Optional__: If the loot is in limited quantity, the stock parameter can be specified: `stock:10`
+    - __Optional__: The `secret` keyword can be used so that the item does not appear in loot tables in the wiki.
+    - If a stock drops to 0, items are removed from the table and a message is sent to the log channel.
+    ~~-----------------------------------------------------------------~~
+    ## Sets
+    ```
+    ­[set name]:[probability in %], [min-max], stock:[number], secret
+    - [item name]:[weight], [min-max], stock:[number], secret
+    - ...
+    ```
+    - The set declaration is identical to that of an item.
+    - Set names are purely technical and will not be displayed in the wiki.
+    - Sets contain a list of items.
+    - Items in sets have the same syntax as standalone items.
+    - Items in sets are **mutually exclusive**.
+    - The probability of set elements is **relative** to the total.
+    - If a range is defined for the set, items are drawn independently from the set as many times as the random number drawn from the range.
+    - Each item in a set can have its own stock.
+    - The set can have its own stock. If the set's stock drops to 0, the set is removed even if items in the set still have stock.
+    - Each item in the set is distinguished from other standalone items in the loot table by a '-' at the beginning.
+    ~~-----------------------------------------------------------------~~
+    Practical example:
+    ```
+    gold: 40, 5-20
+    legendary sword: 5, 1, stock:1, secret
+
+    knight_armor: 20, 1-5, stock:5
+    - breastplate: 5, 1, stock:4
+    - greaves: 5, 1-2
+    - gauntlet: 5, 1-2 stock:6
+    - grimoire: 1, 1, secret
+    - signet ring: 1, 1, stock:1, secret
+    ```
+    Notes:
+    - The set's 1-5 range indicates that up to 5 items from the set can be drawn independently.
+    - The set's stock (5) is lower than the total stock of the set (4+6+1 = 11). This implies that the set will probably be destroyed before the items' stocks are depleted.
+    - The sum of weights is 5+5+5+1+1 = 17. This means that the `breastplate`, `greaves`, and `gauntlet` have a 5/17 chance of being drawn, while the `grimoire` and `signet ring` have a 1/17 chance of being drawn.
+    - If the signet ring is drawn, its stock will reach 0. So the sum of weights becomes 16, which changes the probabilities: 5/16 for the `breastplate`, `greaves`, and `gauntlet`, and 1/16 for the `grimoire`.
+
+loot_table__server_not_found = Server not found
+    .title = Server not found
+    .message = The server was not found.
+                Please try again or contact support if the problem persists: {support}
+loot_table__no_permission = Insufficient permissions
+    .title = Insufficient permissions
+    .message = You do not have permission to manage loot tables.
+loot_table__target_not_found = Unknown target
+    .title = Unknown target
+    .message = Invalid target: must be a place category, a road channel, or a place sub-channel
+loot_table__slash_only = Slash command
+    .title = Slash command
+    .message = This command can only be used as a slash command
+loot_table__success = Loot table saved
+    .title = Loot table saved
+    .message = Loot table successfully saved
+loot_table__invalid_min_max = Invalid range
+    .title = Invalid range
+    .message = Invalid quantity range: {$min} to {$max}. Min must be <= max.
+loot_table__invalid_item_name = Invalid item name
+    .title = Invalid item name
+    .message = Invalid item or set name: {$name}
+loot_table__modified = Loot Table Modified
+    .title = Loot Table Modified
+    .message = The loot table has successfully been modified.
+loot_table__not_in_guild = Not in a Guild
+    .title = Not in a Guild
+    .message = This command can only be used within a server.
+loot_table__universe_not_found = Universe Not Found
+    .title = Universe Not Found
+    .message = The universe for this server could not be found.
+loot_table__character_not_found = Character Not Found
+    .title = Character Not Found
+    .message = You don't have a character in this universe. Please create one first.
+loot_table__error_fetching_universe = Error Fetching Universe
+    .title = Database Error
+    .message = An error occurred while fetching the universe: {$error}
+loot_table__error_fetching_character = Error Fetching Character
+    .title = Database Error
+    .message = An error occurred while fetching your character: {$error}
+loot_table__error_fetching_channel_table = Error Fetching Channel Loot Table
+    .title = Database Error
+    .message = An error occurred while fetching the channel loot table: {$error}
+loot_table__error_fetching_category_table = Error Fetching Category Loot Table
+    .title = Database Error
+    .message = An error occurred while fetching the category loot table: {$error}
+loot_table__error_adding_inventory = Inventory Error
+    .title = Database Error
+    .message = An error occurred while adding items to your inventory: {$error}
+loot_table__setup_channel = Setup Channel
+    .title = Setup Channel
+    .message = You cannot loot in a setup channel.
+loot_table__no_loot_found = Nothing Found
+    .title = Nothing Found
+    .message = You searched thoroughly but found nothing this time.
+loot_table__loot_success = Looting Successful
+    .title = Looting Successful
+    .message = You have found some items!
+               {$items}
+loot_table__deleted_log = The loot table for channel <#{$channel_id}> has been deleted because it is now empty.
+loot_table__rate_limited = Cooldown
+    .title = Cooldown
+    .message = You must wait another {$error} seconds before you can search this area again.
+create_item__invalid_name = Invalid item name
+    .title = Invalid item name
+    .message = Invalid item name: {$name}. Only alphanumeric characters, spaces, hyphens and underscores are allowed.
 #Stats
 stat_insert__failed = Failed to insert statistics
     .title = Failed to add stat
@@ -126,8 +251,8 @@ id__channel_delete_failed = Failed to delete channel
 
 #Setup
 SetupType = SetupType
-    .FullSetup = Full
-    .PartialSetup = Partial
+FullSetup = Full
+PartialSetup = Partial
 cancel_setup = Cancel
 continue_setup = Continue 
 setup__continue_setup_message = Continue setup?
@@ -509,3 +634,63 @@ time__midnight = **_It is midnight. Silence falls upon the universe._**
 time__sunrise = **_The sun rises, a new day begins._**
 time__noon = **_It is noon. The sun is at its zenith._**
 time__sunset = **_The sun sets, the shadows grow longer._**
+
+#Create Item
+item = item
+    .description = Item related commands.
+item_lookup = lookup
+    .description = Shows details of an item you own via its inventory ID
+    .id = id
+    .id-description = The inventory line ID (received by DM)
+item-create = create
+    .description = Create a new item
+    .name = name
+    .name-description = Item name
+    .usage = usage
+    .usage-description = Item usage type
+    .into_wiki = into_wiki
+    .into_wiki-description = Whether to add the item to the wiki
+    .image = image
+    .image-description = Item image
+    .description = description
+    .description-description = Item description
+    .secret_informations = secret_informations
+    .secret_informations-description = Secret information only visible to owners
+item_usage_title = Usage type
+ItemUsage = ItemUsage
+Consumable = Consumable
+Usable = Usable
+Wearable = Wearable
+Placeable = Placeable
+None = Other
+inventory__empty = Empty Inventory
+    .title = Empty Inventory
+    .message = You don't have any items in your inventory.
+inventory__lookup_hint = Use `/item lookup [id]` for more details.
+inventory__sent_dm = Inventory sent
+    .title = Inventory sent
+    .message = Your inventory has been sent to you via private message.
+item__not_found = Item Not Found
+    .title = Item Not Found
+    .message = No item with that name was found in this universe.
+item__not_found_in_inventory = Item not found in inventory
+    .title = Item not found in inventory
+    .message = This ID does not correspond to any item you currently own.
+item__not_your_item = Not your item
+    .title = Not your item
+    .message = This item does not belong to you.
+item__invalid_id = Invalid ID
+    .title = Invalid ID
+    .message = The provided inventory ID is invalid.
+item__no_search_criteria = Missing criteria
+    .title = Missing criteria
+    .message = Please provide either a name or an ID for the search.
+item__server_not_found = Server not found
+    .title = Server not found
+    .message = The server was not found.
+create_item__db_error = Database Error
+    .title = Creation Error
+    .message = An error occurred while creating the item in the database.
+item_db_error = Database Error
+    .title = Database Error
+    .message = An error occurred while accessing item data.

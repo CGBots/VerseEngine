@@ -13,7 +13,7 @@ pub enum ModifierType{
 #[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Modifier{
-    pub stat: ObjectId,
+    pub stat_id: ObjectId,
     pub value: StatValue,
     pub modifier_type: ModifierType,
     pub end_timestamp: Option<u64>,

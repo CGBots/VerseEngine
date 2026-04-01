@@ -125,6 +125,7 @@ pub async fn _create_place(ctx: &Context<'_>, name: String) -> Result<&'static s
             }
             let _ = channel.create_forum_post(ctx, post).await;
         }
+
     }
 
     let place = Place{

@@ -41,13 +41,14 @@ impl Character {
             .await
     }
 
-    pub async fn get_character_by_user_id(universe_id: ObjectId, user_id: u64) -> mongodb::error::Result<Option<Character>> {
-        let db_client = get_db_client().await;
-        let filter = doc!{"user_id": user_id.to_string(), "universe_id": universe_id};
-        db_client
-            .database(VERSEENGINE_DB_NAME)
-            .collection::<Character>(CHARACTERS_COLLECTION_NAME)
-            .find_one(filter)
-            .await
-    }
 }
+
+pub async fn get_character_by_user_id(universe_id: ObjectId, user_id: u64) -> mongodb::error::Result<Option<Character>> {
+         let db_client = get_db_client().await;
+         let filter = doc!{"user_id": user_id.to_string(), "universe_id": universe_id};
+         db_client
+             .database(VERSEENGINE_DB_NAME)
+             .collection::<Character>(CHARACTERS_COLLECTION_NAME)
+             .find_one(filter)
+             .await
+     }

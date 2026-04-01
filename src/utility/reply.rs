@@ -65,18 +65,43 @@ pub async fn reply_with_args<'a>(
     result: Result<&'a str, Error>,
     args: Option<FluentArgs<'a>>,
 ) -> Result<&'a str, Error> {
-    let (color, string) = match result {
+    let ephemeral = result.is_err();
+    reply_with_args_and_ephemeral(ctx, result, args, ephemeral).await
+}
+
+pub async fn reply_with_args_and_ephemeral<'a>(
+    ctx: Context<'a>,
+    result: Result<&'a str, Error>,
+    args: Option<FluentArgs<'a>>,
+    ephemeral: bool,
+) -> Result<&'a str, Error> {
+    let (color, string) = match &result {
         Ok(string) => (Color::from_rgb(0, 255, 0), string.to_string()),
-        Err(ref error) => (Color::from_rgb(255, 0, 0), error.to_string()),
+        Err(error) => (Color::from_rgb(255, 0, 0), error.to_string()),
+    };
+
+    let (id, final_args) = if string.starts_with("error:") {
+        let parts: Vec<&str> = string.splitn(3, ':').collect();
+        if parts.len() == 3 {
+            let key = parts[1].to_string();
+            let err_msg = parts[2].to_string();
+            let mut new_args = args.unwrap_or_else(|| FluentArgs::new());
+            new_args.set("error", err_msg);
+            (key, Some(new_args))
+        } else {
+            (string.clone(), args)
+        }
+    } else {
+        (string.clone(), args)
     };
 
     match ctx.send(CreateReply::default().embed(
             CreateEmbed::new()
-                .title(crate::translation::get(ctx, &string, Some("title"), args.as_ref()))
-                .description(crate::translation::get(ctx, &string, Some("message"), args.as_ref()))
-                .footer(CreateEmbedFooter::new(string.clone()))
+                .title(crate::translation::get(ctx, &id, Some("title"), final_args.as_ref()))
+                .description(crate::translation::get(ctx, &id, Some("message"), final_args.as_ref()))
+                .footer(CreateEmbedFooter::new(id.clone()))
                 .color(color),
-        ).ephemeral(result.is_err()),
+        ).ephemeral(ephemeral),
     )
         .await {
         Ok(_) => {Ok("reply__reply_success")}

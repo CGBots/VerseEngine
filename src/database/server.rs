@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
 use crate::database::db_client::{get_db_client};
 use crate::database::db_namespace::{VERSEENGINE_DB_NAME, SERVERS_COLLECTION_NAME, ROADS_COLLECTION_NAME, TRAVELS_COLLECTION_NAME};
-use crate::database::characters::Character;
+use crate::database::characters::{get_character_by_user_id, Character};
 use crate::database::road::{get_road, Road};
 use crate::database::travel::PlayerMove;
 use crate::database::universe::get_servers_from_universe;
@@ -510,7 +510,7 @@ impl Server {
     }
 
     pub async fn get_character_by_user_id(self, user_id: u64) -> mongodb::error::Result<Option<Character>> {
-        Character::get_character_by_user_id(self.universe_id, user_id).await
+        get_character_by_user_id(self.universe_id, user_id).await
     }
 
     pub async fn has_character(self, user_id: u64) -> mongodb::error::Result<Option<Character>> {
@@ -555,6 +555,34 @@ impl Server {
     pub async fn get_other_servers(&self) -> mongodb::error::Result<Cursor<Server>> {
         get_servers_from_universe(&self.universe_id).await
     }
+
+    pub fn all_ids(&self) -> Vec<&Id> {
+        [
+            self.admin_role_id.as_ref(),
+            self.moderator_role_id.as_ref(),
+            self.spectator_role_id.as_ref(),
+            self.player_role_id.as_ref(),
+            self.everyone_role_id.as_ref(),
+            self.admin_category_id.as_ref(),
+            self.nrp_category_id.as_ref(),
+            self.rp_category_id.as_ref(),
+            self.road_category_id.as_ref(),
+            self.rp_wiki_channel_id.as_ref(),
+            self.log_channel_id.as_ref(),
+            self.moderation_channel_id.as_ref(),
+            self.commands_channel_id.as_ref(),
+            self.nrp_general_channel_id.as_ref(),
+            self.rp_character_channel_id.as_ref(),
+            self.universal_time_channel_id.as_ref(),
+        ]
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
+    pub fn contains_id(&self, id: u64) -> bool {
+        self.all_ids().iter().any(|entry| entry.id == id)
+    }
 }
 
 /// Retrieves a server configuration by Discord guild ID.
@@ -576,7 +604,6 @@ pub async fn get_server_by_id(
 
 #[cfg(test)]
 mod test {
-    use crate::database::db_client::DB_CLIENT;
     use crate::database::universe::Universe;
     use std::time::SystemTime;
     use lazy_static::lazy_static;
