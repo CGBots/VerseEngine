@@ -13,11 +13,12 @@ use crate::utility::loot_table_parser::VALID_NAME_RE;
 use fluent::FluentArgs;
 
 #[poise::command(slash_command, guild_only, required_permissions= "ADMINISTRATOR", rename="item_create")]
-pub async fn create(
+    pub async fn create(
     ctx: Context<'_>,
     name: String,
     usage: ItemUsage,
     into_wiki: bool,
+    inventory_size: Option<u64>,
     image: Option<Attachment>,
     item_description: Option<String>,
     secret_informations: Option<String>,
@@ -45,7 +46,9 @@ pub async fn create(
         description: item_description.clone(),
         image: url.clone(),
         wiki_post_id: None,
-        secret_informations: secret_informations
+        secret_informations: secret_informations,
+        inventory_id: None,
+        inventory_size: inventory_size.unwrap_or(0),
     }.save().await;
 
     match result{
@@ -57,6 +60,7 @@ pub async fn create(
         .title(name.clone())
         .description(item_description.clone().unwrap_or("".to_string()))
         .field(tr!(ctx.clone(), "item_usage_title"), tr!(ctx.clone(), usage.name()), true)
+        .field(tr!(ctx.clone(), "item_inventory_size"), inventory_size.unwrap_or(0).to_string(), true)
         .colour(Colour::from_rgb(25, 125, 255))
         .thumbnail(url.clone().unwrap_or("".to_string()));
 

@@ -20,6 +20,8 @@ pub struct Item {
     pub secret_informations: Option<String>, //Only displayed when player got the item and look the item sheet
     pub image: Option<String>,
     pub wiki_post_id: Option<ObjectId>,
+    pub inventory_id: Option<ObjectId>,
+    pub inventory_size: u64,
 }
 
 impl Item {

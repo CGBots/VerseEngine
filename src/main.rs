@@ -14,6 +14,7 @@ mod tip;
 mod item;
 mod loot_table;
 mod loot;
+mod recipe;
 
 use discord::poise_structs::{Context, Data, Error};
 use crate::database::db_client::constraint;

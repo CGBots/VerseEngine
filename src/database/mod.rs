@@ -11,3 +11,5 @@ pub mod travel;
 pub mod items;
 pub mod loot_tables;
 pub mod inventory;
+pub mod recipe;
+pub mod tool;
