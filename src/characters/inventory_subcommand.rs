@@ -8,7 +8,7 @@ use crate::utility::reply::reply_with_args_and_ephemeral;
 /// Renvoie l'inventaire du personnage sous forme de liste.
 #[poise::command(slash_command, guild_only, rename = "inventory")]
 pub async fn inventory_subcommand(ctx: Context<'_>) -> Result<(), Error> {
-    let guild_id = ctx.guild_id().ok_or("Not in a guild")?.get();
+    let guild_id = ctx.guild_id().ok_or("inventory__not_in_guild")?.get();
     let Some(universe) = get_universe_by_server_id(guild_id).await? else {return Err("loot_table__universe_not_found".into())};
 
     let Some(character) = get_character_by_user_id(universe.universe_id, ctx.author().id.get()).await? else {return Err("loot_table__character_not_found".into())};
@@ -34,23 +34,38 @@ pub async fn inventory_subcommand(ctx: Context<'_>) -> Result<(), Error> {
     }
 
     // Ajout de l'indication pour /lookup
-    let footer_msg = format!("\n{}", crate::translation::get(ctx, "inventory__lookup_hint", None, None));
+    let footer_msg = format!("\n{}", crate::translation::get(ctx, "inventory__lookup_hint", Some("message"), None));
     
     // Gestion de la pagination (max 2000 caractères par message Discord)
     let mut current_message = String::new();
+    let max_len = 1900; // Marge de sécurité pour le footer et le formatage
 
     for item_line in items_text {
-        if current_message.len() + item_line.len() + 2 > 1900 {
-            ctx.author().direct_message(ctx, serenity::all::CreateMessage::new().content(&current_message)).await?;
-            current_message.clear();
+        if current_message.len() + item_line.len() + 2 > max_len {
+            if !current_message.is_empty() {
+                ctx.author().direct_message(ctx, serenity::all::CreateMessage::new().content(&current_message)).await?;
+                current_message.clear();
+            }
         }
+        
+        // Si une ligne seule dépasse max_len, on l'ajoute quand même pour ne pas la perdre, 
+        // ou on la tronque (mais l'énoncé dit "toute la ligne ou rien", donc on envoie si possible).
         current_message.push_str(&item_line);
         current_message.push('\n');
     }
 
     if !current_message.is_empty() {
-        current_message.push_str(&footer_msg);
-        ctx.author().direct_message(ctx, serenity::all::CreateMessage::new().content(&current_message)).await?;
+        // Vérifier si le footer rentre dans le dernier message
+        if current_message.len() + footer_msg.len() + 1 > 2000 {
+            ctx.author().direct_message(ctx, serenity::all::CreateMessage::new().content(&current_message)).await?;
+            ctx.author().direct_message(ctx, serenity::all::CreateMessage::new().content(&footer_msg)).await?;
+        } else {
+            current_message.push_str(&footer_msg);
+            ctx.author().direct_message(ctx, serenity::all::CreateMessage::new().content(&current_message)).await?;
+        }
+    } else {
+        // Cas très rare où tout a été envoyé et il ne reste que le footer
+        ctx.author().direct_message(ctx, serenity::all::CreateMessage::new().content(&footer_msg)).await?;
     }
 
     reply_with_args_and_ephemeral(ctx, Ok("inventory__sent_dm"), None, true).await?;

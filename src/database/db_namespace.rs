@@ -7,5 +7,6 @@ pub static ROADS_COLLECTION_NAME: &str = "roads";
 pub static CHARACTERS_COLLECTION_NAME: &str = "characters";
 pub static TRAVELS_COLLECTION_NAME: &str = "travels";
 pub static ITEM_COLLECTION_NAME: &str = "items";
+pub static PLACED_ITEMS_COLLECTION_NAME: &str = "placed_items";
 pub static LOOT_TABLES_COLLECTION_NAME: &str = "loot_tables";
 pub static INVENTORY_COLLECTION_NAME: &str = "inventory";

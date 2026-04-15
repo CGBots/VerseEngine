@@ -187,7 +187,7 @@ pub async fn _loot(ctx: Context<'_>) -> Result<FluentArgs<'_>, Error> {
         *item_counts.entry(item_name).or_insert(0) += 1;
     }
 
-    let mut item_list = String::new();
+    let mut item_list = Vec::new();
     for (item_name, quantity) in item_counts {
         let item_data_res = get_item_by_name(universe.universe_id, &item_name).await;
         let item_data = match item_data_res {
@@ -195,7 +195,11 @@ pub async fn _loot(ctx: Context<'_>) -> Result<FluentArgs<'_>, Error> {
             Ok(None) => None,
             Err(e) => {
                 eprintln!("Error fetching item '{}' for universe {}: {:?}", item_name, universe.universe_id, e);
-                item_list.push_str(&format!("- {} (x{}) (Erreur de base de données: {})\n", item_name, quantity, e));
+                let mut err_args = FluentArgs::new();
+                err_args.set("item_name", item_name);
+                err_args.set("quantity", quantity);
+                err_args.set("error", e.to_string());
+                item_list.push(crate::translation::get(ctx, "loot_table__item_db_error", None, Some(&err_args)));
                 continue;
             }
         };
@@ -205,18 +209,24 @@ pub async fn _loot(ctx: Context<'_>) -> Result<FluentArgs<'_>, Error> {
                 eprintln!("Error adding item to inventory for character {}: {:?}", character._id, e);
                 return Err(format!("error:loot_table__error_adding_inventory:{}", e).into());
             }
+            let mut line_args = FluentArgs::new();
+            line_args.set("item_name", item_name);
+            line_args.set("quantity", quantity);
             if quantity > 1 {
-                item_list.push_str(&format!("- {} (x{})\n", item_name, quantity));
+                item_list.push(crate::translation::get(ctx, "loot_table__item_line_quantity", None, Some(&line_args)));
             } else {
-                item_list.push_str(&format!("- {}\n", item_name));
+                item_list.push(crate::translation::get(ctx, "loot_table__item_line", None, Some(&line_args)));
             }
         } else {
-            item_list.push_str(&format!("- {} (x{}) (Objet inexistant dans la base de données)\n", item_name, quantity));
+            let mut line_args = FluentArgs::new();
+            line_args.set("item_name", item_name);
+            line_args.set("quantity", quantity);
+            item_list.push(crate::translation::get(ctx, "loot_table__item_not_found", None, Some(&line_args)));
         }
     }
 
     let mut args = FluentArgs::new();
-    args.set("items", item_list);
+    args.set("items", format!("\n{}", item_list.join("\n")));
 
     Ok(args)
 }
