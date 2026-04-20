@@ -13,10 +13,10 @@ use serenity::all::{CreateInteractionResponse};
 use serenity::json::json;
 use std::str::FromStr;
 
-#[poise::command(slash_command, guild_only, rename = "use")]
+#[poise::command(slash_command, guild_only, rename = "item_use")]
 pub async fn item_use(
     ctx: Context<'_>,
-    #[description = "Unique ID of the tool"] tool_id: Option<String>,
+    tool_id: Option<String>,
 ) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap();
     let user_id = ctx.author().id;

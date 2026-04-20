@@ -15,7 +15,7 @@ use fluent::FluentArgs;
 pub static APPROVE_ITEM_BUTTON_CUSTOM_ID: &str = "item__approve";
 pub static REJECT_ITEM_BUTTON_CUSTOM_ID: &str = "item__reject";
 
-#[poise::command(slash_command, guild_only, rename="item_create")]
+#[poise::command(slash_command, guild_only, rename = "item_create")]
 pub async fn create(
     ctx: Context<'_>,
     name: String,

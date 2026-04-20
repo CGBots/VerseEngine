@@ -29,7 +29,7 @@ use crate::discord::poise_structs::{Context, Error};
 /// // assuming the user has administrator permissions:
 /// /start
 /// ```
-#[poise::command(slash_command, required_permissions = "ADMINISTRATOR", guild_only, rename = "start")]
+#[poise::command(slash_command, rename = "start", required_permissions = "ADMINISTRATOR", guild_only)]
 pub async fn start(ctx: Context<'_>) -> Result<(), Error> {
     let _ = ctx.send(
         CreateReply::default().embed(

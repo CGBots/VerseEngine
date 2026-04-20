@@ -11,7 +11,6 @@ use crate::utility::reply::reply;
 #[poise::command(slash_command, required_permissions= "ADMINISTRATOR", guild_only, rename = "place_create_place")]
 pub async fn create_place(
     ctx: Context<'_>,
-    #[description = "place_create_place.name"]
     name: String
 ) -> Result<(), Error>{
     let Ok(_) = ctx.defer().await else { return Err("reply__reply_failed".into()) };

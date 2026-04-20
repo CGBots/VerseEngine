@@ -4,7 +4,8 @@ placeholder = Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla ege
     .title = Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla eget neque arcu. Integer sed turpis.
     .message = Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla eget neque arcu. Integer sed turpis.
 
-support = contact.cgbots@gmail.com or @cgbots on discord
+#Support
+support_link = contact.cgbots@gmail.com or @cgbots on discord
 
 tips = Support the project
     .title = Support the project
@@ -37,6 +38,10 @@ loot_table_edit = edit
     .description = Create or edit a loot table for a channel
     .channel_id = channel_id
     .channel_id-description = Channel ID (Place category, Road channel, or Place's sub-channel)
+    .rate_limit = rate_limit
+    .rate_limit-description = Cooldown in seconds between two loots
+    .delay = delay
+    .delay-description = Delay in seconds to get the loot
 loot_table__modal_title = Loot Table Editor
 loot_table__modal_field_name = Loot Table Content
 loot_table__modal_placeholder = # Loot Table Syntax Guide
@@ -208,7 +213,7 @@ universe_create_universe = new_universe
     .universe_name-description = Name of the new Universe
     .setup_type = setup_type
     .setup_type-description = Configuration type for this server
-universe_add_server = add
+universe_add_server = add_server
     .description = Adds this server to an existing universe.
     .setup_type = setup_type
     .setup_type-description = Configuration type for this server
@@ -218,6 +223,14 @@ universe_setup = setup
     .setup_type-description = Type of setup to perform (Full or Partial).
 universe_time = time
     .description = Displays the current time of the universe.
+
+#Places
+place = place
+    .description = Place management commands.
+place_create_place = new_place
+    .description = Creates a new category corresponding to a city or interaction place.
+    .name = name
+    .name-description = Name of the place to create.
 
 #Roads
 road = road
@@ -232,21 +245,13 @@ road_create_road = create_road
     .distance-description = Distance between the two places in kilometers.
     .secret_channel = secret
     .secret_channel-description = If true, the road will not be displayed on public maps.
-
-#Places
-place = place
-    .description = Place management commands.
-place_create_place = new_place
-    .description = Creates a new category corresponding to a city or interaction place.
-    .name = name
-    .name-description = Name of the place to create.
 create_place__new_place_title = Place: {$place_name}
 create_place__channel_id = Place Id
 
 #Characters
 character = character
     .description = Character management commands.
-character_create_character = new_character
+character_create = new
     .description = Allows you to create your character in the universe. Only one character per player.
 character_inventory = inventory
     .description = Allows to player to consult character's inventory.
@@ -263,7 +268,7 @@ travel_stop = stop
 #Misc
 ping = ping
     .description = Measures the bot's latency.
-support_command = support
+support = support
     .description = Displays information to support the project.
 start = start
     .description = Displays startup instructions.
@@ -275,24 +280,26 @@ id__nothing_to_delete = Nothing to delete
 id__role_delete_success = Role successfully deleted
     .title = Deletion successful
     .message = The role has been successfully deleted
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 id__role_delete_failed = Failed to delete role
     .title = Deletion error
     .message = Unable to delete the role
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 id__channel_delete_sucess = Channel successfully deleted
     .title = Deletion successful
     .message = The channel has been successfully deleted
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 id__channel_delete_failed = Failed to delete channel
     .title = Deletion error
     .message = Unable to delete the channel
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 
 #Setup
 SetupType = SetupType
 FullSetup = Full
+    .description = Full setup with all channels
 PartialSetup = Partial
+    .description = Partial setup (only roads and roles)
 cancel_setup = Cancel
 continue_setup = Continue 
 setup__continue_setup_message = Continue setup?
@@ -304,11 +311,11 @@ setup__server_already_setup_timeout = Setup timeout exceeded
 partial_setup__get_guild_roles_error = Failed to retrieve guild roles
     .title = Setup error
     .message = Unable to retrieve roles from the server.
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 setup__server_not_found = Server not found
     .title = Server not found
     .message = This server is not registered in our database.
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 setup_server__cancelled = Setup cancelled
     .title = Setup cancelled
     .message = Server setup has been cancelled
@@ -318,115 +325,115 @@ setup_server__success = Setup successful
 setup_server__failed = Setup failed
     .title = Error
     .message = Server setup failed
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 setup__full_setup_success = Full setup successful
     .title = Setup completed
     .message = Full server setup has been successfully completed
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 admin_category_name = Administration
     .title = Administration
     .message = Administration category
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 setup__admin_category_not_created = Administration category not created
     .title = Creation error
     .message = Unable to create the administration category
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 nrp_category_name = Out of RP
 setup__nrp_category_not_created = Out of RP category not created
     .title = Creation error
     .message = Unable to create the Out of RP category
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 rp_category_name = RP
 setup__rp_category_not_created = RP category not created
     .title = Creation error
     .message = Unable to create the RP category
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 setup__roles_setup_failed = Role setup failed
     .title = Setup error
     .message = Role setup failed
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 log_channel_name = Logs
 setup__log_channel_not_created = Logs channel not created
     .title = Creation error
     .message = Unable to create the log channel
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 commands_channel_name = Commands
 setup__commands_channel_not_created = Commands channel not created
     .title = Creation error
     .message = Unable to create the commands channel
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 moderation_channel_name = Moderation
 setup__moderation_channel_not_created = Moderation channel not created
     .title = Creation error
     .message = Unable to create the moderation channel
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 nrp_general_channel_name = General
 setup__nrp_general_channel_not_created = Out of RP general channel not created
     .title = Creation error
     .message = Unable to create the Out of RP general channel
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 rp_character_channel_name = Character sheets
 setup__rp_character_channel_not_created = Character sheets channel not created
     .title = Creation error
     .message = Unable to create the character sheets channel
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 universal_time_channel_name = Universal time
 setup__universal_time_channel_not_created = Universal time channel not created
     .title = Creation error
     .message = Unable to create the universal time channel
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 rp_wiki_channel_name = Wiki
 
 setup__wiki_channel_not_created = Wiki channel not created
     .title = Creation error
     .message = Unable to create the wiki channel
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 setup__rollback_failed = Failed to rollback changes
     .title = Rollback error
     .message = Unable to rollback the changes made
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 setup__channel_setup_failed = Channel setup failed
     .title = Setup error
     .message = Channel setup failed
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 guild_only = Command reserved for servers.
 admin_role_name = Administrator
 setup__admin_role_not_created = Administrator role not created
     .title = Creation error
     .message = Unable to create the Administrator role
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 moderator_role_name = Moderator
 setup__moderator_role_not_created = Moderator role not created
     .title = Creation error
     .message = Unable to create the Moderator role
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 spectator_role_name = Spectator
 setup__spectator_role_not_created = Spectator role not created
     .title = Creation error
     .message = Unable to create the Spectator role
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 player_role_name = Player
 setup__player_role_not_created = Player role not created
     .title = Creation error
     .message = Unable to create the Player role
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 setup__error_during_role_creation = Error during role creation
     .title = Creation error
     .message = An error occurred during role creation
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 setup__reorder_went_wrong = Error during reordering
     .title = Reordering error
     .message = An error occurred during role reordering
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 road_channel_name = Roads
 setup__road_category_not_created = Roads category not created
     .title = Creation error
     .message = Unable to create the Roads category
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 setup__server_update_failed = Failed to update server
     .title = Update error
     .message = Unable to update server information
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 setup__setup_success_message = Setup completed successfully
     .title = Success
     .message = The setup has been completed successfully
@@ -439,18 +446,18 @@ create_place__server_not_found = Unknown server
 create_place__database_not_found = Database not found
     .title = Connection failed
     .message = The database connection failed.
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 create_place__role_not_created = Role creation failed
     .title = Role creation failed
     .message = The place role could not be created correctly.
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 create_place__rollback_complete = Rollback completed
     .title = Rollback performed
     .message = Something went wrong during place creation. A rollback has been performed.
 create_role__rollback_failed = Rollback failed
     .title = Rollback failed
     .message = Something went wrong during place creation and the rollback failed.
-            Please contact support: {support}
+            Please contact support: {support_link}
 create_place__success = Place created
     .title = Place created
     .message = The place has been successfully created.
@@ -538,7 +545,7 @@ create_character__no_universe_found = Universe not found
 create_character__database_error = Database error
     .title = Database error
     .message = Unable to access the database.
-            Please try again or contact support if the problem persists: {support}
+            Please try again or contact support if the problem persists: {support_link}
 create_character__wrong_channel = Wrong channel
     .title = Wrong channel
     .message = This command must be used in the character sheet channel.
@@ -674,6 +681,8 @@ recipe_craft = craft
     .description = Craft an item from a recipe
     .recipe_name = recipe_name
     .recipe_name-description = Name of the recipe to use
+recipe_stop = stop_crafting
+    .description = Stop current crafting
 
 recipe__modal_title = Recipe Editor
 recipe__modal_field_name = Recipe Content
@@ -802,14 +811,10 @@ time__sunrise = **_The sun rises, a new day begins._**
 time__noon = **_It is noon. The sun is at its zenith._**
 time__sunset = **_The sun sets, the shadows grow longer._**
 
-#Create Item
+#Items
 item = item
     .description = Item related commands.
-item_lookup = lookup
-    .description = Shows details of an item you own via its inventory ID
-    .id = id
-    .id-description = The inventory line ID (received by DM)
-item-create = create
+item_create = create
     .description = Create a new item
     .name = name
     .name-description = Item name
@@ -821,18 +826,24 @@ item-create = create
     .inventory_size-description = Item inventory size (0 for none)
     .image = image
     .image-description = Item image
-    .description = description
-    .description-description = Item description
+    .item_description = description
+    .item_description-description = Item description
     .secret_informations = secret_informations
     .secret_informations-description = Secret information only visible to owners
-
+item_lookup = lookup
+    .description = Shows details of an item you own via its inventory ID
+    .id = id
+    .id-description = The inventory line ID (received by DM)
 item_place = place
     .description = Place an object in the current channel.
     .inventory_id = inventory_id
     .inventory_id-description = ID of the inventory entry of the item to place
     .immutable = immutable
     .immutable-description = Is the object immutable? (Admin only)
-
+item_use = use
+    .description = Use an item or interact with a tool/chest in the current channel.
+    .tool_id = tool_id
+    .tool_id-description = ID of the object to interact with (optional if only one)
 item_usage_title = Usage type
 item_inventory_size = Inventory size
 item_lookup_usage = Usage
@@ -848,12 +859,17 @@ item_placed_success = Object placed!
 item_placed_rp = _**{$item_name}** was placed by **{$character_name}**._
 item_immutable_footer = This object is immutable.
 
-ItemUsage = ItemUsage
+ItemUsage = Usage type
 Consumable = Consumable
+    .description = One-time use, item is destroyed after use
 Usable = Usable
+    .description = Multiple uses
 Wearable = Wearable
+    .description = Can be worn by the character
 Placeable = Placeable
+    .description = Can be placed in a location (e.g., chest, anvil)
 None = Other
+    .description = No specific use
 inventory__empty = Empty Inventory
     .title = Empty Inventory
     .message = You don't have any items in your inventory.

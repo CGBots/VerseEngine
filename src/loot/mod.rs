@@ -16,10 +16,10 @@ use crate::database::loot::PlayerLoot;
 use crate::loot::logic::{add_loot, stop_loot};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[poise::command(slash_command, subcommands("search", "stop"), subcommand_required, guild_only)]
+#[poise::command(slash_command, subcommands("search", "stop"), subcommand_required, guild_only, rename = "loot")]
 pub async fn loot(_ctx: Context<'_>) -> Result<(), Error> { Ok(()) }
 
-#[poise::command(slash_command, guild_only)]
+#[poise::command(slash_command, guild_only, rename = "loot_search")]
 pub async fn search(ctx: Context<'_>) -> Result<(), Error> {
     let result = _loot(ctx).await;
     match result {
@@ -34,7 +34,7 @@ pub async fn search(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-#[poise::command(slash_command, guild_only)]
+#[poise::command(slash_command, guild_only, rename = "loot_stop")]
 pub async fn stop(ctx: Context<'_>) -> Result<(), Error> {
     let server = match get_server_by_id(ctx.guild_id().unwrap().get()).await {
         Ok(Some(s)) => s,

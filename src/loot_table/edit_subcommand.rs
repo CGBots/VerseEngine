@@ -13,8 +13,8 @@ use futures::TryStreamExt;
 pub async fn edit(
     ctx: Context<'_>,
     channel_id: ChannelId,
-    #[description = "Temps de recharge en secondes entre deux loots"] rate_limit: Option<u64>,
-    #[description = "Délai en secondes pour obtenir le loot"] delay: Option<u64>,
+    rate_limit: Option<u64>,
+    delay: Option<u64>,
 ) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap();
     let server = get_server_by_id(guild_id.get()).await?.ok_or("loot_table__server_not_found")?;

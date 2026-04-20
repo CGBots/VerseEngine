@@ -4,7 +4,7 @@ use crate::craft::logic::stop_craft;
 use crate::utility::reply::reply_with_args;
 
 /// Arrête le craft en cours.
-#[poise::command(slash_command, guild_only, rename = "stop")]
+#[poise::command(slash_command, guild_only, rename = "recipe_stop")]
 pub async fn stop(ctx: Context<'_>) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap();
     let user_id = ctx.author().id.get();

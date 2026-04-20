@@ -107,7 +107,7 @@ async fn verify_moderator_permission(
 /// Slash command to initiate the character creation process.
 ///
 /// It delegates to `_create_character` and sends the result back to the user using the `reply` utility.
-#[poise::command(slash_command, guild_only, rename = "character_create_character")]
+#[poise::command(slash_command, guild_only, rename = "character_create")]
 pub async fn create_character(
     ctx: Context<'_>
 ) -> Result<(), Error> {

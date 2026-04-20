@@ -11,7 +11,7 @@ use poise::ChoiceParameter;
 use crate::tr;
 
 /// Affiche les détails d'un item possédé.
-#[poise::command(slash_command, dm_only, rename = "lookup")]
+#[poise::command(slash_command, dm_only, rename = "item_lookup")]
 pub async fn lookup_subcommand(
     ctx: Context<'_>,
     id: String,

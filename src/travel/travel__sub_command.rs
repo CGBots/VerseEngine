@@ -32,7 +32,6 @@ pub async fn travel(ctx: Context<'_>) -> Result<(), Error> {
 #[poise::command(slash_command, guild_only, rename = "travel_start")]
 pub async fn start(
     ctx: Context<'_>,
-    #[description = "travel_start.destination"]
     destination: Option<String>,
 ) -> Result<(), Error> {
     let Ok(_) = ctx.defer_ephemeral().await else { return Err("reply__reply_failed".into()) };

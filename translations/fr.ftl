@@ -4,7 +4,8 @@ placeholder = Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla ege
     .title = Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla eget neque arcu. Integer sed turpis.
     .message = Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla eget neque arcu. Integer sed turpis.
 
-support = contact.cgbots@gmail.com ou @cgbots sur discord
+#Support
+support_link = contact.cgbots@gmail.com ou @cgbots sur discord
 
 tips = Soutient le projet
     .title = Soutient le projet
@@ -25,9 +26,9 @@ carousel__refresh_button = Actualiser
 #Loot
 loot = loot
     .description = Actions liées à la fouille de zones
-loot_search = search
+loot_search = fouiller
     .description = Commencer à fouiller la zone actuelle
-loot_stop = stop
+loot_stop = arrêter_fouille
     .description = Arrêter la fouille en cours
 
 #Tables de loot
@@ -37,6 +38,10 @@ loot_table_edit = modifier
     .description = Créer ou modifier une table de butin pour un salon
     .channel_id = id_salon
     .channel_id-description = ID du salon (Catégorie de lieu, salon de route, ou sous-salon de lieu)
+    .rate_limit = temps_de_recharge
+    .rate_limit-description = Temps de recharge en secondes entre deux loots
+    .delay = délai
+    .delay-description = Délai en secondes pour obtenir le loot
 loot_table__modal_title = Éditeur de table de butin
 loot_table__modal_field_name = Contenu de la table de butin
 loot_table__modal_placeholder = # Guide de syntaxe des Tables de Butin
@@ -92,7 +97,7 @@ loot_table__modal_placeholder = # Guide de syntaxe des Tables de Butin
 loot_table__server_not_found = Serveur non trouvé
     .title = Serveur non trouvé
     .message = Le serveur n'as pas été trouvé.
-        Veuillez réessayer ou contacter le support si le problème persiste : {support}
+        Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 loot_table__no_permission = Permissions insuffisantes
     .title = Permissions insuffisantes
     .message = Vous n'avez pas la permission de gérer les tables de butin.
@@ -209,7 +214,7 @@ universe_create_universe = nouvel_univers
     .universe_name-description = Nom du nouvel Univers
     .setup_type = type_de_setup
     .setup_type-description = Type de configuration pour ce serveur
-universe_add_server = ajouter
+universe_add_server = ajouter_serveur
     .description = Ajoute ce serveur à un univers existant.
     .setup_type = type_de_setup
     .setup_type-description = Type de configuration pour ce serveur
@@ -219,6 +224,14 @@ universe_setup = configuration
     .setup_type-description = Type de configuration à effectuer (Complet ou Partiel).
 universe_time = temps
     .description = Affiche l'heure actuelle de l'univers.
+
+#Places
+place = lieu
+    .description = Commandes de gestion des lieux.
+place_create_place = nouvel_endroit
+    .description = Crée une nouvelle catégorie correspondant à une ville ou un lieu d'interaction.
+    .name = nom
+    .name-description = Nom du lieu à créer.
 
 #Roads
 road = route
@@ -233,21 +246,13 @@ road_create_road = nouvelle_route
     .distance-description = Distance entre les deux lieux en kilomètres.
     .secret_channel = secret
     .secret_channel-description = Si vrai, la route ne sera pas affichée sur les cartes publiques.
-
-#Places
-place = lieu
-    .description = Commandes de gestion des lieux.
-place_create_place = nouvel_endroit
-    .description = Crée une nouvelle catégorie correspondant à une ville ou un lieu d'interaction.
-    .name = nom
-    .name-description = Nom du lieu à créer.
 create_place__new_place_title = Lieu: {$place_name}
 create_place__channel_id = Id du lieu
 
 #Characters
 character = personnage
     .description = Commandes de gestion des personnages.
-character_create_character = nouveau_personnage
+character_create = nouveau
     .description = Permet de créer votre personnage dans l'univers. Un seul personnage par joueur.
 character_inventory = inventaire
     .description = Permet au joueur de consulter l'inventaire de son personnage.
@@ -260,12 +265,11 @@ travel_start = départ
     .destination = destination
     .destination-description = Le lieu où vous souhaitez vous rendre (ID ou mention).
 travel_stop = stop
-    .description = Arrête votre voyage actuel sur la route où vous vous trouvez.
+    .description = Arrêter votre voyage actuel sur la route où vous vous trouvez.
 
-#Misc
 ping = ping
     .description = Mesure la latence du bot.
-support_command = supporter
+support = supporter
     .description = Affiche les informations pour soutenir le projet.
 start = start
     .description = Affiche les instructions de démarrage.
@@ -277,24 +281,26 @@ id__nothing_to_delete = Rien à supprimer
 id__role_delete_success = Rôle supprimé avec succès
     .title = Suppression réussie
     .message = Le rôle a été supprimé avec succès
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 id__role_delete_failed = Échec de la suppression du rôle
     .title = Erreur de suppression
     .message = Impossible de supprimer le rôle
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 id__channel_delete_sucess = Salon supprimé avec succès
     .title = Suppression réussie
     .message = Le salon a été supprimé avec succès
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 id__channel_delete_failed = Échec de la suppression du salon
     .title = Erreur de suppression
     .message = Impossible de supprimer le salon
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 
 #Setup
 SetupType = SetupType
 FullSetup = Complet
+    .description = Configuration complète avec tous les salons
 PartialSetup = Partiel
+    .description = Configuration partielle (uniquement routes et rôles)
 cancel_setup = Annuler
 continue_setup = Continuer 
 setup__continue_setup_message = Continuer la configuration ?
@@ -306,11 +312,11 @@ setup__server_already_setup_timeout = Délai de configuration dépassé
 partial_setup__get_guild_roles_error = Échec de la récupération des rôles du serveur
     .title = Erreur de configuration
     .message = Impossible de récupérer les rôles du serveur.
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 setup__server_not_found = Serveur introuvable
     .title = Serveur introuvable
     .message = Ce serveur n'est pas enregistré dans notre base de données.
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 setup_server__cancelled = Configuration annulée
     .title = Configuration annulée
     .message = La configuration du serveur a été annulée
@@ -320,114 +326,114 @@ setup_server__success = Configuration réussie
 setup_server__failed = Échec de la configuration
     .title = Erreur
     .message = La configuration du serveur a échoué
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 setup__full_setup_success = Configuration complète réussie
     .title = Configuration terminée
     .message = La configuration complète du serveur a été effectuée avec succès
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 admin_category_name = Administration
     .title = Administration
     .message = Catégorie d'administration
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 setup__admin_category_not_created = Catégorie d'administration non créée
     .title = Erreur de création
     .message = Impossible de créer la catégorie d'administration
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 nrp_category_name = Hors RP
 setup__nrp_category_not_created = Catégorie Hors RP non créée
     .title = Erreur de création
     .message = Impossible de créer la catégorie Hors RP
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 rp_category_name = RP
 setup__rp_category_not_created = Catégorie RP non créée
     .title = Erreur de création
     .message = Impossible de créer la catégorie RP
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 setup__roles_setup_failed = Échec de la configuration des rôles
     .title = Erreur de configuration
     .message = La configuration des rôles a échoué
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 log_channel_name = Logs
 setup__log_channel_not_created = Salon de logs non créé
     .title = Erreur de création
     .message = Impossible de créer le salon de log
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 commands_channel_name = Commandes
 setup__commands_channel_not_created = Salon de commandes non créé
     .title = Erreur de création
     .message = Impossible de créer le salon de commandes
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 moderation_channel_name = Moderation
 setup__moderation_channel_not_created = Salon de modération non créé
     .title = Erreur de création
     .message = Impossible de créer le salon de modération
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 nrp_general_channel_name = General
 setup__nrp_general_channel_not_created = Salon général Hors RP non créé
     .title = Erreur de création
     .message = Impossible de créer le salon général Hors RP
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 rp_character_channel_name = Fiches personnages
 setup__rp_character_channel_not_created = Salon de fiches personnages non créé
     .title = Erreur de création
     .message = Impossible de créer le salon de fiches personnages
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 universal_time_channel_name = Temps universel
 setup__universal_time_channel_not_created = Salon de temps universel non créé
     .title = Erreur de création
     .message = Impossible de créer le salon de temps universel
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 rp_wiki_channel_name = Wiki
 setup__wiki_channel_not_created = Salon wiki non créé
     .title = Erreur de création
     .message = Impossible de créer le salon wiki
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 setup__rollback_failed = Échec de l'annulation des modifications
     .title = Erreur d'annulation
     .message = Impossible d'annuler les modifications effectuées
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 setup__channel_setup_failed = Échec de la configuration des salons
     .title = Erreur de configuration
     .message = La configuration des salons a échoué
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 guild_only = Commande réservée aux serveurs.
 admin_role_name = Administrateur
 setup__admin_role_not_created = Rôle Administrateur non créé
     .title = Erreur de création
     .message = Impossible de créer le rôle Administrateur
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 moderator_role_name = Modérateur
 setup__moderator_role_not_created = Rôle Modérateur non créé
     .title = Erreur de création
     .message = Impossible de créer le rôle Modérateur
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 spectator_role_name = Spectateur
 setup__spectator_role_not_created = Rôle Spectateur non créé
     .title = Erreur de création
     .message = Impossible de créer le rôle Spectateur
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 player_role_name = Joueur
 setup__player_role_not_created = Rôle Joueur non créé
     .title = Erreur de création
     .message = Impossible de créer le rôle Joueur
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 setup__error_during_role_creation = Erreur lors de la création des rôles
     .title = Erreur de création
     .message = Une erreur s'est produite lors de la création des rôles
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 setup__reorder_went_wrong = Erreur lors du réordonnancement
     .title = Erreur de réordonnancement
     .message = Une erreur s'est produite lors du réordonnancement des rôles
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 road_channel_name = Routes
 setup__road_category_not_created = Catégorie Routes non créée
     .title = Erreur de création
     .message = Impossible de créer la catégorie Routes
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 setup__server_update_failed = Échec de la mise à jour du serveur
     .title = Erreur de mise à jour
     .message = Impossible de mettre à jour les informations du serveur
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 setup__setup_success_message = Configuration terminée avec succès
     .title = Succès
     .message = La configuration a été effectuée avec succès
@@ -440,18 +446,18 @@ create_place__server_not_found = Serveur inconnu
 create_place__database_not_found = Base de données introuvable
     .title = Connexion échouée
     .message = La connexion à la base de donénes à échouée.
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 create_place__role_not_created = Création de rôle échouée
     .title = Création de rôle échouée
     .message = Le rôle du lieu n'as pas pu être créé correctement.
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 create_place__rollback_complete = Rollback terminé
     .title = Rollback effectué
     .message = Quelque chose s'est mal passé durant la création du lieu. Un rollback à été effectué.
 create_role__rollback_failed = Rollback échoué
     .title = Rollback échoué
     .message = Quelque chose s'est mal passé durant la création du lieu et le rollback à échoué.
-            Veuillez contacter le support: {support}
+            Veuillez contacter le support : {support_link}
 create_place__success = Place créée
     .title = Place créée
     .message = La place à été créée avec succès.
@@ -464,39 +470,39 @@ create_road__server_not_found = Serveur introuvable
 create_road__database_error = Erreur de base de données
     .title = Erreur de base de données
     .message = Une erreur s'est produite lors de l'accès à la base de données.
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 create_place__place_one_not_found = Premier lieu introuvable
     .title = Premier lieu introuvable
     .message = Le premier lieu spécifié n'a pas été trouvé dans l'univers.
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 create_place__place_two_not_found = Second lieu introuvable
     .title = Second lieu introuvable
     .message = Le second lieu spécifié n'a pas été trouvé dans l'univers.
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 create_road__role_creation_failed = Erreur de création de rôle
     .title = Erreur de création de rôle
     .message = Le rôle de la route n'a pas pu être créé correctement.
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 create_road__create_channel_failed_rollback_success = Erreur de création de salon
     .title = Erreur de création de salon
     .message = Le salon n'a pas pu être créé, mais les modifications ont été annulées.
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 create_road__create_channel_failed_rollback_failed = Erreur critique
     .title = Erreur critique
     .message = La création du salon a échoué et le rollback n'a pas pu être effectué.
-            Veuillez contacter le support: {support}
+            Veuillez contacter le support : {support_link}
 create_road__insert_road_failed_rollback_success = Erreur d'insertion
     .title = Erreur d'insertion
     .message = La route n'a pas pu être sauvegardée, mais les modifications ont été annulées.
-            Veuillez ressayer ou contacter le support si le problème persiste: {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 create_road__insert_road_failed_rollback_channel_failed = Erreur critique
     .title = Erreur critique
     .message = L'enregistrement de la route a échoué et l'annulation du salon a échoué.
-            Veuillez contacter le support: {support}
+            Veuillez contacter le support : {support_link}
 create_road__insert_road_failed_rollback_role_failed = Erreur critique
     .title = Erreur critique
     .message = L'enregistrement de la route a échoué et l'annulation du rôle a échoué.
-            Veuillez contacter le support: {support}
+            Veuillez contacter le support : {support_link}
 create_road__invalid_place_one = Identifiant du premier lieu invalide
     .title = Premier lieu invalide
     .message = L'identifiant ou la mention du premier lieu est invalide. Utilisez un ID ou une mention <#id>.
@@ -539,7 +545,7 @@ create_character__no_universe_found = Univers introuvable
 create_character__database_error = Erreur de base de données
     .title = Erreur de base de données
     .message = Impossible d'accéder à la base de données.
-            Veuillez réessayer ou contacter le support si le problème persiste : {support}
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 create_character__wrong_channel = Mauvais salon
     .title = Mauvais salon
     .message = Cette commande doit être utilisée dans le salon des fiches de personnage.
@@ -667,16 +673,18 @@ travel__no_road_available = Aucune route disponible
 #Recipes
 recipe = recette
     .description = Gérer les recettes de fabrication
-recipe_create = creer
+recipe_create = créer
     .description = Créer une nouvelle recette
     .name = nom
     .name-description = Nom de la recette
-    .delay = delai
+    .delay = délai
     .delay-description = Délai de fabrication en secondes
 recipe_craft = fabriquer
     .description = Fabriquer un objet à partir d'une recette
     .recipe_name = nom_recette
     .recipe_name-description = Nom de la recette à utiliser
+recipe_stop = arrêter_fabrication
+    .description = Arrêter la fabrication en cours
 
 recipe__modal_title = Éditeur de recette
 recipe__modal_field_name = Contenu de la recette
@@ -809,15 +817,11 @@ time__sunrise = **_Le soleil se lève, une nouvelle journée commence._**
 time__noon = **_Il est midi. Le soleil est au zénith._**
 time__sunset = **_Le soleil se couche, les ombres s'allongent._**
 
-#Create Item
-item = item
-    .description = Groupe de commandes concernant les items.
-item_lookup = regarder
-    .description = Affiche les détails d'un item possédé via son ID d'inventaire
-    .id = id
-    .id-description = L'ID de la ligne d'inventaire (reçu par DM)
-item_create= creer
-    .description = Permet de créer un nouvel item
+#Items
+item = objet
+    .description = Groupe de commandes concernant les objets.
+item_create = créer
+    .description = Permet de créer un nouvel objet
     .name = nom
     .name-description = Nom de l'objet. Il est unique et servira d'identifiant pour les butins.
     .usage = usage
@@ -826,20 +830,26 @@ item_create= creer
     .into_wiki-description = Indique s'il faut ajouter l'objet au wiki.
     .inventory_size = taille_inventaire
     .inventory_size-description = Taille de l'inventaire de l'objet (0 pour aucun)
-    .image = illustation
+    .image = illustration
     .image-description = Illustration qui sera affiché pour donner un visuel à l'item.
     .item_description = description
     .item_description-description = Description de l'item.
-    .secret_informations = informations_secretes
+    .secret_informations = informations_secrètes
     .secret_informations-description = Permet de donner des informations secrètes en plus aux joueurs. Il ne sera pas affiché dans le wiki.
-
+item_lookup = regarder
+    .description = Affiche les détails d'un item possédé via son ID d'inventaire
+    .id = id
+    .id-description = L'ID de la ligne d'inventaire (reçu par DM)
 item_place = placer
     .description = Placer un objet dans le salon actuel.
     .inventory_id = id_inventaire
     .inventory_id-description = ID de l'entrée d'inventaire de l'objet à placer
     .immutable = immuable
     .immutable-description = L'objet est-il immuable ? (Admin uniquement)
-
+item_use = utiliser
+    .description = Utiliser un objet ou interagir avec un outil/coffre dans le salon actuel.
+    .tool_id = id_outil
+    .tool_id-description = ID de l'objet avec lequel interagir (facultatif si un seul)
 item_usage_title = Type d'usage
 item_inventory_size = Taille inventaire
 item_lookup_usage = Usage
@@ -855,12 +865,17 @@ item_placed_success = Objet placé !
 item_placed_rp = _**{$item_name}** a été placé par **{$character_name}**._
 item_immutable_footer = Cet objet est immuable.
 
-ItemUsage = ItemUsage
+ItemUsage = Type d'usage
 Consumable = Consommable
+    .description = Usage unique, l'objet est détruit après utilisation
 Usable = Utilisable
-Wearable = Equipable
+    .description = Usage multiple
+Wearable = Équipable
+    .description = Peut être porté par le personnage
 Placeable = Plaçable
+    .description = Peut être placé dans un lieu (ex: coffre, enclume)
 None = Autre
+    .description = Pas d'usage particulier
 inventory__empty = Inventaire vide
     .title = Inventaire vide
     .message = Vous n'avez aucun objet dans votre inventaire.

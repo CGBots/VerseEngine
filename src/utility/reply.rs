@@ -97,8 +97,8 @@ pub async fn reply_with_args_and_ephemeral<'a>(
 
     match ctx.send(CreateReply::default().embed(
             CreateEmbed::new()
-                .title(crate::translation::get(ctx, &id, Some("title"), final_args.as_ref()))
-                .description(crate::translation::get(ctx, &id, Some("message"), final_args.as_ref()))
+                .title(crate::translation::smart_tr(ctx, &format!("{}.title", id), final_args.as_ref()).unwrap_or_else(|_| crate::translation::smart_tr(ctx, &id, final_args.as_ref()).unwrap_or_else(|_| id.clone())))
+                .description(crate::translation::smart_tr(ctx, &format!("{}.message", id), final_args.as_ref()).unwrap_or_else(|_| id.clone()))
                 .footer(CreateEmbedFooter::new(id.clone()))
                 .color(color),
         ).ephemeral(ephemeral),

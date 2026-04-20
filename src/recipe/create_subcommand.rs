@@ -12,12 +12,12 @@ use crate::utility::recipe_parser::RecipeParser;
 use crate::utility::reply::{reply, reply_with_args_and_ephemeral};
 
 /// Crée une nouvelle recette (admin ou joueur).
-#[poise::command(slash_command, guild_only)]
+#[poise::command(slash_command, guild_only, rename = "recipe_create")]
 pub async fn create(
     ctx: Context<'_>,
-    #[description = "Nom de la recette"] name: String,
-    #[description = "Délai de fabrication en secondes"] delay: Option<u64>,
-    #[description = "Inclure au wiki ?"] into_wiki: Option<bool>,
+    name: String,
+    delay: Option<u64>,
+    into_wiki: Option<bool>,
 ) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap();
     let server = get_server_by_id(guild_id.get()).await?.ok_or("recipe__server_not_found")?;

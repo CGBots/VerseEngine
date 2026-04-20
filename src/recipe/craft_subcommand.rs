@@ -13,10 +13,10 @@ use crate::utility::reply::{reply, reply_with_args_and_ephemeral};
 use crate::craft::logic::add_craft;
 
 /// Fabrique un objet à partir d'une recette.
-#[poise::command(slash_command, guild_only)]
+#[poise::command(slash_command, guild_only, rename = "recipe_craft")]
 pub async fn craft(
     ctx: Context<'_>,
-    #[description = "Nom de la recette"] recipe_name: String,
+    recipe_name: String,
 ) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap();
     let user_id = ctx.author().id.get();

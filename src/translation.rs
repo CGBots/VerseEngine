@@ -676,6 +676,14 @@ pub fn smart_tr(
         }
     }
 
+    if args.get("support_link").is_none() {
+        if let Some(link) = format(bundle, "support_link", None, None)
+            .or_else(|| format(&translations.main, "support_link", None, None))
+        {
+            args.set("support_link", FluentValue::from(link));
+        }
+    }
+
     for var in used_vars {
         if args.get(&var).is_none() {
             let fallback_id = var.clone();

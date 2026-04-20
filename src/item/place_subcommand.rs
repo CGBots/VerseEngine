@@ -12,7 +12,7 @@ use fluent::FluentArgs;
 use crate::utility::reply::{reply, reply_with_args_and_ephemeral};
 
 /// Place un objet dans le salon actuel.
-#[poise::command(slash_command, guild_only)]
+#[poise::command(slash_command, guild_only, rename = "item_place")]
 pub async fn item_place(
     ctx: Context<'_>,
     inventory_id: String,

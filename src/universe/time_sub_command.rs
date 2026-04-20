@@ -5,7 +5,7 @@ use chrono::Utc;
 use crate::utility::reply::reply_with_args;
 use fluent::FluentArgs;
 
-#[poise::command(slash_command, required_permissions = "ADMINISTRATOR", guild_only, rename = "universe_time")]
+#[poise::command(slash_command, rename = "universe_time", required_permissions = "ADMINISTRATOR", guild_only)]
 pub async fn time(ctx: Context<'_>) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap().get();
     

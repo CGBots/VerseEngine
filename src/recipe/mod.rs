@@ -84,7 +84,7 @@ pub async fn execute_recipe_modal(
     }
 }
 
-#[poise::command(slash_command, subcommands("create", "craft", "stop"), subcommand_required, guild_only)]
+#[poise::command(slash_command, subcommands("create", "craft", "stop"), subcommand_required, guild_only, rename = "recipe")]
 pub async fn recipe(_ctx: Context<'_>) -> Result<(), Error>{
     Ok(())
 }

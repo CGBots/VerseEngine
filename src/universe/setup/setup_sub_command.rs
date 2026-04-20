@@ -53,7 +53,6 @@ pub enum SetupType {
 #[poise::command(slash_command, required_permissions = "ADMINISTRATOR", guild_only, rename = "universe_setup")]
 pub async fn setup(
     ctx: Context<'_>,
-    #[description = "universe_setup.setup_type"]
     setup_type: SetupType
 ) -> Result<(), Error> {
     let Ok(_) = ctx.defer().await else { return Err("reply__reply_failed".into()) };

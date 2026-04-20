@@ -16,7 +16,7 @@ use crate::tr;
 #[poise::command(slash_command, guild_only, required_permissions = "ADMINISTRATOR", rename = "item_delete")]
 pub async fn delete(
     ctx: Context<'_>,
-    #[description = "Nom de l'item à supprimer"] name: String,
+    name: String,
 ) -> Result<(), Error> {
     ctx.defer().await?;
     let guild_id = ctx.guild_id().ok_or("item_delete__not_in_guild")?.get();
