@@ -1,9 +1,8 @@
 use crate::{tr_locale};
-use serenity::all::{ButtonStyle, CacheHttp, Color, ComponentInteraction, CreateActionRow, CreateButton, CreateEmbed, CreateInputText, CreateInteractionResponse, EditMessage, InputTextStyle};
+use serenity::all::{CacheHttp, Color, ComponentInteraction, CreateEmbed, CreateInputText, CreateInteractionResponse, EditMessage, InputTextStyle};
 use serenity::client::Context as SerenityContext;
 use serenity::utils::CreateQuickModal;
 use std::time::Duration;
-use futures::TryStreamExt;
 use crate::database::server::{get_server_by_id, Server};
 use crate::database::recipe::Recipe;
 use crate::discord::poise_structs::{Context, Error};

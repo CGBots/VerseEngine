@@ -1,6 +1,5 @@
 use log::log;
 use poise::CreateReply;
-use serenity::all::{CreateEmbedFooter};
 use crate::discord::poise_structs::{Context, Error};
 
 #[poise::command(slash_command, rename = "support")]

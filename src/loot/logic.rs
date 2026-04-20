@@ -21,7 +21,7 @@ fn loot_process(delay: u64) -> JoinHandle<()> {
         sleep(Duration::from_secs(delay)).await;
 
         let mut next_delay: Option<u64> = None;
-        let mut completed_loots: Vec<PlayerLoot> = Vec::new();
+        let completed_loots: Vec<PlayerLoot>;
 
         {
             let mut loots = LOOTS.lock().await;
@@ -161,6 +161,7 @@ pub async fn stop_loot(universe_id: mongodb::bson::oid::ObjectId, user_id: u64) 
     Ok(removed_loot)
 }
 
+#[allow(dead_code)]
 pub async fn setup() {
     let universes = crate::database::universe::Universe::get_all_universes().await.unwrap_or_default();
     

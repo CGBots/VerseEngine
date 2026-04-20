@@ -618,7 +618,7 @@ pub async fn accept_character(ctx: SerenityContext, component_interaction: Compo
         stats: extracted_stats,
     };
 
-    let Ok(character_result) = character.clone().update().await else { return Err("create_character__database_error".into()) };
+    let Ok(_character_result) = character.clone().update().await else { return Err("create_character__database_error".into()) };
 
     if let Some(player_role_id) = server.player_role_id {
         if let Ok(member) = ctx.http().get_member(guild_id, character_user_id.into()).await {
@@ -734,7 +734,7 @@ pub async fn choose_character_place(ctx: SerenityContext, component_interaction:
     let player_id = player_id.text.as_str();
     let character_filter = doc!{"user_id": player_id, "universe_id": server.universe_id};
 
-    let Ok(Some(character)) = db_client.database(VERSEENGINE_DB_NAME).collection::<Character>(CHARACTERS_COLLECTION_NAME)
+    let Ok(Some(_character)) = db_client.database(VERSEENGINE_DB_NAME).collection::<Character>(CHARACTERS_COLLECTION_NAME)
         .find_one(character_filter).await else {return Err("create_character__database_error".into())};
 
     let player_move = PlayerMove{

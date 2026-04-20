@@ -22,6 +22,7 @@ pub struct PlayerLoot {
 }
 
 impl PlayerLoot {
+    #[allow(dead_code)]
     pub async fn insert(self) -> mongodb::error::Result<InsertOneResult> {
         let db_client = get_db_client().await;
         let db = db_client.database(VERSEENGINE_DB_NAME);
@@ -54,6 +55,7 @@ impl PlayerLoot {
             .await
     }
 
+    #[allow(dead_code)]
     pub async fn get_active_loots(universe_id: ObjectId) -> mongodb::error::Result<Vec<PlayerLoot>> {
         let db_client = get_db_client().await;
         let filter = doc! { "is_finished": false, "universe_id": universe_id };

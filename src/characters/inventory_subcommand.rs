@@ -1,10 +1,9 @@
-use serenity::all::{CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage};
+use serenity::all::{CreateInteractionResponse, CreateInteractionResponseMessage};
 use crate::database::characters::{get_character_by_user_id, Character, get_character_by_id};
 use crate::database::inventory::Inventory;
 use crate::database::items::get_item_by_id;
 use crate::database::universe::{get_universe_by_server_id, Universe, get_universe_by_id};
 use crate::discord::poise_structs::{Context, Error};
-use crate::utility::reply::reply_with_args_and_ephemeral;
 use crate::utility::carousel::{CarouselConfig, CarouselPage, create_carousel_embed, create_carousel_components, paginate_text};
 use fluent::FluentArgs;
 

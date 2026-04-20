@@ -21,9 +21,9 @@ fn craft_process(delay: u64) -> JoinHandle<()> {
         sleep(Duration::from_secs(delay)).await;
 
         let mut next_delay: Option<u64> = None;
-        let mut next_id: Option<String> = None;
+        let _next_id: Option<String> = None;
 
-        let mut completed_crafts: Vec<PlayerCraft> = Vec::new();
+        let completed_crafts: Vec<PlayerCraft>;
 
         {
             let mut crafts = CRAFTS.lock().await;
@@ -169,6 +169,7 @@ pub async fn stop_craft(universe_id: mongodb::bson::oid::ObjectId, user_id: u64)
     Ok(removed_craft)
 }
 
+#[allow(dead_code)]
 pub async fn setup() {
     let _db_client = crate::database::db_client::get_db_client().await;
     let universes = crate::database::universe::Universe::get_all_universes().await.unwrap_or_default();

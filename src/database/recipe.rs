@@ -22,6 +22,7 @@ pub struct Recipe {
 }
 
 impl Recipe {
+    #[allow(dead_code)]
     pub async fn save(self) -> mongodb::error::Result<InsertOneResult> {
         let db_client = get_db_client().await;
         db_client

@@ -133,7 +133,7 @@ impl LootTable {
         
         // Supprime l'item s'il est directement dans entries (LootTableEntry::Item)
         // Ou s'il est à l'intérieur d'un Set dans entries (LootTableEntry::Set -> items)
-        let update = doc! {
+        let _update = doc! {
             "$pull": {
                 "entries": {
                     "$or": [
@@ -152,7 +152,7 @@ impl LootTable {
         // Utilisons deux étapes ou une requête plus précise si possible.
         
         // Étape 1: Retirer l'item s'il est directement dans entries
-        let res1 = db_client
+        let _res1 = db_client
             .database(VERSEENGINE_DB_NAME)
             .collection::<LootTable>(LOOT_TABLES_COLLECTION_NAME)
             .update_many(filter.clone(), doc! {

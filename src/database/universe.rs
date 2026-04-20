@@ -747,7 +747,7 @@ pub async fn get_universe_by_server_id(
 }
 #[cfg(test)]
 mod test {
-    use crate::database::db_client::{connect_db, DB_CLIENT, get_db_client};
+    use crate::database::db_client::{get_db_client};
     use crate::database::db_namespace::{VERSEENGINE_DB_NAME, UNIVERSES_COLLECTION_NAME};
     use crate::database::universe::{get_universe_by_id, get_universe_by_server_id, Universe};
     use mongodb::bson::doc;

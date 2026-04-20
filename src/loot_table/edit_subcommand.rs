@@ -7,7 +7,6 @@ use crate::discord::poise_structs::{Context, Error};
 use crate::loot_table::execute_loot_table_modal;
 use crate::utility::loot_table_parser::LootTableParser;
 use crate::utility::reply::reply;
-use futures::TryStreamExt;
 
 #[poise::command(slash_command, guild_only, rename = "loot_table_edit")]
 pub async fn edit(

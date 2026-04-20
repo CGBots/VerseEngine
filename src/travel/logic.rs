@@ -430,6 +430,7 @@ pub async fn next_step_logic(actual_move: &PlayerMove) -> Result<PlayerMove, any
 }
 
 //Method to recover moves from database
+#[allow(dead_code)]
 pub async fn setup(){
     let universes = match crate::database::universe::Universe::get_all_universes().await {
         Ok(u) => u,
@@ -847,6 +848,7 @@ pub async fn add_travel(http: Arc<Http>, guild_id: u64, mut player_move: PlayerM
     Ok(())
 }
 
+#[allow(dead_code)]
 pub async fn remove_travel(user_id: u64) {
     remove_move(user_id).await;
 }

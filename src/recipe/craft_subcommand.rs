@@ -8,8 +8,7 @@ use crate::database::server::get_server_by_id;
 use crate::database::tool::Tool;
 use crate::database::craft::PlayerCraft;
 use crate::discord::poise_structs::{Context, Error};
-use crate::recipe::recipe;
-use crate::utility::reply::{reply, reply_with_args_and_ephemeral};
+use crate::utility::reply::{reply_with_args_and_ephemeral};
 use crate::craft::logic::add_craft;
 
 /// Fabrique un objet à partir d'une recette.

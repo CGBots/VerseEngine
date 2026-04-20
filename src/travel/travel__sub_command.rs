@@ -10,7 +10,6 @@ use crate::utility::reply::{reply, reply_with_args};
 use futures::{TryStreamExt};
 use poise::{CreateReply};
 use crate::database::road::{get_road, get_road_by_channel_id, get_road_by_source, Road};
-use crate::roads::road;
 
 fn parse_channel_id(input: &str) -> Option<u64> {
     if let Ok(id) = input.parse::<u64>() {
@@ -25,7 +24,7 @@ fn parse_channel_id(input: &str) -> Option<u64> {
 }
 
 #[poise::command(slash_command, guild_only, subcommands("stop", "start"), rename = "travel")]
-pub async fn travel(ctx: Context<'_>) -> Result<(), Error> {
+pub async fn travel(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
@@ -63,7 +62,7 @@ pub async fn start(
     match destination {
         None => {travel_without_destination(ctx).await?}
         Some(dest) => {
-            let error = match _travel(ctx, dest).await {
+            let _error = match _travel(ctx, dest).await {
                 Ok(_) => return Ok(()),
                 Err(e) => reply(ctx, Err(e)).await,
             };}
@@ -224,7 +223,7 @@ async fn travel_without_destination(ctx: Context<'_>) -> Result<(), Error>{
             };
 
             if available_roads.is_empty(){
-                reply(ctx, Err("travel__no_road_available".into())).await;
+                let _ = reply(ctx, Err("travel__no_road_available".into())).await;
                 return Ok(());
             }
 

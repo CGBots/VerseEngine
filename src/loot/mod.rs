@@ -1,6 +1,6 @@
 pub mod logic;
 use crate::database::items::get_item_by_name;
-use crate::database::inventory::{Inventory, HolderType};
+use crate::database::inventory::{Inventory};
 use rand::RngExt;
 use crate::database::characters::get_character_by_user_id;
 use crate::database::loot_tables::{get_loot_table_by_channel_id, LootTable, LootTableEntry};
@@ -399,7 +399,6 @@ impl LootTable {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use mongodb::bson::oid::ObjectId;
     use crate::database::loot_tables::{LootTable, LootTableEntry, LootTableItem, LootTableSet};
 
