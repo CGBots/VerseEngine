@@ -294,4 +294,37 @@ impl Inventory {
         let cursor = collection.find(filter).await?;
         cursor.try_collect().await
     }
+
+    pub async fn remove_all_by_item_id(universe_id: ObjectId, item_id: ObjectId) -> mongodb::error::Result<u64> {
+        let db_client = get_db_client().await;
+        let filter = doc! {
+            "universe_id": universe_id,
+            "item_id": item_id
+        };
+
+        let result = db_client
+            .database(VERSEENGINE_DB_NAME)
+            .collection::<Inventory>(INVENTORY_COLLECTION_NAME)
+            .delete_many(filter)
+            .await?;
+
+        Ok(result.deleted_count)
+    }
+
+    pub async fn get_all_holders_by_item_id(universe_id: ObjectId, item_id: ObjectId) -> mongodb::error::Result<Vec<Inventory>> {
+        let db_client = get_db_client().await;
+        let filter = doc! {
+            "universe_id": universe_id,
+            "item_id": item_id,
+            "quantity": { "$gt": 0 }
+        };
+
+        let cursor = db_client
+            .database(VERSEENGINE_DB_NAME)
+            .collection::<Inventory>(INVENTORY_COLLECTION_NAME)
+            .find(filter)
+            .await?;
+
+        cursor.try_collect().await
+    }
 }

@@ -18,7 +18,19 @@ start_message = Start Message
     Dans un setup partiel, seule la catégorie route et les rôles seront créés.
     Dans un setup complet, les catégories Admin, hors rp, rp et leurs selons sont également créés en plus.
 
-#Tables de loot_table
+carousel__previous_button = Précédent
+carousel__next_button = Suivant
+carousel__refresh_button = Actualiser
+
+#Loot
+loot = loot
+    .description = Actions liées à la fouille de zones
+loot_search = search
+    .description = Commencer à fouiller la zone actuelle
+loot_stop = stop
+    .description = Arrêter la fouille en cours
+
+#Tables de loot
 loot_table = loot_table
     .description = Gérer les tables de butin
 loot_table_edit = modifier
@@ -139,13 +151,37 @@ loot_table__deleted_log = La table de butin du salon <#{$channel_id}> a été su
 loot_table__rate_limited = Temps de recharge
     .title = Temps de recharge
     .message = Vous devez attendre encore {$error} secondes avant de pouvoir fouiller à nouveau cette zone.
+loot_table__loot_started = Fouille commencée
+    .title = Fouille commencée
+    .message = Vous commencez à fouiller la zone. Cela va prendre {$error} secondes.
+loot_table__loot_finished_title = Fouille terminée
+loot_table__loot_finished_message = Votre fouille dans l'univers **{$universe}** avec **{$character}** est terminée ! Vous avez trouvé : {$items}
+loot_table__loot_finished_late_message = Votre fouille dans l'univers **{$universe}** avec **{$character}** s'est terminée avec succès (un peu tardivement pour des raisons techniques) ! Vous avez trouvé : {$items}
+loot_table__already_moving = Voyage en cours
+    .title = Action impossible
+    .message = Vous ne pouvez pas fouiller pendant que vous voyagez.
+loot_table__already_crafting = Craft en cours
+    .title = Action impossible
+    .message = Vous ne pouvez pas fouiller pendant que vous fabriquez quelque chose.
+loot_table__already_looting = Fouille déjà en cours
+    .title = Action impossible
+    .message = Vous êtes déjà en train de fouiller une zone.
+loot_table__not_in_loot = Pas de fouille en cours
+    .title = Action impossible
+    .message = Vous n'êtes pas en train de fouiller actuellement.
+loot_table__stopped = Fouille annulée
+    .title = Succès
+    .message = Votre fouille a été annulée.
 loot_table__item_line = - {$item_name}
 loot_table__item_line_quantity = - {$item_name} (x{$quantity})
 loot_table__item_not_found = - {$item_name} (x{$quantity}) (Objet inexistant dans la base de données)
 loot_table__item_db_error = - {$item_name} (x{$quantity}) (Erreur de base de données: {$error})
 create_item__invalid_name = Nom d'objet invalide
-    .title = Nom d'objet invalide
-    .message = Nom d'objet invalide : {$name}. Seuls les caractères alphanumériques, espaces, tirets et underscores sont autorisés.
+    .title = Nom incorrect
+    .message = Le nom de l'objet **{$name}** contient des caractères non autorisés. Seuls les caractères alphanumériques, espaces, tirets et underscores sont autorisés.
+create_item__already_exists = Un objet avec ce nom existe déjà dans cet univers.
+    .title = Création impossible
+    .message = Un objet portant ce nom existe déjà dans cet univers.
 
 #Stats
 stat_insert__failed = Échec de l'insertion des statistiques
@@ -213,6 +249,8 @@ character = personnage
     .description = Commandes de gestion des personnages.
 character_create_character = nouveau_personnage
     .description = Permet de créer votre personnage dans l'univers. Un seul personnage par joueur.
+character_inventory = inventaire
+    .description = Permet au joueur de consulter l'inventaire de son personnage.
 
 #Travels
 travel = voyage
@@ -626,7 +664,138 @@ travel__no_road_available = Aucune route disponible
     .title = Aucune route disponible
     .message = Aucune route ne semble disponible depuis cet endroit. Peut-être qu'une route secrète existe ?
 
-# Temps Universel
+#Recipes
+recipe = recette
+    .description = Gérer les recettes de fabrication
+recipe_create = creer
+    .description = Créer une nouvelle recette
+    .name = nom
+    .name-description = Nom de la recette
+    .delay = delai
+    .delay-description = Délai de fabrication en secondes
+recipe_craft = fabriquer
+    .description = Fabriquer un objet à partir d'une recette
+    .recipe_name = nom_recette
+    .recipe_name-description = Nom de la recette à utiliser
+
+recipe__modal_title = Éditeur de recette
+recipe__modal_field_name = Contenu de la recette
+recipe__modal_placeholder = # Guide de syntaxe des Recettes
+    - `> [nom de l'item] [quantité]` : Item obtenu (résultat).
+    - `< [nom de l'item] [quantité]` : Item utilisé (ingrédient).
+    - `- [nom de l'item]` : Outil nécessaire (non consommé).
+    
+    Exemple :
+    ```
+    - Enclume
+    - Marteau
+    < Lingot de fer 2
+    < Charbon 1
+    > Épée en fer 1
+    ```
+
+recipe__server_not_found = Serveur non trouvé
+    .title = Serveur non trouvé
+    .message = Le serveur n'a pas été trouvé.
+recipe__character_not_found = Personnage non trouvé
+    .title = Personnage non trouvé
+    .message = Vous n'avez pas de personnage dans cet univers.
+recipe__item_not_found = Objet non trouvé
+    .title = Objet non trouvé
+    .message = L'objet "{$name}" n'existe pas dans la base de données de cet univers.
+recipe__not_found = Recette non trouvée
+    .title = Recette non trouvée
+    .message = Aucune recette nommée "{$recipe_name}" n'a été trouvée.
+recipe__missing_tool = Outil manquant
+    .title = Outil manquant
+    .message = Il vous manque un ou plusieurs outils nécessaires pour cette recette.
+recipe__missing_ingredient = Ingrédient manquant
+    .title = Ingrédient manquant
+    .message = Vous n'avez pas tous les ingrédients nécessaires dans votre inventaire.
+recipe__create_success = Recette créée
+    .title = Succès
+    .message = La recette a été enregistrée avec succès.
+recipe__no_permission = Vous n'avez pas la permission de créer une recette.
+    .title = Erreur
+    .message = Vous devez être administrateur ou avoir le rôle de joueur pour créer une recette.
+recipe__submit_success = Soumission réussie
+    .title = Succès
+    .message = Votre recette a été soumise pour approbation.
+recipe__validation_title = Validation de Recette
+recipe__delay_field = Délai (sec)
+recipe__creator_field = Créateur
+recipe__into_wiki_field = Wiki
+recipe__submit_notification = @here Une nouvelle fiche de recette est en attente de vérification :
+recipe__approve = Approuver
+recipe__reject = Refuser
+recipe__modify = Modifier
+recipe__approved = Recette approuvée
+    .title = Approuvé
+    .message = La recette a été approuvée et enregistrée.
+recipe__rejected = Recette refusée
+    .title = Refusé
+    .message = La recette a été refusée.
+recipe__modified = Recette modifiée
+    .title = Modifié
+    .message = La recette a été modifiée avec succès.
+recipe__invalid_embed = Embed invalide
+    .title = Erreur
+    .message = L'embed de la recette est invalide ou corrompu.
+recipe__no_embed = Embed manquant
+    .title = Erreur
+    .message = Impossible de trouver l'embed de la recette.
+recipe__no_content = Contenu manquant
+    .title = Erreur
+    .message = La recette ne contient aucun texte.
+recipe__guild_only = Serveur requis
+    .title = Erreur
+    .message = Cette action doit être effectuée dans un serveur Discord.
+recipe__craft_success = Fabrication réussie
+    .title = Fabrication réussie: {$recipe_name}
+    .message = Vous avez fabriqué l'objet avec succès !
+recipe__craft_started = Fabrication commencée
+    .title = Fabrication de {$recipe_name}
+    .message = La fabrication a commencée. Temps restant : **{$delay}** secondes.
+recipe__craft_finished_title = Craft terminé
+recipe__craft_finished_message = Vous avez terminé la fabrication de **{$recipe_name}** dans l'univers **{$universe}**.
+recipe__craft_finished_late_message = Votre fabrication de **{$recipe_name}** dans l'univers **{$universe}** est terminée ! Elle a pris du retard pour des raisons techniques, nous vous prions de nous en excuser.
+recipe__craft_stopped = Craft annulé
+    .title = Annulation réussie
+    .message = Le craft en cours a été annulé. (Les ingrédients déjà consommés ne sont pas rendus)
+recipe__no_craft_in_progress = Aucun craft en cours
+    .title = Erreur
+    .message = Vous n'avez aucun craft en cours.
+recipe__cannot_craft_while_moving = Déplacement en cours
+    .title = Erreur
+    .message = Vous ne pouvez pas crafter pendant que vous vous déplacez.
+recipe__craft_already_in_progress = Craft déjà en cours
+    .title = Erreur
+    .message = Vous avez déjà un craft en cours.
+travel__cannot_move_while_crafting = Craft en cours
+    .title = Erreur
+    .message = Vous ne pouvez pas vous déplacer pendant que vous craftez. Utilisez `/recipe stop` pour annuler le craft.
+recipe__empty_recipe = Recette vide
+    .title = Erreur
+    .message = La recette doit contenir au moins un ingrédient ou un résultat.
+recipe__invalid_line = Ligne invalide
+    .title = Erreur de syntaxe
+    .message = Une ligne de la recette est mal formée.
+recipe__error_during_consumption = Erreur de consommation
+    .title = Erreur critique
+    .message = Une erreur est survenue lors de la consommation des ingrédients.
+recipe__slash_only = Slash commande uniquement
+    .title = Erreur
+    .message = Cette commande ne peut être utilisée que comme commande slash.
+recipe__recipe_instructions = # Guide de syntaxe des Recettes
+    - `> [nom de l'item] [quantité]` : Item obtenu (résultat).
+    - `< [nom de l'item] [quantité]` : Item utilisé (ingrédient).
+    - `- [nom de l'item]` : Outil nécessaire (non consommé).
+    - La quantité est de 1 par défaut si non renseignée.
+    - Les lignes commençant par `#` sont des commentaires.
+    - __Note__ : Vous devez posséder les outils dans votre inventaire ou ils doivent être placés dans le salon.
+    
+
+#Temps Universel
 time = temps
 universe_time__current_time = Heure de l'univers
     .title = Temps Universel
@@ -683,6 +852,7 @@ item_no_description = _Pas de description_
 item_placed_success = Objet placé !
     .title = Objet placé !
     .message = Vous avez placé **{$item_name}** dans **#{$channel_name}**.
+item_placed_rp = _**{$item_name}** a été placé par **{$character_name}**._
 item_immutable_footer = Cet objet est immuable.
 
 ItemUsage = ItemUsage
@@ -694,10 +864,14 @@ None = Autre
 inventory__empty = Inventaire vide
     .title = Inventaire vide
     .message = Vous n'avez aucun objet dans votre inventaire.
+inventory__empty_description = _L'inventaire est vide._
+inventory__refresh_button = Actualiser
 inventory__lookup_hint = Utilisez `/item lookup [id]` pour plus de précision.
-inventory__sent_dm = Inventaire envoyé
-    .title = Inventaire envoyé
-    .message = Votre inventaire vous a été envoyé en message privé.
+inventory__title = Inventaire de {$character_name}
+inventory__universe_field = Univers
+inventory__previous_button = Précédent
+inventory__next_button = Suivant
+inventory__page_footer = Page {$current} sur {$total} - Utilisez `/item lookup [ID]` pour voir les détails d'un item
 inventory__not_in_guild = Serveur uniquement
     .title = Serveur uniquement
     .message = Cette commande doit être utilisée dans un serveur.
@@ -722,6 +896,21 @@ item__server_not_found = Serveur non trouvé
 item__not_placeable = Objet non plaçable
     .title = Objet non plaçable
     .message = Cet objet ne peut pas être placé.
+item__no_permission = Permissions insuffisantes
+    .title = Permissions insuffisantes
+    .message = Vous n'avez pas les permissions nécessaires (administrateur ou rôle joueur) pour créer un objet.
+item__no_usage = Usage de l'objet non trouvé
+    .title = Données manquantes
+    .message = L'usage de l'objet n'a pas pu être déterminé à partir du message de validation.
+item__no_embed = Embed non trouvé
+    .title = Données manquantes
+    .message = Impossible de trouver l'embed de validation.
+item__guild_only = Serveur uniquement
+    .title = Serveur uniquement
+    .message = Cette action ne peut être effectuée que sur un serveur.
+item__invalid_embed = Embed invalide
+    .title = Erreur de données
+    .message = La structure de l'embed de validation est incorrecte.
 item__not_in_guild_channel = Pas un salon de serveur
     .title = Erreur de salon
     .message = Cette commande doit être utilisée dans un salon de serveur.
@@ -737,10 +926,45 @@ item__failed_to_remove = Échec du retrait
 create_item__db_error = Erreur de base de données
     .title = Erreur de création
     .message = Une erreur s'est produite lors de la création de l'objet en base de données.
-item_use = utiliser
-    .description = Interagir avec un objet placé dans le salon.
-    .tool_id = id_objet
-    .tool_id-description = L'ID unique de l'objet placé à utiliser.
+create_item__validation_title = Validation d'un nouvel objet
+create_item__creator_field = Créateur
+create_item__into_wiki_field = Inclure au wiki
+create_item__secret_field = Informations secrètes
+create_item__submit_success = Objet soumis
+    .title = Soumission réussie
+    .message = Votre objet a été envoyé aux administrateurs pour validation.
+create_item__approved = Objet approuvé
+    .title = Approbation réussie
+    .message = L'objet a été créé et ajouté à la base de données (et au wiki si demandé).
+create_item__rejected = Objet rejeté
+    .title = Rejet effectué
+    .message = La création de l'objet a été refusée.
+
+item__approve = Approuver
+item__reject = Rejeter
+item_delete = supprimer
+    .description = Supprime un objet de l'univers (Admin uniquement).
+    .name = nom
+    .name-description = Nom de l'objet à supprimer.
+
+item_delete__not_in_guild = Serveur uniquement
+    .title = Serveur uniquement
+    .message = Cette commande doit être utilisée dans un serveur.
+item_delete__server_not_found = Serveur non trouvé
+    .title = Serveur non trouvé
+    .message = Le serveur n'a pas été trouvé.
+item_delete__not_found = Objet non trouvé
+    .title = Objet non trouvé
+    .message = Aucun objet portant le nom **{$name}** n'a été trouvé dans cet univers.
+item_delete__notification_title = Objet Supprimé
+item_delete__notification = L'objet **{$item_name}** a été supprimé de l'univers **{$universe_name}** par un administrateur. Il a été retiré de l'inventaire de **{$character_name}**.
+item_delete__success = Objet supprimé
+    .title = Suppression réussie
+    .message = L'objet **{$name}** a été supprimé avec succès de l'univers, des inventaires et du wiki.
+    {$affected_recipes_text}
+item_delete__affected_recipes = Voici les recettes affectées par la suppression:{$affected_recipes}
+item_delete__log_affected_recipes = Recettes impactées (conservées mais incomplètes) par la suppression de **{$item_name}** :
+    {$recipes}
 
 use__universe_not_found = Univers non trouvé
     .title = Univers non trouvé
@@ -755,6 +979,9 @@ use__no_tools_found = Aucun objet trouvé
     .title = Aucun objet
     .message = Aucun objet utilisable n'a été trouvé dans ce salon.
 use__list_tools = Objets disponibles
+    .title = Objets disponibles
+    .description = Voici les objets avec lesquels vous pouvez intéragir dans ce lieu :
+    .footer = Page {$current} sur {$total} • Utilisez /item lookup [ID] pour plus de détails
     .title = Objets utilisables dans ce salon
     .message = Voici les objets avec lesquels vous pouvez interagir :
         {$tools}

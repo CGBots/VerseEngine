@@ -14,6 +14,7 @@ pub async fn edit(
     ctx: Context<'_>,
     channel_id: ChannelId,
     #[description = "Temps de recharge en secondes entre deux loots"] rate_limit: Option<u64>,
+    #[description = "Délai en secondes pour obtenir le loot"] delay: Option<u64>,
 ) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap();
     let server = get_server_by_id(guild_id.get()).await?.ok_or("loot_table__server_not_found")?;
@@ -58,7 +59,12 @@ pub async fn edit(
 
     let existing_lt = get_loot_table_by_channel_id(server.universe_id, channel_id_u64).await?;
     let default_content = existing_lt.as_ref().map(|lt| lt.raw_text.clone()).unwrap_or_default();
-    let last_loot = existing_lt.and_then(|lt| lt.last_loot);
+    let last_loot = existing_lt.as_ref().and_then(|lt| lt.last_loot.clone());
+    let existing_delay = existing_lt.as_ref().and_then(|lt| lt.delay);
+    let existing_rate_limit = existing_lt.as_ref().and_then(|lt| lt.rate_limit);
+
+    let delay = delay.or(existing_delay);
+    let rate_limit = rate_limit.or(existing_rate_limit);
 
     let modal_result = match ctx {
         poise::Context::Application(app_ctx) => {
@@ -79,6 +85,7 @@ pub async fn edit(
                     entries: entries.clone(),
                     raw_text: modal_data.content,
                     rate_limit,
+                    delay,
                     last_loot,
                 };
                 loot_table.save_or_update().await?;

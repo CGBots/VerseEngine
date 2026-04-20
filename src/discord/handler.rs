@@ -11,6 +11,10 @@ use poise::serenity_prelude::{EventHandler};
 #[cfg(not(test))] use serenity::all::ActivityData;
 use serenity::all::{CreateInteractionResponse, CreateInteractionResponseMessage, Interaction, Member};
 use crate::characters::create_character_sub_command::{accept_character, choose_character_place, delete_character, modify_character, refuse_character, submit_character};
+use crate::characters::inventory_subcommand::handle_inventory_interaction;
+use crate::item::use_subcommand::handle_tool_selection_interaction;
+use crate::recipe::create_subcommand::{approve_recipe, reject_recipe, modify_recipe_interaction};
+use crate::item::create_item_subcommand::{approve_item, reject_item};
 #[allow(unused_imports)]
 use crate::translation::{apply_translations, tr};
 use crate::tr_locale;
@@ -85,6 +89,8 @@ impl EventHandler for Handler {
     async fn ready(&self, _ctx: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
         let _ = crate::travel::logic::setup().await;
+        let _ = crate::craft::logic::setup().await;
+        let _ = crate::loot::logic::setup().await;
         let _ = crate::universe::time::setup_universal_time().await;
     }
 
@@ -100,8 +106,51 @@ impl EventHandler for Handler {
                     "create_character__accept_character" => accept_character(ctx.clone(), modal.clone()).await,
                     "create_character__modify_character" => modify_character(ctx.clone(), modal.clone()).await,
                     "create_character__choose_place" => choose_character_place(ctx.clone(), modal.clone()).await,
+                    "recipe__approve" => approve_recipe(ctx.clone(), modal.clone()).await,
+                    "recipe__reject" => reject_recipe(ctx.clone(), modal.clone()).await,
+                    "recipe__modify" => modify_recipe_interaction(ctx.clone(), modal.clone()).await,
                     "select__menu__chose_destination" => travel_from_handler(ctx.clone(), modal.clone()).await,
-                    _ => return,
+                    _ => {
+                        if modal_data.starts_with("item:") {
+                            let parts: Vec<&str> = modal_data.split(':').collect();
+                            if parts.len() == 3 {
+                                // format: item:approve/reject:into_wiki
+                                let action = parts[1];
+                                let into_wiki = parts[2] == "true";
+                                if action == "approve" {
+                                    approve_item(ctx.clone(), modal.clone(), into_wiki).await
+                                } else {
+                                    reject_item(ctx.clone(), modal.clone(), into_wiki).await
+                                }
+                            } else {
+                                return;
+                            }
+                        } else if modal_data.starts_with("inv:") {
+                            let parts: Vec<&str> = modal_data.split(':').collect();
+                            if parts.len() == 5 {
+                                // format: inv:action:char_id:univ_id:page
+                                let char_id = parts[2];
+                                let univ_id = parts[3];
+                                let page = parts[4].parse::<usize>().unwrap_or(0);
+                                handle_inventory_interaction(ctx.clone(), modal.clone(), char_id, univ_id, page).await
+                            } else {
+                                return;
+                            }
+                        } else if modal_data.starts_with("tool_sel:") {
+                            let parts: Vec<&str> = modal_data.split(':').collect();
+                            if parts.len() == 5 {
+                                // format: tool_sel:action:univ_id:chan_id:page
+                                let univ_id = parts[2];
+                                let chan_id = parts[3];
+                                let page = parts[4].parse::<usize>().unwrap_or(0);
+                                handle_tool_selection_interaction(ctx.clone(), modal.clone(), univ_id, chan_id, page).await
+                            } else {
+                                return;
+                            }
+                        } else {
+                            return;
+                        }
+                    }
                 };
 
                 if let Err(e) = result {

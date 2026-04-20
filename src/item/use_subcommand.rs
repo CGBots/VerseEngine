@@ -5,14 +5,13 @@ use crate::database::universe::get_universe_by_server_id;
 use crate::database::db_client::get_db_client;
 use crate::database::items::{get_item_by_name, get_item_by_id};
 use crate::discord::poise_structs::{Context, Error, Data};
-use crate::utility::reply::reply_with_args_and_ephemeral;
-use crate::translation::get;
+use crate::utility::carousel::{CarouselConfig, CarouselPage, create_carousel_embed, create_carousel_components, paginate_text};
+use crate::translation::{get, get_by_locale};
 use fluent::FluentArgs;
 use mongodb::bson::oid::ObjectId;
 use serenity::all::{CreateInteractionResponse};
 use serenity::json::json;
 use std::str::FromStr;
-use crate::tr;
 
 #[poise::command(slash_command, guild_only, rename = "use")]
 pub async fn item_use(
@@ -44,20 +43,18 @@ pub async fn item_use(
         None => {
             // List tools in the current channel
             let channel_id = ctx.channel_id();
-            let tools = Tool::get_by_channel_id(universe.universe_id, channel_id.get()).await?;
-            
-            if tools.is_empty() {
-                return Err("error:use__no_tools_found".into());
-            }
+            let (embed, components) = create_tool_selection_page(
+                0,
+                universe.universe_id,
+                channel_id.get(),
+                ctx.locale().unwrap_or("fr")
+            ).await?;
 
-            let mut tool_list = String::new();
-            for tool in tools {
-                tool_list.push_str(&format!("- **{}** (ID: `{}`)\n", tool.name, tool._id.unwrap().to_hex()));
-            }
-
-            let mut args = FluentArgs::new();
-            args.set("tools", tool_list);
-            reply_with_args_and_ephemeral(ctx, Ok("use__list_tools"), Some(args), true).await?;
+            ctx.send(poise::CreateReply::default()
+                .embed(embed)
+                .components(components)
+                .ephemeral(true)
+            ).await?;
         }
         Some(id) => {
             let tool = match Tool::get_by_id(id).await? {
@@ -408,4 +405,75 @@ async fn process_use_transfer_with_session(
     }
 
     Ok(())
+}
+
+pub async fn create_tool_selection_page(
+    page_idx: usize,
+    universe_id: ObjectId,
+    channel_id: u64,
+    locale: &str,
+) -> Result<(serenity::all::CreateEmbed, Vec<serenity::all::CreateActionRow>), Error> {
+    let tools = Tool::get_by_channel_id(universe_id, channel_id).await?;
+
+    let mut tools_text = Vec::new();
+    for tool in tools {
+        tools_text.push(format!("- **{}** (ID: `{}`)", tool.name, tool._id.unwrap().to_hex()));
+    }
+
+    let items_per_page = 15;
+    let empty_msg = get_by_locale(locale, "use__no_tools_found", None, None);
+    let pages = paginate_text(&tools_text, items_per_page, &empty_msg);
+
+    let total_pages = pages.len();
+    let current_page = page_idx.min(total_pages - 1);
+
+    let mut footer_args = FluentArgs::new();
+    footer_args.set("current", current_page + 1);
+    footer_args.set("total", total_pages);
+
+    let carousel_page = CarouselPage {
+        title: get_by_locale(locale, "use__list_tools", None, None),
+        description: pages[current_page].clone(),
+        fields: vec![],
+        footer: get_by_locale(locale, "use__list_tools", Some("footer"), Some(&footer_args)),
+        color: serenity::all::Colour::ORANGE,
+    };
+
+    let carousel_config = CarouselConfig {
+        prefix: "tool_sel".to_string(),
+        current_page,
+        total_pages,
+        metadata: vec![universe_id.to_hex(), channel_id.to_string()],
+    };
+
+    let embed = create_carousel_embed(carousel_page);
+    let components = create_carousel_components(carousel_config, locale);
+
+    Ok((embed, components))
+}
+
+pub async fn handle_tool_selection_interaction(
+    ctx: serenity::all::Context,
+    component: serenity::all::ComponentInteraction,
+    universe_id_hex: &str,
+    channel_id_str: &str,
+    page: usize,
+) -> Result<&'static str, Error> {
+    let universe_id = ObjectId::parse_str(universe_id_hex).map_err(|_| "Invalid universe ID")?;
+    let channel_id = channel_id_str.parse::<u64>().map_err(|_| "Invalid channel ID")?;
+
+    let (embed, components) = create_tool_selection_page(
+        page,
+        universe_id,
+        channel_id,
+        component.locale.as_str()
+    ).await?;
+
+    component.create_response(&ctx, serenity::all::CreateInteractionResponse::UpdateMessage(
+        serenity::all::CreateInteractionResponseMessage::new()
+            .embed(embed)
+            .components(components)
+    )).await?;
+
+    Ok("")
 }

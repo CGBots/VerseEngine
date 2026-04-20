@@ -88,11 +88,13 @@ pub(crate) static TEST_PASSED: Mutex<VecDeque<bool>> = Mutex::new(VecDeque::new(
 ///     }
 /// }
 /// ```
+use crate::recipe::recipe;
+
 pub async fn connect_bot() -> Result<Client, ()>{
     tracing_subscriber::fmt::init();
     
     
-    let mut commands= vec![ping(), universe(), start(), place(), road(), character(), travel(), support_command(), item(), loot_table(), loot()];
+    let mut commands= vec![ping(), universe(), start(), place(), road(), character(), travel(), support_command(), item(), loot_table(), loot(), recipe()];
     
     
     let translations = translation::read_ftl().expect("failed to read translation files");
@@ -155,6 +157,14 @@ pub async fn connect_bot() -> Result<Client, ()>{
         
         {
             let mut http_client = crate::travel::logic::HTTP_CLIENT.lock().await;
+            *http_client = Some(client.http.clone());
+        }
+        {
+            let mut http_client = crate::craft::logic::HTTP_CLIENT.lock().await;
+            *http_client = Some(client.http.clone());
+        }
+        {
+            let mut http_client = crate::loot::logic::HTTP_CLIENT.lock().await;
             *http_client = Some(client.http.clone());
         }
 

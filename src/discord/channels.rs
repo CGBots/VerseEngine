@@ -5,6 +5,7 @@ use crate::discord::poise_structs::Context;
 pub static SPACE_TAG: &str = "space";
 pub static PLACE_TAG: &str = "place";
 pub static ITEM_TAG: &str = "item";
+pub static RECIPE_TAG: &str = "recipe";
 
 /// Generates a set of permission overwrites for a "road" category to control access for different user roles.
 ///

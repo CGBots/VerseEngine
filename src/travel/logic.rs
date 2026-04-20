@@ -635,6 +635,11 @@ pub async fn manage_roles(http: Arc<Http>, guild_id: u64, user_id: u64, role_to_
 }
 
 pub async fn add_travel(http: Arc<Http>, guild_id: u64, mut player_move: PlayerMove) -> Result<(), anyhow::Error> {
+    // Vérifier si un craft est en cours
+    if let Ok(Some(_)) = crate::database::craft::PlayerCraft::get_by_user_id(player_move.universe_id, player_move.user_id).await {
+        bail!("travel__cannot_move_while_crafting");
+    }
+
     // Initialise les flags de base
     player_move.is_in_move = true;
     player_move.is_end = false;

@@ -8,9 +8,8 @@ use crate::database::tool::Tool;
 use crate::discord::poise_structs::{Context, Error};
 use crate::item::ItemUsage;
 
-use crate::tr;
 use fluent::FluentArgs;
-use crate::utility::reply::{reply, reply_with_args};
+use crate::utility::reply::{reply, reply_with_args_and_ephemeral};
 
 /// Place un objet dans le salon actuel.
 #[poise::command(slash_command, guild_only)]
@@ -20,7 +19,11 @@ pub async fn item_place(
     immutable: Option<bool>,
 ) -> Result<(), Error> {
     match _item_place(ctx, inventory_id, immutable).await{
-        Ok((res, args)) => {reply_with_args(ctx, Ok(res), Some(args)).await?;}
+        Ok((res, args, rp_args)) => {
+            reply_with_args_and_ephemeral(ctx, Ok(res), Some(args), true).await?;
+            let rp_msg = crate::translation::get(ctx, "item_placed_rp", None, Some(&rp_args));
+            ctx.channel_id().say(&ctx, rp_msg).await?;
+        }
         Err(err) => {reply(ctx, Err(err)).await?;}
     }
 
@@ -32,7 +35,7 @@ pub async fn _item_place(
     ctx: Context<'_>,
     inventory_id: String,
     immutable: Option<bool>,
-) -> Result<(&str, FluentArgs), Error> {
+) -> Result<(&str, FluentArgs<'_>, FluentArgs<'_>), Error> {
     let oid = ObjectId::parse_str(&inventory_id).map_err(|_| "item__invalid_id")?;
     
     let server = get_server_by_id(ctx.guild_id().unwrap().get())
@@ -115,5 +118,9 @@ pub async fn _item_place(
     args.set("item_name", item.item_name.clone());
     args.set("channel_name", channel.name.clone());
 
-    Ok(("item_placed_success", args))
+    let mut rp_args = FluentArgs::new();
+    rp_args.set("item_name", item.item_name.clone());
+    rp_args.set("character_name", character.name.clone());
+
+    Ok(("item_placed_success", args, rp_args))
 }

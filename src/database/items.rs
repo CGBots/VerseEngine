@@ -24,17 +24,6 @@ pub struct Item {
     pub inventory_size: u64,
 }
 
-impl Item {
-    pub async fn save(self) -> mongodb::error::Result<InsertOneResult> {
-        let db_client = get_db_client().await;
-        db_client
-            .database(VERSEENGINE_DB_NAME)
-            .collection::<Item>(ITEM_COLLECTION_NAME)
-            .insert_one(self)
-            .await
-    }
-}
-
 pub async fn get_item_by_name(universe_id: ObjectId, item_name: &str) -> mongodb::error::Result<Option<Item>> {
     let db_client = get_db_client().await;
     let filter = doc! {"universe_id": universe_id, "item_name": item_name};
@@ -53,4 +42,26 @@ pub async fn get_item_by_id(item_id: ObjectId) -> mongodb::error::Result<Option<
         .collection::<Item>(ITEM_COLLECTION_NAME)
         .find_one(filter)
         .await
+}
+
+impl Item {
+    pub async fn save(self) -> mongodb::error::Result<InsertOneResult> {
+        let db_client = get_db_client().await;
+        db_client
+            .database(VERSEENGINE_DB_NAME)
+            .collection::<Item>(ITEM_COLLECTION_NAME)
+            .insert_one(self)
+            .await
+    }
+
+    pub async fn delete(universe_id: ObjectId, item_name: &str) -> mongodb::error::Result<bool> {
+        let db_client = get_db_client().await;
+        let filter = doc! {"universe_id": universe_id, "item_name": item_name};
+        let result = db_client
+            .database(VERSEENGINE_DB_NAME)
+            .collection::<Item>(ITEM_COLLECTION_NAME)
+            .delete_one(filter)
+            .await?;
+        Ok(result.deleted_count > 0)
+    }
 }

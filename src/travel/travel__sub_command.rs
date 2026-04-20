@@ -3,6 +3,7 @@ use serenity::all::{CreateActionRow, CreateSelectMenuOption, ComponentInteractio
 use crate::database::places::{get_place_by_category_id,};
 use crate::database::server::{get_server_by_id, Server};
 use crate::database::travel::{PlayerMove, SpaceType};
+use crate::database::craft::PlayerCraft;
 use crate::discord::poise_structs::{Context, Error};
 use crate::travel::logic::{add_travel, stop_travel};
 use crate::utility::reply::{reply, reply_with_args};
@@ -50,6 +51,10 @@ pub async fn start(
         Ok(Some(m)) => m,
         _ => {return Err("travel__character_not_found".into())}
     };
+
+    if let Ok(Some(_)) = PlayerCraft::get_by_user_id(server.universe_id, ctx.author().id.get()).await {
+        return Err("travel__cannot_move_while_crafting".into());
+    }
 
     if player_move.is_in_move && player_move.actual_space_type == SpaceType::Road {
         // Le joueur est sur une route, on l'arrête
@@ -283,6 +288,10 @@ pub async fn travel_from_handler(ctx: SerenityContext, interaction: ComponentInt
         Ok(Some(m)) => m,
         _ => {return Err("travel__character_not_found".into())}
     };
+
+    if let Ok(Some(_)) = PlayerCraft::get_by_user_id(server.universe_id, interaction.user.id.get()).await {
+        return Err("travel__cannot_move_while_crafting".into());
+    }
 
     match player_move.actual_space_type {
         SpaceType::Road => {

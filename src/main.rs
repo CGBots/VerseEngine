@@ -9,6 +9,7 @@ mod utility;
 mod place;
 mod roads;
 mod characters;
+mod craft;
 mod travel;
 mod tip;
 mod item;
