@@ -7,7 +7,7 @@ use crate::database::loot_tables::{get_loot_table_by_channel_id, LootTable, Loot
 use crate::database::server::get_server_by_id;
 use crate::database::universe::{get_universe_by_server_id, get_servers_from_universe};
 use crate::discord::poise_structs::{Context, Error};
-use crate::utility::reply::{reply_with_args, reply_with_args_and_ephemeral};
+use crate::utility::reply::reply_with_args_and_ephemeral;
 use fluent::FluentArgs;
 use std::collections::HashMap;
 use serenity::all::ChannelId;
@@ -21,15 +21,11 @@ pub async fn loot(_ctx: Context<'_>) -> Result<(), Error> { Ok(()) }
 
 #[poise::command(slash_command, guild_only, rename = "loot_search")]
 pub async fn search(ctx: Context<'_>) -> Result<(), Error> {
-    let result = _loot(ctx).await;
-    match result {
-        Ok(args) => {
+    match _loot(ctx).await? {
+        Some(args) => {
             reply_with_args_and_ephemeral(ctx, Ok("loot_table__loot_success"), Some(args), true).await?;
         }
-        Err(e) => {
-            let err_msg = e.to_string();
-            reply_with_args(ctx, Err(err_msg.into()), None).await?;
-        }
+        None => {}
     }
     Ok(())
 }
@@ -43,17 +39,17 @@ pub async fn stop(ctx: Context<'_>) -> Result<(), Error> {
 
     match stop_loot(server.universe_id, ctx.author().id.get()).await {
         Ok(Some(_)) => {
-            let _ = reply_with_args(ctx, Ok("loot_table__stopped"), None).await;
+            let _ = reply_with_args_and_ephemeral(ctx, Ok("loot_table__stopped"), None, true).await;
             Ok(())
         },
         _ => {
-            let _ = reply_with_args(ctx, Ok("loot_table__not_in_loot"), None).await;
+            let _ = reply_with_args_and_ephemeral(ctx, Ok("loot_table__not_in_loot"), None, true).await;
             Ok(())
         }
     }
 }
 
-pub async fn _loot(ctx: Context<'_>) -> Result<FluentArgs<'_>, Error> {
+pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
     // check for universe
     // Check for character,
     // check channel
@@ -252,7 +248,8 @@ pub async fn _loot(ctx: Context<'_>) -> Result<FluentArgs<'_>, Error> {
 
         let mut args = FluentArgs::new();
         args.set("delay", total_delay);
-        return Err(format!("error:loot_table__loot_started:{}", total_delay).into());
+        reply_with_args_and_ephemeral(ctx, Ok("loot_table__loot_started"), Some(args), true).await?;
+        return Ok(None);
     }
 
     let mut item_counts = HashMap::new();
@@ -301,7 +298,7 @@ pub async fn _loot(ctx: Context<'_>) -> Result<FluentArgs<'_>, Error> {
     let mut args = FluentArgs::new();
     args.set("items", format!("\n{}", item_list.join("\n")));
 
-    Ok(args)
+    Ok(Some(args))
 }
 
 impl LootTable {

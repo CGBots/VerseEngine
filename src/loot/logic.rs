@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use serenity::all::{Http, UserId, CreateEmbed, Color, CreateMessage};
+use serenity::all::{Http, UserId, Color, CreateMessage, CreateInteractionResponse, CreateInteractionResponseMessage};
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -11,6 +11,7 @@ use crate::database::inventory::{Inventory, HolderType};
 use crate::database::items::get_item_by_name;
 use crate::database::universe::get_universe_by_id;
 use crate::translation::get_by_locale;
+use crate::utility::carousel::{CarouselConfig, CarouselPage, create_carousel_embed, create_carousel_components, paginate_text};
 
 pub static LOOTS: Lazy<Arc<Mutex<Vec<PlayerLoot>>>> = Lazy::new(|| Arc::new(Mutex::new(vec![])));
 pub static LOOT_SLEEPER: Lazy<Arc<Mutex<Option<JoinHandle<()>>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
@@ -88,27 +89,116 @@ async fn finalize_loot(mut loot: PlayerLoot, is_late: bool) -> Result<(), crate:
 
     // Notifier l'utilisateur
     if let Some(http) = HTTP_CLIENT.lock().await.as_ref() {
-        let mut universe_name = String::new();
-        if let Ok(Some(u)) = get_universe_by_id(loot.universe_id).await {
-            universe_name = u.name;
-        }
+        let universe_res = get_universe_by_id(loot.universe_id).await;
+        let universe = match universe_res {
+            Ok(Some(u)) => u,
+            _ => return Ok(()), // Should not happen but safety first
+        };
 
-        let mut args = FluentArgs::new();
-        args.set("items", looted_items_str.join(", "));
-        args.set("universe", universe_name.as_str());
-        args.set("character", character.name.as_str());
+        let locale = "fr"; // Default to fr for DMs for now, or we could try to get it from somewhere
+        let (embed, components) = create_loot_finished_page(
+            0,
+            &loot.items,
+            &universe.name,
+            &character.name,
+            is_late,
+            locale
+        ).await?;
 
-        let title = get_by_locale("fr", "loot_table__loot_finished_title", None, None);
-        let description_key = if is_late { "loot_table__loot_finished_late_message" } else { "loot_table__loot_finished_message" };
-        let description = get_by_locale("fr", description_key, None, Some(&args));
-
-        let embed = CreateEmbed::new()
-            .title(title)
-            .description(description)
-            .color(Color::from_rgb(0, 255, 0));
-
-        let _ = UserId::new(loot.user_id).direct_message(http, CreateMessage::new().embed(embed)).await;
+        let _ = UserId::new(loot.user_id).direct_message(http, CreateMessage::new().embed(embed).components(components)).await;
     }
+
+    Ok(())
+}
+
+pub async fn create_loot_finished_page(
+    page_idx: usize,
+    items: &[String],
+    universe_name: &str,
+    character_name: &str,
+    is_late: bool,
+    locale: &str,
+) -> Result<(serenity::all::CreateEmbed, Vec<serenity::all::CreateActionRow>), crate::discord::poise_structs::Error> {
+    let mut items_text = Vec::new();
+    for item_name in items {
+        items_text.push(format!("- {}", item_name));
+    }
+
+    // Pagination logic
+    let items_per_page = 15;
+    let empty_msg = get_by_locale(locale, "loot_table__empty_loot", None, None);
+    let pages = paginate_text(&items_text, items_per_page, &empty_msg);
+    
+    let total_pages = pages.len();
+    let current_page = page_idx.min(total_pages - 1);
+
+    // Build the page
+    let mut args = FluentArgs::new();
+    args.set("universe", universe_name);
+    args.set("character", character_name);
+    
+    let mut footer_args = FluentArgs::new();
+    footer_args.set("current", current_page + 1);
+    footer_args.set("total", total_pages);
+
+    let title = get_by_locale(locale, "loot_table__loot_finished_title", None, None);
+    let description_key = if is_late { "loot_table__loot_finished_late_message" } else { "loot_table__loot_finished_message" };
+    
+    // We want the description to include the items for the current page
+    let base_description = get_by_locale(locale, description_key, None, Some(&args));
+    let description = format!("{}\n\n{}", base_description, pages[current_page]);
+
+    let carousel_page = CarouselPage {
+        title,
+        description,
+        fields: vec![],
+        footer: get_by_locale(locale, "inventory__page_footer", None, Some(&footer_args)),
+        color: Color::from_rgb(0, 255, 0),
+    };
+
+    let carousel_config = CarouselConfig {
+        prefix: "loot_res".to_string(),
+        current_page,
+        total_pages,
+        metadata: vec![
+            universe_name.to_string(),
+            character_name.to_string(),
+            is_late.to_string(),
+            items.join(",")
+        ],
+    };
+
+    let embed = create_carousel_embed(carousel_page);
+    let components = create_carousel_components(carousel_config, locale);
+
+    Ok((embed, components))
+}
+
+pub async fn handle_loot_carousel_interaction(
+    ctx: serenity::all::Context,
+    component: serenity::all::ComponentInteraction,
+    universe_name: &str,
+    character_name: &str,
+    is_late: bool,
+    items_raw: &str,
+    page: usize,
+) -> Result<(), crate::discord::poise_structs::Error> {
+    let items: Vec<String> = items_raw.split(',').map(|s| s.to_string()).collect();
+    
+    let (embed, components) = create_loot_finished_page(
+        page,
+        &items,
+        universe_name,
+        character_name,
+        is_late,
+        component.locale.as_str()
+    ).await?;
+
+    component.create_response(&ctx, CreateInteractionResponse::UpdateMessage(
+        CreateInteractionResponseMessage::new()
+            .embed(embed)
+            .components(components)
+    )).await?;
 
     Ok(())
 }
@@ -163,16 +253,21 @@ pub async fn stop_loot(universe_id: mongodb::bson::oid::ObjectId, user_id: u64) 
 
 #[allow(dead_code)]
 pub async fn setup() {
-    let universes = crate::database::universe::Universe::get_all_universes().await.unwrap_or_default();
+    let universes = match crate::database::universe::Universe::get_all_universes().await {
+        Ok(u) => u,
+        Err(e) => panic!("Impossible d'initialiser la file de loot : erreur lors de la récupération des univers : {:?}", e),
+    };
     
     let mut all_active_loots = Vec::new();
     for universe in universes {
-        if let Ok(active_loots) = PlayerLoot::get_active_loots(universe.universe_id).await {
-            all_active_loots.extend(active_loots);
+        match PlayerLoot::get_active_loots(universe.universe_id).await {
+            Ok(active_loots) => all_active_loots.extend(active_loots),
+            Err(e) => panic!("Impossible d'initialiser la file de loot : erreur lors de la récupération des loots pour l'univers {:?} : {:?}", universe.universe_id, e),
         }
     }
 
     if all_active_loots.is_empty() {
+        println!("File de loot initialisée (0 loot en cours).");
         return;
     }
 
@@ -184,8 +279,11 @@ pub async fn setup() {
     }
 
     if pending.is_empty() {
+        println!("File de loot initialisée (0 loot en attente après traitement des loots terminés).");
         return;
     }
+
+    let pending_count = pending.len();
 
     {
         let mut loots_lock = LOOTS.lock().await;
@@ -208,4 +306,6 @@ pub async fn setup() {
         let mut sleeper = LOOT_SLEEPER.lock().await;
         *sleeper = Some(loot_process(min_delay));
     }
+
+    println!("File de loot initialisée ({} loot(s) en attente).", pending_count);
 }

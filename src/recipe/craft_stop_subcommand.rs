@@ -1,7 +1,7 @@
 use crate::discord::poise_structs::{Context, Error};
 use crate::database::server::get_server_by_id;
 use crate::craft::logic::stop_craft;
-use crate::utility::reply::reply_with_args;
+use crate::utility::reply::reply_with_args_and_ephemeral;
 
 /// Arrête le craft en cours.
 #[poise::command(slash_command, guild_only, rename = "recipe_stop")]
@@ -13,10 +13,10 @@ pub async fn stop(ctx: Context<'_>) -> Result<(), Error> {
 
     match stop_craft(server.universe_id, user_id).await {
         Ok(Some(_)) => {
-            reply_with_args(ctx, Ok("recipe__craft_stopped"), None).await?;
+            reply_with_args_and_ephemeral(ctx, Ok("recipe__craft_stopped"), None, true).await?;
         }
         _ => {
-            reply_with_args(ctx, Ok("recipe__no_craft_in_progress"), None).await?;
+            reply_with_args_and_ephemeral(ctx, Ok("recipe__no_craft_in_progress"), None, true).await?;
         }
     }
 

@@ -11,6 +11,7 @@ use poise::serenity_prelude::{EventHandler};
 #[cfg(not(test))] use serenity::all::ActivityData;
 use serenity::all::{CreateInteractionResponse, CreateInteractionResponseMessage, Interaction, Member};
 use crate::characters::create_character_sub_command::{accept_character, choose_character_place, delete_character, modify_character, refuse_character, submit_character};
+use crate::loot::logic::handle_loot_carousel_interaction;
 use crate::characters::inventory_subcommand::handle_inventory_interaction;
 use crate::item::use_subcommand::handle_tool_selection_interaction;
 use crate::recipe::create_subcommand::{approve_recipe, reject_recipe, modify_recipe_interaction};
@@ -133,6 +134,19 @@ impl EventHandler for Handler {
                                 let univ_id = parts[3];
                                 let page = parts[4].parse::<usize>().unwrap_or(0);
                                 handle_inventory_interaction(ctx.clone(), modal.clone(), char_id, univ_id, page).await
+                            } else {
+                                return;
+                            }
+                        } else if modal_data.starts_with("loot_res:") {
+                            let parts: Vec<&str> = modal_data.split(':').collect();
+                            if parts.len() == 7 {
+                                // format: loot_res:action:univ_name:char_name:is_late:items:page
+                                let univ_name = parts[2];
+                                let char_name = parts[3];
+                                let is_late = parts[4] == "true";
+                                let items_raw = parts[5];
+                                let page = parts[6].parse::<usize>().unwrap_or(0);
+                                handle_loot_carousel_interaction(ctx.clone(), modal.clone(), univ_name, char_name, is_late, items_raw, page).await.map(|_| "")
                             } else {
                                 return;
                             }

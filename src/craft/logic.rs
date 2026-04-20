@@ -171,17 +171,21 @@ pub async fn stop_craft(universe_id: mongodb::bson::oid::ObjectId, user_id: u64)
 
 #[allow(dead_code)]
 pub async fn setup() {
-    let _db_client = crate::database::db_client::get_db_client().await;
-    let universes = crate::database::universe::Universe::get_all_universes().await.unwrap_or_default();
+    let universes = match crate::database::universe::Universe::get_all_universes().await {
+        Ok(u) => u,
+        Err(e) => panic!("Impossible d'initialiser la file de craft : erreur lors de la récupération des univers : {:?}", e),
+    };
     
     let mut all_active_crafts = Vec::new();
     for universe in universes {
-        if let Ok(active_crafts) = PlayerCraft::get_active_crafts(universe.universe_id).await {
-            all_active_crafts.extend(active_crafts);
+        match PlayerCraft::get_active_crafts(universe.universe_id).await {
+            Ok(active_crafts) => all_active_crafts.extend(active_crafts),
+            Err(e) => panic!("Impossible d'initialiser la file de craft : erreur lors de la récupération des crafts pour l'univers {:?} : {:?}", universe.universe_id, e),
         }
     }
 
     if all_active_crafts.is_empty() {
+        println!("File de craft initialisée (0 craft en cours).");
         return;
     }
 
@@ -194,8 +198,11 @@ pub async fn setup() {
     }
 
     if pending.is_empty() {
+        println!("File de craft initialisée (0 craft en attente après traitement des crafts terminés).");
         return;
     }
+
+    let pending_count = pending.len();
 
     {
         let mut crafts_lock = CRAFTS.lock().await;
@@ -219,4 +226,6 @@ pub async fn setup() {
         let mut sleeper = CRAFT_SLEEPER.lock().await;
         *sleeper = Some(craft_process(min_delay));
     }
+
+    println!("File de craft initialisée ({} craft(s) en attente).", pending_count);
 }
