@@ -78,5 +78,5 @@ pub async fn execute_loot_table_modal(
     }
 }
 
-#[poise::command(slash_command, subcommands("edit"), subcommand_required, guild_only, rename = "loot_table")]
+#[poise::command(slash_command, subcommands("edit"), subcommand_required, guild_only)]
 pub async fn loot_table(_ctx: Context<'_>) -> Result<(), Error> { Ok(()) }

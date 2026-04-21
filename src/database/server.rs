@@ -609,7 +609,7 @@ mod test {
     use lazy_static::lazy_static;
     use super::*;
 
-    static SERVER_ID: u64 = 1;
+    static _SERVER_ID: u64 = 1;
 
     lazy_static! {
         pub static ref UNIVERSE_ID: ObjectId = ObjectId::new();

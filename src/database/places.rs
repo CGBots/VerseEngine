@@ -36,6 +36,7 @@ impl Place{
             .await
     }
 
+    #[allow(dead_code)]
     pub async fn get_roads(self) -> Result<Vec<Road>, mongodb::error::Error>{
         let filter = doc!{
             "$or": [
@@ -56,6 +57,7 @@ impl Place{
     }
 }
 
+#[allow(dead_code)]
 pub async fn get_places_by_universe_id(universe_id: ObjectId) -> mongodb::error::Result<mongodb::Cursor<Place>> {
     let db_client = get_db_client().await;
     db_client
@@ -79,6 +81,7 @@ pub async fn check_existing_place(universe_id: ObjectId, category_id: u64) -> mo
         .await
 }
 
+#[allow(dead_code)]
 pub async fn get_place_by_role_id(universe_id: ObjectId, role_id: u64) -> mongodb::error::Result<Option<Place>> {
     let filter = doc!{"role": role_id.to_string(), "universe_id": universe_id,};
     let db_client = get_db_client().await;

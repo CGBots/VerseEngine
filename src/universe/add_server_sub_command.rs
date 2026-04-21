@@ -16,7 +16,6 @@ use crate::utility::reply::reply;
 #[poise::command(slash_command, required_permissions = "ADMINISTRATOR", guild_only, rename = "universe_add_server")]
 pub async fn add_server(
     ctx: Context<'_>,
-    #[description = "universe_add_server.setup_type"]
     setup_type: SetupType
 ) -> Result<(), Error> {
     let Ok(_) = ctx.defer().await else { return Err("reply__reply_failed".into()) };

@@ -1,33 +1,55 @@
+pub mod logic;
 use crate::database::items::get_item_by_name;
-use crate::database::inventory::Inventory;
+use crate::database::inventory::{Inventory};
 use rand::RngExt;
 use crate::database::characters::get_character_by_user_id;
 use crate::database::loot_tables::{get_loot_table_by_channel_id, LootTable, LootTableEntry};
 use crate::database::server::get_server_by_id;
 use crate::database::universe::{get_universe_by_server_id, get_servers_from_universe};
 use crate::discord::poise_structs::{Context, Error};
-use crate::utility::reply::{reply_with_args, reply_with_args_and_ephemeral};
+use crate::utility::reply::reply_with_args_and_ephemeral;
 use fluent::FluentArgs;
 use std::collections::HashMap;
 use serenity::all::ChannelId;
 use futures::TryStreamExt;
+use crate::database::loot::PlayerLoot;
+use crate::loot::logic::{add_loot, stop_loot};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-#[poise::command(slash_command, guild_only, rename = "loot")]
-pub async fn loot(ctx: Context<'_>) -> Result<(), Error> {
-    let result = _loot(ctx).await;
-    match result {
-        Ok(args) => {
+#[poise::command(slash_command, subcommands("search", "stop"), subcommand_required, guild_only, rename = "loot")]
+pub async fn loot(_ctx: Context<'_>) -> Result<(), Error> { Ok(()) }
+
+#[poise::command(slash_command, guild_only, rename = "loot_search")]
+pub async fn search(ctx: Context<'_>) -> Result<(), Error> {
+    match _loot(ctx).await? {
+        Some(args) => {
             reply_with_args_and_ephemeral(ctx, Ok("loot_table__loot_success"), Some(args), true).await?;
         }
-        Err(e) => {
-            let err_msg = e.to_string();
-            reply_with_args(ctx, Err(err_msg.into()), None).await?;
-        }
+        None => {}
     }
     Ok(())
 }
 
-pub async fn _loot(ctx: Context<'_>) -> Result<FluentArgs<'_>, Error> {
+#[poise::command(slash_command, guild_only, rename = "loot_stop")]
+pub async fn stop(ctx: Context<'_>) -> Result<(), Error> {
+    let server = match get_server_by_id(ctx.guild_id().unwrap().get()).await {
+        Ok(Some(s)) => s,
+        _ => return Err("loot_table__server_not_found".into()),
+    };
+
+    match stop_loot(server.universe_id, ctx.author().id.get()).await {
+        Ok(Some(_)) => {
+            let _ = reply_with_args_and_ephemeral(ctx, Ok("loot_table__stopped"), None, true).await;
+            Ok(())
+        },
+        _ => {
+            let _ = reply_with_args_and_ephemeral(ctx, Ok("loot_table__not_in_loot"), None, true).await;
+            Ok(())
+        }
+    }
+}
+
+pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
     // check for universe
     // Check for character,
     // check channel
@@ -49,6 +71,24 @@ pub async fn _loot(ctx: Context<'_>) -> Result<FluentArgs<'_>, Error> {
             return Err(format!("error:loot_table__error_fetching_universe:{}", e).into());
         }
     };
+
+    let server = get_server_by_id(guild_id.get()).await?.ok_or("loot_table__server_not_found")?;
+
+    // Check if player is already moving or crafting or looting
+    if let Ok(Some(m)) = server.clone().get_player_move(user_id.get()).await {
+        if m.is_in_move {
+            return Err("loot_table__already_moving".into());
+        }
+    }
+
+    if let Ok(Some(_)) = crate::database::craft::PlayerCraft::get_by_user_id(universe.universe_id, user_id.get()).await {
+        return Err("loot_table__already_crafting".into());
+    }
+
+    if let Ok(Some(_)) = PlayerLoot::get_by_user_id(universe.universe_id, user_id.get()).await {
+        return Err("loot_table__already_looting".into());
+    }
+
     let character_res = get_character_by_user_id(universe.universe_id, user_id.get()).await;
     let character = match character_res {
         Ok(Some(c)) => c,
@@ -86,6 +126,7 @@ pub async fn _loot(ctx: Context<'_>) -> Result<FluentArgs<'_>, Error> {
         }
     };
     let mut all_looted_items = Vec::new();
+    let mut total_delay = 0;
 
     if let Some(mut channel_table) = channel_loot_table {
         if let Some(limit) = channel_table.rate_limit {
@@ -98,6 +139,10 @@ pub async fn _loot(ctx: Context<'_>) -> Result<FluentArgs<'_>, Error> {
                     }
                 }
             }
+        }
+        
+        if let Some(d) = channel_table.delay {
+            total_delay = total_delay.max(d);
         }
 
         let (items, updated) = channel_table.roll();
@@ -148,6 +193,10 @@ pub async fn _loot(ctx: Context<'_>) -> Result<FluentArgs<'_>, Error> {
             }
         }
 
+        if let Some(d) = category_table.delay {
+            total_delay = total_delay.max(d);
+        }
+
         let (items, updated) = category_table.roll();
         if category_table.entries.is_empty() {
             category_table.delete().await?;
@@ -180,6 +229,27 @@ pub async fn _loot(ctx: Context<'_>) -> Result<FluentArgs<'_>, Error> {
 
     if all_looted_items.is_empty() {
         return Err("loot_table__no_loot_found".into());
+    }
+
+    if total_delay > 0 {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let player_loot = PlayerLoot {
+            _id: None,
+            universe_id: universe.universe_id,
+            user_id: user_id.get(),
+            server_id: guild_id.get(),
+            items: all_looted_items,
+            start_timestamp: now,
+            end_timestamp: now + total_delay,
+            is_finished: false,
+        };
+
+        add_loot(ctx.serenity_context().http.clone(), player_loot).await?;
+
+        let mut args = FluentArgs::new();
+        args.set("delay", total_delay);
+        reply_with_args_and_ephemeral(ctx, Ok("loot_table__loot_started"), Some(args), true).await?;
+        return Ok(None);
     }
 
     let mut item_counts = HashMap::new();
@@ -228,7 +298,7 @@ pub async fn _loot(ctx: Context<'_>) -> Result<FluentArgs<'_>, Error> {
     let mut args = FluentArgs::new();
     args.set("items", format!("\n{}", item_list.join("\n")));
 
-    Ok(args)
+    Ok(Some(args))
 }
 
 impl LootTable {
@@ -326,7 +396,6 @@ impl LootTable {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use mongodb::bson::oid::ObjectId;
     use crate::database::loot_tables::{LootTable, LootTableEntry, LootTableItem, LootTableSet};
 
@@ -350,6 +419,7 @@ mod tests {
                 })],
                 raw_text: "".to_string(),
                 rate_limit: None,
+                delay: None,
                 last_loot: None,
             };
 
@@ -389,6 +459,7 @@ mod tests {
                 })],
                 raw_text: "".to_string(),
                 rate_limit: None,
+                delay: None,
                 last_loot: None,
             };
 
@@ -428,6 +499,7 @@ mod tests {
                 })],
                 raw_text: "".to_string(),
                 rate_limit: None,
+                delay: None,
                 last_loot: None,
             };
 
@@ -458,6 +530,7 @@ mod tests {
             })],
             raw_text: "".to_string(),
             rate_limit: None,
+            delay: None,
             last_loot: None,
         };
 
@@ -483,6 +556,7 @@ mod tests {
             })],
             raw_text: "".to_string(),
             rate_limit: None,
+            delay: None,
             last_loot: None,
         };
 
@@ -526,6 +600,7 @@ mod tests {
             })],
             raw_text: "".to_string(),
             rate_limit: None,
+            delay: None,
             last_loot: None,
         };
 
@@ -561,6 +636,7 @@ mod tests {
             })],
             raw_text: "".to_string(),
             rate_limit: None,
+            delay: None,
             last_loot: None,
         };
 
@@ -594,6 +670,7 @@ mod tests {
             })],
             raw_text: "".to_string(),
             rate_limit: None,
+            delay: None,
             last_loot: None,
         };
 

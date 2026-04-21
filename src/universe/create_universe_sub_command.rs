@@ -43,9 +43,7 @@ use crate::utility::reply::reply;
 #[poise::command(slash_command, required_permissions= "ADMINISTRATOR", guild_only, rename = "universe_create_universe")]
 pub async fn create_universe(
     ctx: Context<'_>,
-    #[description = "universe_create_universe.universe_name"]
     universe_name: String,
-    #[description = "universe_create_universe.setup_type"]
     setup_type: SetupType
 ) -> Result<(), Error> {
     let Ok(_) = ctx.defer().await else { return Err("reply__reply_failed".into()) };

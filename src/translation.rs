@@ -654,16 +654,29 @@ pub fn smart_tr(
         .and_then(|locale| translations.other.get(locale))
         .unwrap_or(&translations.main);
 
+    let (base_id, attr) = if id.contains('.') {
+        let parts: Vec<&str> = id.splitn(2, '.').collect();
+        (parts[0], Some(parts[1]))
+    } else {
+        (id, None)
+    };
+
     // If the token doesn't exist, just return it (visible + debuggable).
-    let message = match bundle.get_message(id).or_else(|| translations.main.get_message(id)) {
+    let message = match bundle.get_message(base_id).or_else(|| translations.main.get_message(base_id)) {
         Some(message) => message,
         None => return Ok(id.to_string()),
     };
 
     // If the message exists but has no value, also fall back to the token.
-    let pattern = match message.value() {
-        Some(pattern) => pattern,
-        None => return Ok(id.to_string()),
+    let pattern = match attr {
+        Some(a) => match message.get_attribute(a) {
+            Some(attr) => attr.value(),
+            None => return Ok(id.to_string()),
+        },
+        None => match message.value() {
+            Some(pattern) => pattern,
+            None => return Ok(id.to_string()),
+        },
     };
 
     let raw_text = bundle.format_pattern(pattern, None, &mut vec![]).into_owned();
@@ -673,6 +686,14 @@ pub fn smart_tr(
     if let Some(explicit) = explicit_args {
         for (k, v) in explicit.iter() {
             args.set(k, v.clone());
+        }
+    }
+
+    if args.get("support_link").is_none() {
+        if let Some(link) = format(bundle, "support_link", None, None)
+            .or_else(|| format(&translations.main, "support_link", None, None))
+        {
+            args.set("support_link", FluentValue::from(link));
         }
     }
 

@@ -8,6 +8,8 @@ pub mod stats;
 pub mod road;
 pub mod characters;
 pub mod travel;
+pub mod craft;
+pub mod loot;
 pub mod items;
 pub mod loot_tables;
 pub mod inventory;

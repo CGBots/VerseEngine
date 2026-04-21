@@ -3,13 +3,13 @@ use serenity::all::{CreateActionRow, CreateSelectMenuOption, ComponentInteractio
 use crate::database::places::{get_place_by_category_id,};
 use crate::database::server::{get_server_by_id, Server};
 use crate::database::travel::{PlayerMove, SpaceType};
+use crate::database::craft::PlayerCraft;
 use crate::discord::poise_structs::{Context, Error};
 use crate::travel::logic::{add_travel, stop_travel};
 use crate::utility::reply::{reply, reply_with_args};
 use futures::{TryStreamExt};
 use poise::{CreateReply};
 use crate::database::road::{get_road, get_road_by_channel_id, get_road_by_source, Road};
-use crate::roads::road;
 
 fn parse_channel_id(input: &str) -> Option<u64> {
     if let Ok(id) = input.parse::<u64>() {
@@ -24,14 +24,13 @@ fn parse_channel_id(input: &str) -> Option<u64> {
 }
 
 #[poise::command(slash_command, guild_only, subcommands("stop", "start"), rename = "travel")]
-pub async fn travel(ctx: Context<'_>) -> Result<(), Error> {
+pub async fn travel(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
 #[poise::command(slash_command, guild_only, rename = "travel_start")]
 pub async fn start(
     ctx: Context<'_>,
-    #[description = "travel_start.destination"]
     destination: Option<String>,
 ) -> Result<(), Error> {
     let Ok(_) = ctx.defer_ephemeral().await else { return Err("reply__reply_failed".into()) };
@@ -51,6 +50,10 @@ pub async fn start(
         _ => {return Err("travel__character_not_found".into())}
     };
 
+    if let Ok(Some(_)) = PlayerCraft::get_by_user_id(server.universe_id, ctx.author().id.get()).await {
+        return Err("travel__cannot_move_while_crafting".into());
+    }
+
     if player_move.is_in_move && player_move.actual_space_type == SpaceType::Road {
         // Le joueur est sur une route, on l'arrête
         let _ = stop_travel(ctx.author().id.get()).await;
@@ -59,7 +62,7 @@ pub async fn start(
     match destination {
         None => {travel_without_destination(ctx).await?}
         Some(dest) => {
-            let error = match _travel(ctx, dest).await {
+            let _error = match _travel(ctx, dest).await {
                 Ok(_) => return Ok(()),
                 Err(e) => reply(ctx, Err(e)).await,
             };}
@@ -220,7 +223,7 @@ async fn travel_without_destination(ctx: Context<'_>) -> Result<(), Error>{
             };
 
             if available_roads.is_empty(){
-                reply(ctx, Err("travel__no_road_available".into())).await;
+                let _ = reply(ctx, Err("travel__no_road_available".into())).await;
                 return Ok(());
             }
 
@@ -283,6 +286,10 @@ pub async fn travel_from_handler(ctx: SerenityContext, interaction: ComponentInt
         Ok(Some(m)) => m,
         _ => {return Err("travel__character_not_found".into())}
     };
+
+    if let Ok(Some(_)) = PlayerCraft::get_by_user_id(server.universe_id, interaction.user.id.get()).await {
+        return Err("travel__cannot_move_while_crafting".into());
+    }
 
     match player_move.actual_space_type {
         SpaceType::Road => {

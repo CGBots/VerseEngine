@@ -108,7 +108,7 @@ impl PlayerMove {
                 log!(log::Level::Error, "Failed to get stat. [{:?}]", self);
                 return None;
             };
-            let Ok((speed, shortest_modifier)) = stat.resolve(self.actual_space_id, self.user_id).await else { todo!() };
+            let Ok((_speed, _shortest_modifier)) = stat.resolve(self.actual_space_id, self.user_id).await else { todo!() };
         };
         None
     }

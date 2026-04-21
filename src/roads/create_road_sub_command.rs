@@ -23,13 +23,9 @@ fn parse_channel_id(input: &str) -> Option<u64> {
 #[poise::command(slash_command, required_permissions= "ADMINISTRATOR", guild_only, rename = "road_create_road")]
 pub async fn create_road(
     ctx: Context<'_>,
-    #[description = "road_create_road.place_one"]
     place_one: String,
-    #[description = "road_create_road.place_two"]
     place_two: String,
-    #[description = "road_create_road.distance"]
     distance: u64,
-    #[description = "road_create_road.secret_channel"]
     secret_channel: Option<bool>
 ) -> Result<(), Error> {
     let Ok(_) = ctx.defer().await else { return Err("reply__reply_failed".into()) };

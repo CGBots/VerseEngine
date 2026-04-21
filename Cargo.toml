@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 serenity = "0.12.5"
-poise = "0.6.1"
+poise = "0.6.2"
 fluent = "0.17.0"
 intl-memoizer = "0.5.3"
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros"] }
