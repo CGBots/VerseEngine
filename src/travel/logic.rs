@@ -887,6 +887,33 @@ pub async fn stop_travel(user_id: u64) -> Result<PlayerMove, anyhow::Error> {
     // Relâcher le lock avant d'appeler remove_move pour éviter les deadlocks
     drop(moves_lock);
     remove_move(user_id).await;
+
+    // Envoi du message d'interruption dans le salon de la route
+    if let Some(road_id) = player_move.road_id {
+        if let Some(http) = HTTP_CLIENT.lock().await.clone() {
+            let universe_id = player_move.universe_id;
+            let user_id = player_move.user_id;
+            let guild_id = player_move.server_id;
+
+            tokio::spawn(async move {
+                let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
+                    char.name
+                } else {
+                    let member_nick = http.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
+                    if let Some(nick) = member_nick {
+                        nick
+                    } else if let Ok(user) = http.get_user(UserId::new(user_id)).await {
+                        user.name
+                    } else {
+                        format!("User {}", user_id)
+                    }
+                };
+
+                let msg = tr_locale!("fr", "travel__interrupted", user: character_name);
+                let _ = ChannelId::new(road_id).send_message(&http, CreateMessage::new().content(msg)).await;
+            });
+        }
+    }
     
     Ok(player_move)
 }

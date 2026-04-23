@@ -12,3 +12,4 @@ pub static ITEM_COLLECTION_NAME: &str = "items";
 pub static PLACED_ITEMS_COLLECTION_NAME: &str = "placed_items";
 pub static LOOT_TABLES_COLLECTION_NAME: &str = "loot_tables";
 pub static INVENTORY_COLLECTION_NAME: &str = "inventory";
+pub static AREAS_COLLECTION_NAME: &str = "areas";

@@ -415,25 +415,38 @@ pub async fn create_tool_selection_page(
 ) -> Result<(serenity::all::CreateEmbed, Vec<serenity::all::CreateActionRow>), Error> {
     let tools = Tool::get_by_channel_id(universe_id, channel_id).await?;
 
-    let mut tools_text = Vec::new();
-    for tool in tools {
-        tools_text.push(format!("- **{}** (ID: `{}`)", tool.name, tool._id.unwrap().to_hex()));
+    if tools.is_empty() {
+        let embed = serenity::all::CreateEmbed::new()
+            .title(get_by_locale(locale, "use__list_tools", None, None))
+            .description(get_by_locale(locale, "use__no_tools_found", Some("message"), None));
+        return Ok((embed, vec![]));
     }
 
-    let items_per_page = 15;
-    let empty_msg = get_by_locale(locale, "use__no_tools_found", None, None);
-    let pages = paginate_text(&tools_text, items_per_page, &empty_msg);
+    let items_per_page = 5;
+    let total_pages = (tools.len() as f64 / items_per_page as f64).ceil() as usize;
+    let start_idx = page_idx * items_per_page;
+    let end_idx = (start_idx + items_per_page).min(tools.len());
+    let page_tools = &tools[start_idx..end_idx];
 
-    let total_pages = pages.len();
-    let current_page = page_idx.min(total_pages - 1);
+    let mut description = String::new();
+    let mut options = Vec::new();
+
+    for tool in page_tools {
+        let tool_id = tool._id.unwrap();
+        description.push_str(&format!("**{}** - ID: `{}`\n", tool.name, tool_id));
+        options.push(serenity::all::CreateSelectMenuOption::new(
+            format!("{} (ID: {})", tool.name, tool_id),
+            tool_id.to_hex()
+        ));
+    }
 
     let mut footer_args = FluentArgs::new();
-    footer_args.set("current", current_page + 1);
+    footer_args.set("current", page_idx + 1);
     footer_args.set("total", total_pages);
 
     let carousel_page = CarouselPage {
         title: get_by_locale(locale, "use__list_tools", None, None),
-        description: pages[current_page].clone(),
+        description,
         fields: vec![],
         footer: get_by_locale(locale, "use__list_tools", Some("footer"), Some(&footer_args)),
         color: serenity::all::Colour::ORANGE,
@@ -441,13 +454,19 @@ pub async fn create_tool_selection_page(
 
     let carousel_config = CarouselConfig {
         prefix: "tool_sel".to_string(),
-        current_page,
+        current_page: page_idx,
         total_pages,
         metadata: vec![universe_id.to_hex(), channel_id.to_string()],
     };
 
     let embed = create_carousel_embed(carousel_page);
-    let components = create_carousel_components(carousel_config, locale);
+    let mut components = create_carousel_components(carousel_config, locale);
+
+    let select_id = format!("{}:select:{}:{}:{}", "tool_sel", universe_id.to_hex(), channel_id, page_idx);
+    let select_menu = serenity::all::CreateSelectMenu::new(select_id, serenity::all::CreateSelectMenuKind::String { options })
+        .placeholder(get_by_locale(locale, "use__list_tools", Some("select_placeholder"), None));
+    
+    components.push(serenity::all::CreateActionRow::SelectMenu(select_menu));
 
     Ok((embed, components))
 }
@@ -455,25 +474,193 @@ pub async fn create_tool_selection_page(
 pub async fn handle_tool_selection_interaction(
     ctx: serenity::all::Context,
     component: serenity::all::ComponentInteraction,
+    action: &str,
     universe_id_hex: &str,
     channel_id_str: &str,
     page: usize,
-) -> Result<&'static str, Error> {
-    let universe_id = ObjectId::parse_str(universe_id_hex).map_err(|_| "Invalid universe ID")?;
+) -> Result<(), Error> {
+    let universe_id = ObjectId::from_str(universe_id_hex).map_err(|_| "Invalid universe ID")?;
     let channel_id = channel_id_str.parse::<u64>().map_err(|_| "Invalid channel ID")?;
+    let locale = component.locale.as_str();
 
-    let (embed, components) = create_tool_selection_page(
-        page,
-        universe_id,
-        channel_id,
-        component.locale.as_str()
-    ).await?;
+    match action {
+        "prev" | "next" | "refresh" => {
+            let (embed, components) = create_tool_selection_page(page, universe_id, channel_id, locale).await?;
+            component.create_response(&ctx.http, serenity::all::CreateInteractionResponse::UpdateMessage(
+                serenity::all::CreateInteractionResponseMessage::new()
+                    .embed(embed)
+                    .components(components)
+            )).await?;
+        }
+        "select" => {
+            if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &component.data.kind {
+                if let Some(tool_id_hex) = values.first() {
+                    let tool_id = ObjectId::from_str(tool_id_hex)?;
+                    
+                    let tool = match Tool::get_by_id(tool_id).await? {
+                        Some(t) => t,
+                        None => return Err("error:use__tool_not_found".into()),
+                    };
 
-    component.create_response(&ctx, serenity::all::CreateInteractionResponse::UpdateMessage(
-        serenity::all::CreateInteractionResponseMessage::new()
-            .embed(embed)
-            .components(components)
-    )).await?;
+                    if tool.inventory_size == 0 {
+                        return Err("error:use__no_inventory".into());
+                    }
 
-    Ok("")
+                    // On récupère l'univers et le personnage pour le modal
+                    let guild_id = component.guild_id.ok_or("error:item__guild_only")?;
+                    let user_id = component.user.id;
+                    
+                    let universe = get_universe_by_server_id(guild_id.get()).await?
+                        .ok_or("error:use__universe_not_found")?;
+                    
+                    let character = crate::database::characters::get_character_by_user_id(universe.universe_id, user_id.get()).await?
+                        .ok_or("error:use__character_not_found")?;
+
+                    // On envoie le modal
+                    // Attention: on doit utiliser l'interaction originale pour envoyer le modal
+                    execute_use_modal_from_interaction(&ctx, component, tool, character._id).await?;
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+pub async fn execute_use_modal_from_interaction(
+    ctx: &serenity::all::Context,
+    interaction: serenity::all::ComponentInteraction,
+    tool: Tool,
+    character_id: ObjectId,
+) -> Result<(), Error> {
+    let universe_id = tool.universe_id;
+    let locale = interaction.locale.as_str();
+    
+    // Get tool inventory content
+    let tool_inventory = Inventory::get_by_holder(universe_id, tool._id.unwrap(), HolderType::Item).await?;
+    let mut current_size: u64 = 0;
+    let mut items_list = String::new();
+    
+    for inv in &tool_inventory {
+        if let Ok(Some(item)) = get_item_by_id(inv.item_id).await {
+            items_list.push_str(&format!("- {} {}\n", item.item_name, inv.quantity));
+            current_size += inv.quantity;
+        }
+    }
+
+    let tool_header = format!("### {} ({} / {})\n", tool.name, current_size, tool.inventory_size);
+    let mut tool_content = tool_header.clone();
+    
+    if items_list.is_empty() {
+        tool_content.push_str(&get_by_locale(locale, "use__empty_inventory", None, None));
+    } else {
+        tool_content.push_str(&items_list);
+    }
+
+    // Get character inventory content
+    let character_inventory_items = Inventory::get_by_holder(universe_id, character_id, HolderType::Character).await?;
+    let char_inv_label = get_by_locale(locale, "use__modal_character_inventory_label", None, None);
+    let char_header = format!("### {}\n", char_inv_label);
+    let mut character_inventory = char_header.clone();
+    
+    for inv in &character_inventory_items {
+        if let Ok(Some(item)) = get_item_by_id(inv.item_id).await {
+            character_inventory.push_str(&format!("- {} {}\n", item.item_name, inv.quantity));
+        }
+    }
+    
+    if character_inventory == char_header {
+        character_inventory.push_str(&get_by_locale(locale, "use__empty_inventory", None, None));
+    }
+
+    let title = tool.name.clone();
+    let label = get_by_locale(locale, "use__modal_label", None, None);
+    let instructions_value = get_by_locale(locale, "use__modal_instructions_value", None, None);
+    
+    let custom_id = format!("{}-{}", interaction.id, "use_modal");
+
+    let modal_json = json!({
+        "type": 9,
+        "data": {
+            "custom_id": custom_id,
+            "title": title,
+            "components": [
+                {
+                    "type": 1,
+                    "components": [
+                        {
+                            "type": 4,
+                            "custom_id": "content",
+                            "label": label,
+                            "style": 2,
+                            "placeholder": "> [item_name] [quantité]\n< [item_name] [quantité]",
+                            "required": false
+                        }
+                    ]
+                },
+                {
+                    "type": 10,
+                    "content": tool_content,
+                },
+                {
+                    "type": 10,
+                    "content": character_inventory,
+                },
+                {
+                    "type": 10,
+                    "content": instructions_value,
+                }
+            ]
+        }
+    });
+
+    ctx.http.create_interaction_response(interaction.id, &interaction.token, &modal_json, vec![]).await?;
+
+    let response = serenity::collector::ModalInteractionCollector::new(ctx)
+        .filter(move |m| m.data.custom_id == custom_id)
+        .timeout(std::time::Duration::from_secs(600))
+        .await;
+
+    if let Some(m) = response {
+        let content = m.data.components.iter()
+            .flat_map(|row| row.components.iter())
+            .find_map(|component| {
+                if let serenity::all::ActionRowComponent::InputText(it) = component {
+                    if it.custom_id == "content" {
+                        return Some(it.value.clone().unwrap_or_default());
+                    }
+                }
+                None
+            })
+            .unwrap_or_default();
+
+        m.create_response(ctx, CreateInteractionResponse::Acknowledge).await?;
+
+        // Process the content
+        // On a besoin d'un AppContext simulé ou de refactoriser process_use_with_transaction
+        // Mais on peut utiliser process_use_without_transaction pour simplifier si besoin,
+        // ou mieux, créer une version qui prend juste les IDs.
+        
+        let result = process_use_without_transaction(universe_id, character_id, tool, content).await;
+        
+        match result {
+            Ok(_) => {
+                interaction.create_followup(ctx, 
+                    serenity::all::CreateInteractionResponseFollowup::new()
+                        .content(get_by_locale(locale, "use__transfer_success", None, None))
+                        .ephemeral(true)
+                ).await?;
+            }
+            Err(err_msg) => {
+                interaction.create_followup(ctx, 
+                    serenity::all::CreateInteractionResponseFollowup::new()
+                        .content(format!("Error: {}", err_msg))
+                        .ephemeral(true)
+                ).await?;
+            }
+        }
+    }
+
+    Ok(())
 }

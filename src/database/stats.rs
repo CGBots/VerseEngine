@@ -42,10 +42,11 @@ use mongodb::bson::oid::ObjectId;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use crate::database::db_client::{get_db_client};
-use crate::database::db_namespace::{CHARACTERS_COLLECTION_NAME, ROADS_COLLECTION_NAME, STATS_COLLECTION_NAME, VERSEENGINE_DB_NAME};
+use crate::database::db_namespace::{CHARACTERS_COLLECTION_NAME, ROADS_COLLECTION_NAME, STATS_COLLECTION_NAME, VERSEENGINE_DB_NAME, AREAS_COLLECTION_NAME};
 use crate::database::modifiers::{Modifier, ModifierType};
 use crate::database::characters::Character;
 use crate::database::road::Road;
+use crate::database::areas::Area;
 use crate::discord::poise_structs::Error;
 
 pub static SPEED_STAT: &str = "speed";
@@ -369,6 +370,10 @@ impl Stat {
         let mut place = crate::database::places::get_place_by_category_id(self.universe_id, category_id)
             .await.unwrap_or_else(|_| None);
 
+        // 3.5 Recover Area modifiers (Salon spécifique)
+        let mut area = crate::database::areas::get_area_by_channel_id(self.universe_id, category_id)
+            .await.unwrap_or_else(|_| None);
+
         // 4. Recover player stat/modifiers
         let mut character = match db.collection::<Character>(CHARACTERS_COLLECTION_NAME)
             .find_one(doc! { "user_id": user_id.to_string(), "universe_id":  self.universe_id })
@@ -413,6 +418,14 @@ impl Stat {
             _place.modifiers.retain(|m| m.is_active());
             if _place.modifiers.len() != initial_len {
                 let _ = _place.update().await;
+            }
+        }
+
+        if let Some(ref mut _area) = area {
+            let initial_len = _area.modifiers.len();
+            _area.modifiers.retain(|m| m.is_active());
+            if _area.modifiers.len() != initial_len {
+                let _ = _area.update().await;
             }
         }
 
@@ -466,19 +479,14 @@ impl Stat {
                 let mut multipliers = 1.0;
                 let mut bases = 0.0;
                 let mut flats = 0.0;
-                let has_multiplier = apply_modifiers(&c_stat.modifiers, &mut multipliers, &mut bases, &mut flats);
+                let _ = apply_modifiers(&c_stat.modifiers, &mut multipliers, &mut bases, &mut flats);
                 
                 // x = c_stat.base_value
                 value = multipliers * (c_stat.base_value.as_f64() + bases) + flats;
             } else {
-                // Si le personnage n'a pas la stat, on utilise la base de la stat globale
                 let mut multipliers = 1.0;
                 let mut bases = 0.0;
                 let mut flats = 0.0;
-                // On peut quand même avoir des modificateurs globaux sur le joueur pour cette stat ?
-                // Actuellement apply_modifiers prend une liste. 
-                // Dans le code original, il semble que si c_stat n'existe pas, on ne faisait rien.
-                // Mais l'ordre demande Joueur en premier.
                 let _ = apply_modifiers(&vec![], &mut multipliers, &mut bases, &mut flats);
                 value = multipliers * (value + bases) + flats;
             }
@@ -486,49 +494,43 @@ impl Stat {
             return Err("resolve_stat__character_not_found".into());
         }
 
-        // 2. Espace (Salon ou Route)
-        if let Some(ref _road) = road {
+        // 2. Area (Salon spécifique)
+        if let Some(ref _area) = area {
             let mut multipliers = 1.0;
             let mut bases = 0.0;
             let mut flats = 0.0;
-            let _ = apply_modifiers(&_road.modifiers, &mut multipliers, &mut bases, &mut flats);
+            let _ = apply_modifiers(&_area.modifiers, &mut multipliers, &mut bases, &mut flats);
             value = multipliers * (value + bases) + flats;
+        }
+
+        // 3. Espace (Salon ou Route)
+        let mut space_modifiers = vec![];
+        if let Some(ref _road) = road {
+            space_modifiers = _road.modifiers.clone();
         } else if let Some(ref _place) = place {
             // Si on est dans un salon (Place) et pas sur une route
+            space_modifiers = _place.modifiers.clone();
+        }
+
+        if !space_modifiers.is_empty() {
             let mut multipliers = 1.0;
             let mut bases = 0.0;
             let mut flats = 0.0;
-            let _ = apply_modifiers(&_place.modifiers, &mut multipliers, &mut bases, &mut flats);
+            let _ = apply_modifiers(&space_modifiers, &mut multipliers, &mut bases, &mut flats);
             value = multipliers * (value + bases) + flats;
         }
 
-        // 3. Lieu (Catégorie ou Route)
-        // La demande dit : "lieu (catégorie ou route)".
-        // Si on est sur une route, l'espace ET le lieu sont la route ? 
-        // Ou l'espace est la route et le lieu est... ?
-        // Dans le doute, si c'est une route on réapplique les modificateurs de la route ?
-        // "joueur; espace (salon ou route); lieu (catégorie ou route); univers."
-        // Si c'est une route, on applique l'étape 2 (route) puis l'étape 3 (route encore ? ou catégorie parente ?)
-        // Les routes n'ont pas de catégorie parente directe dans leur structure.
-        // Si c'est un salon (Place), l'espace est le salon, et le lieu est la catégorie.
-        // Mais Place REPRÉSENTE déjà la catégorie (category_id).
-        // On va supposer que pour une Place, Espace = Place, Lieu = Place (ou on saute si c'est le même).
-        // Mais pour suivre l'ordre 4 étapes :
-        if let Some(_road) = road {
+        // 4. Lieu (Catégorie ou Route)
+        // Etape conservée pour la hiérarchie mais vide pour éviter les doublons avec Road/Place déjà appliqués en Espace
+        {
             let mut multipliers = 1.0;
             let mut bases = 0.0;
             let mut flats = 0.0;
-            let _ = apply_modifiers(&_road.modifiers, &mut multipliers, &mut bases, &mut flats);
-            value = multipliers * (value + bases) + flats;
-        } else if let Some(_place) = place {
-            let mut multipliers = 1.0;
-            let mut bases = 0.0;
-            let mut flats = 0.0;
-            let _ = apply_modifiers(&_place.modifiers, &mut multipliers, &mut bases, &mut flats);
+            let _ = apply_modifiers(&vec![], &mut multipliers, &mut bases, &mut flats);
             value = multipliers * (value + bases) + flats;
         }
 
-        // 4. Univers
+        // 5. Univers
         if let Some(u_stat) = universe_stat {
             let mut multipliers = 1.0;
             let mut bases = 0.0;
