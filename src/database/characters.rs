@@ -22,12 +22,13 @@ pub struct Character {
 }
 
 impl Character {
-    pub async fn update(self) -> mongodb::error::Result<InsertOneResult> {
+    pub async fn update(self) -> mongodb::error::Result<mongodb::results::UpdateResult> {
         let db_client = get_db_client().await;
+        let filter = doc! {"_id": self._id};
         db_client
             .database(VERSEENGINE_DB_NAME)
             .collection::<Character>(CHARACTERS_COLLECTION_NAME)
-            .insert_one(self)
+            .replace_one(filter, self)
             .await
     }
 

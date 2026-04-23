@@ -178,10 +178,6 @@ loot_table__not_in_loot = Not looting
 loot_table__stopped = Looting Cancelled
     .title = Success
     .message = Your looting has been cancelled.
-loot_table__item_line = - {$item_name}
-loot_table__item_line_quantity = - {$item_name} (x{$quantity})
-loot_table__item_not_found = - {$item_name} (x{$quantity}) (Non-existent item in database)
-loot_table__item_db_error = - {$item_name} (x{$quantity}) (Database error: {$error})
 create_item__invalid_name = Invalid item name
     .title = Incorrect name
     .message = The item name **{$name}** contains unauthorized characters. Only alphanumeric characters, spaces, hyphens and underscores are allowed.
@@ -644,10 +640,14 @@ travel__source_place_not_found = Source place not found
     .title = Source place not found
     .message = Your current position is not recognized as a valid place.
 travel__started = Journey started
-travel__stopped = Journey stopped. You can now choose a destination or stay here.
-travel__not_in_move = You are not currently traveling.
     .title = Journey started
     .message = You have started your journey to {$destination}.
+travel__stopped = Journey stopped
+    .title = Journey stopped
+    .message = Your journey has been stopped. You can now choose a destination or stay here.
+travel__not_in_move = Not moving
+    .title = Not moving
+    .message = You are not currently traveling.
 travel__already_moving_to_destination = Already on the way
     .title = Already on the way
     .message = You are already moving toward this destination.
@@ -850,6 +850,7 @@ item_inventory_size = Inventory size
 item_lookup_usage = Usage
 item_lookup_secret = Secret Information
 item_lookup_effects = Effects
+item_effects_title = Effects
 item_lookup_stat = Stat
 item_lookup_value = Value
 item_lookup_type = Type
@@ -859,6 +860,29 @@ item_placed_success = Object placed!
     .message = You have placed **{$item_name}** in **#{$channel_name}**.
 item_placed_rp = _**{$item_name}** was placed by **{$character_name}**._
 item_immutable_footer = This object is immutable.
+
+item_effect__modal_title = Item Effects
+item_effect__modal_field_name = Effects List
+item_effect__modal_placeholder = # Effect Syntax Guide
+    Stat: Value[Type] Duration Level
+    
+    Examples:
+    Strength: +5 10m player
+    Speed: x1.2 1h place
+    HP: 10 flat 1h universe
+    
+    Types:
+    + : Addition
+    x : Multiplier
+    flat : Fixed value
+    
+    Durations: s, m, h, d/j (default: m)
+    
+    Levels:
+    player : Default
+    place : Channel or route
+    area : Category or route
+    universe : Whole universe
 
 ItemUsage = Usage type
 Consumable = Consumable
@@ -1014,3 +1038,12 @@ use__modal_instructions_value = # Transaction Syntax Guide
 use__transfer_success = Transfer Successful
     .title = Transfer Completed
     .message = Items have been successfully transferred.
+
+# Item Consumption
+consume__title = Consume an Item
+consume__empty_inventory = You have no consumable items in your inventory.
+consume__select_placeholder = Select an item to consume
+consume__success = You have consumed **{ $item_name }**! Effects have been applied.
+consume__error = Error during consumption: { $error }
+consume__universe_not_found = Universe not found.
+consume__character_not_found = Character not found.

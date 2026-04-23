@@ -60,12 +60,12 @@ impl Inventory {
 
         let options = mongodb::options::UpdateOptions::builder().upsert(true).build();
 
-        collection.update_one(filter, update).with_options(options).await?;
+        let _ = collection.update_one(filter, update).with_options(options).await?;
 
         Ok(())
     }
 
-    pub async fn add_item_to_inventory_with_session(session: &mut ClientSession, universe_id: ObjectId, holder_id: ObjectId, holder_type: HolderType, item_id: ObjectId, amount: u64) -> mongodb::error::Result<()> {
+    pub async fn add_item_to_inventory_with_session(session: &mut ClientSession, universe_id: ObjectId, holder_id: ObjectId, holder_type: HolderType, item_id: ObjectId, amount: u64) -> mongodb::error::Result<ObjectId> {
         let db_client = get_db_client().await;
         let collection = db_client
             .database(VERSEENGINE_DB_NAME)
@@ -94,11 +94,25 @@ impl Inventory {
             }
         };
 
-        let options = mongodb::options::UpdateOptions::builder().upsert(true).build();
+        let options = mongodb::options::FindOneAndUpdateOptions::builder().upsert(true).build();
 
-        collection.update_one(filter, update).with_options(options).session(session).await?;
+        let result = collection.find_one_and_update(filter, update).with_options(options).session(&mut *session).await?;
 
-        Ok(())
+        if let Some(inv) = result {
+            Ok(inv._id.unwrap())
+        } else {
+            let filter = doc! {
+                "universe_id": universe_id,
+                "holder.holder_id": holder_id,
+                "holder.holder_type": match holder_type {
+                    HolderType::Character => "Character",
+                    HolderType::Item => "Item",
+                },
+                "item_id": item_id,
+            };
+            let inv = collection.find_one(filter).session(session).await?.unwrap();
+            Ok(inv._id.unwrap())
+        }
     }
 
     pub async fn remove_item_from_holder_with_session(session: &mut ClientSession, universe_id: ObjectId, holder_id: ObjectId, holder_type: HolderType, item_id: ObjectId, amount: u64) -> mongodb::error::Result<bool> {
@@ -126,7 +140,7 @@ impl Inventory {
         Ok(result.modified_count > 0)
     }
 
-    pub async fn add_item_to_inventory(universe_id: ObjectId, holder_id: ObjectId, holder_type: HolderType, item_id: ObjectId, amount: u64) -> mongodb::error::Result<()> {
+    pub async fn add_item_to_inventory(universe_id: ObjectId, holder_id: ObjectId, holder_type: HolderType, item_id: ObjectId, amount: u64) -> mongodb::error::Result<ObjectId> {
         let db_client = get_db_client().await;
         let collection = db_client
             .database(VERSEENGINE_DB_NAME)
@@ -155,11 +169,26 @@ impl Inventory {
             }
         };
 
-        let options = mongodb::options::UpdateOptions::builder().upsert(true).build();
+        let options = mongodb::options::FindOneAndUpdateOptions::builder().upsert(true).build();
 
-        collection.update_one(filter, update).with_options(options).await?;
-
-        Ok(())
+        let result = collection.find_one_and_update(filter, update).with_options(options).await?;
+        
+        if let Some(inv) = result {
+            Ok(inv._id.unwrap())
+        } else {
+            // If it was an upsert and didn't return the document, we might need to find it
+            let filter = doc! {
+                "universe_id": universe_id,
+                "holder.holder_id": holder_id,
+                "holder.holder_type": match holder_type {
+                    HolderType::Character => "Character",
+                    HolderType::Item => "Item",
+                },
+                "item_id": item_id,
+            };
+            let inv = collection.find_one(filter).await?.unwrap();
+            Ok(inv._id.unwrap())
+        }
     }
 
     pub async fn remove_item(inventory_id: ObjectId, amount: u64) -> mongodb::error::Result<bool> {

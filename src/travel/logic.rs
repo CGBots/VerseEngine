@@ -362,17 +362,12 @@ pub async fn next_step_logic(actual_move: &PlayerMove) -> Result<PlayerMove, any
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
-    let stat_speed_kmh = stat_speed_bson.as_f64();
+    let final_speed_kmh = stat_speed_bson.as_f64();
 
-    // récupère road et universe
+    // récupère road
     let road_opt = get_road_by_channel_id(actual_move.universe_id, actual_move.road_id.ok_or_else(|| anyhow::anyhow!("road_id missing"))?).await?;
     let road = road_opt.ok_or_else(|| anyhow::anyhow!("road not found"))?;
 
-    let universe_opt = get_universe_by_id(actual_move.universe_id).await?;
-    let universe = universe_opt.ok_or_else(|| anyhow::anyhow!("universe not found"))?;
-
-    // final_speed en km/h
-    let final_speed_kmh = stat_speed_kmh * (universe.global_time_modifier as f64) / 100.0;
     if final_speed_kmh <= 0.0 {
         bail!("final_speed must be > 0");
     }
@@ -393,6 +388,9 @@ pub async fn next_step_logic(actual_move: &PlayerMove) -> Result<PlayerMove, any
     // remaining_distance_km / final_speed_kmh => heures ; *3600 => secondes
     let time_needed_secs_f = (remaining_distance_km / final_speed_kmh) * 3600.0;
     let full_time_needed_secs = time_needed_secs_f.ceil() as u64;
+
+    println!("[Travel Debug] User: {}, Speed: {:.2} km/h, Remaining Time: {}s (Dist: {:.2}km)", 
+             new_move.user_id, final_speed_kmh, full_time_needed_secs, remaining_distance_km);
 
     // clamp par le shortest_modifier s'il existe (modifier.end_timestamp est un timestamp absolu)
     let mut time_to_wait_secs = full_time_needed_secs;

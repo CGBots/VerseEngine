@@ -274,7 +274,7 @@ async fn process_use_without_transaction(
     for (item_id, &new_q) in &tool_items {
         let old_q = initial_tool_inv_map.get(item_id).cloned().unwrap_or(0);
         if new_q > old_q {
-            Inventory::add_item_to_inventory(universe_id, tool._id.unwrap(), HolderType::Item, *item_id, new_q - old_q).await.map_err(|e| e.to_string())?;
+            let _ = Inventory::add_item_to_inventory(universe_id, tool._id.unwrap(), HolderType::Item, *item_id, new_q - old_q).await.map_err(|e| e.to_string());
         } else if new_q < old_q {
             Inventory::remove_item_from_holder(universe_id, tool._id.unwrap(), HolderType::Item, *item_id, old_q - new_q).await.map_err(|e| e.to_string())?;
         }
@@ -287,7 +287,7 @@ async fn process_use_without_transaction(
     for (item_id, &new_q) in &char_items {
         let old_q = initial_char_inv_map.get(item_id).cloned().unwrap_or(0);
         if new_q > old_q {
-            Inventory::add_item_to_inventory(universe_id, character_id, HolderType::Character, *item_id, new_q - old_q).await.map_err(|e| e.to_string())?;
+            let _ = Inventory::add_item_to_inventory(universe_id, character_id, HolderType::Character, *item_id, new_q - old_q).await.map_err(|e| e.to_string());
         } else if new_q < old_q {
             Inventory::remove_item_from_holder(universe_id, character_id, HolderType::Character, *item_id, old_q - new_q).await.map_err(|e| e.to_string())?;
         }
@@ -385,7 +385,7 @@ async fn process_use_transfer_with_session(
     for (item_id, &new_q) in &tool_items {
         let old_q = initial_tool_inv_map.get(item_id).cloned().unwrap_or(0);
         if new_q > old_q {
-            Inventory::add_item_to_inventory_with_session(session, universe_id, tool._id.unwrap(), HolderType::Item, *item_id, new_q - old_q).await.map_err(|e| e.to_string())?;
+            let _ = Inventory::add_item_to_inventory_with_session(session, universe_id, tool._id.unwrap(), HolderType::Item, *item_id, new_q - old_q).await.map_err(|e| e.to_string());
         } else if new_q < old_q {
             Inventory::remove_item_from_holder_with_session(session, universe_id, tool._id.unwrap(), HolderType::Item, *item_id, old_q - new_q).await.map_err(|e| e.to_string())?;
         }
@@ -398,7 +398,7 @@ async fn process_use_transfer_with_session(
     for (item_id, &new_q) in &char_items {
         let old_q = initial_char_inv_map.get(item_id).cloned().unwrap_or(0);
         if new_q > old_q {
-            Inventory::add_item_to_inventory_with_session(session, universe_id, character_id, HolderType::Character, *item_id, new_q - old_q).await.map_err(|e| e.to_string())?;
+            let _ = Inventory::add_item_to_inventory_with_session(session, universe_id, character_id, HolderType::Character, *item_id, new_q - old_q).await.map_err(|e| e.to_string());
         } else if new_q < old_q {
             Inventory::remove_item_from_holder_with_session(session, universe_id, character_id, HolderType::Character, *item_id, old_q - new_q).await.map_err(|e| e.to_string())?;
         }

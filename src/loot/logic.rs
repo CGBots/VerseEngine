@@ -67,19 +67,24 @@ async fn finalize_loot(mut loot: PlayerLoot, is_late: bool) -> Result<(), crate:
     let character = crate::database::characters::get_character_by_user_id(loot.universe_id, loot.user_id).await?
         .ok_or("loot_table__character_not_found")?;
 
-    let mut looted_items_str = Vec::new();
+    let mut item_counts = std::collections::HashMap::new();
+    for item_name in &loot.items {
+        *item_counts.entry(item_name).or_insert(0) += 1;
+    }
+
+    let mut inventory_ids = Vec::new();
 
     // Production des items
-    for item_name in &loot.items {
+    for (item_name, &quantity) in &item_counts {
         if let Ok(Some(item)) = get_item_by_name(loot.universe_id, item_name).await {
-            Inventory::add_item_to_inventory(
+            let inv_id = Inventory::add_item_to_inventory(
                 loot.universe_id,
                 character._id,
                 HolderType::Character,
                 item._id,
-                1
+                quantity
             ).await?;
-            looted_items_str.push(item_name.clone());
+            inventory_ids.push(format!("{}:{}:{}", inv_id.to_hex(), item_name, quantity));
         }
     }
 
@@ -98,11 +103,12 @@ async fn finalize_loot(mut loot: PlayerLoot, is_late: bool) -> Result<(), crate:
         let locale = "fr"; // Default to fr for DMs for now, or we could try to get it from somewhere
         let (embed, components) = create_loot_finished_page(
             0,
-            &loot.items,
+            &inventory_ids,
             &universe.name,
             &character.name,
             is_late,
-            locale
+            locale,
+            Some(loot.universe_id)
         ).await?;
 
         let _ = UserId::new(loot.user_id).direct_message(http, CreateMessage::new().embed(embed).components(components)).await;
@@ -113,15 +119,32 @@ async fn finalize_loot(mut loot: PlayerLoot, is_late: bool) -> Result<(), crate:
 
 pub async fn create_loot_finished_page(
     page_idx: usize,
-    items: &[String],
+    items_data: &[String],
     universe_name: &str,
     character_name: &str,
     is_late: bool,
     locale: &str,
+    universe_id: Option<mongodb::bson::oid::ObjectId>,
 ) -> Result<(serenity::all::CreateEmbed, Vec<serenity::all::CreateActionRow>), crate::discord::poise_structs::Error> {
     let mut items_text = Vec::new();
-    for item_name in items {
-        items_text.push(format!("- {}", item_name));
+    
+    // Sort items by name for consistent display
+    let mut sorted_items = items_data.to_vec();
+    sorted_items.sort_by(|a, b| {
+        let name_a = a.split(':').nth(1).unwrap_or("");
+        let name_b = b.split(':').nth(1).unwrap_or("");
+        name_a.cmp(name_b)
+    });
+
+    for item_data in sorted_items {
+        let parts: Vec<&str> = item_data.split(':').collect();
+        if parts.len() == 3 {
+            let id = parts[0];
+            let item_name = parts[1];
+            let quantity = parts[2].parse::<u64>().unwrap_or(1);
+
+            items_text.push(format!("- {}x {} (ID: `{}`)", quantity, item_name, id));
+        }
     }
 
     // Pagination logic
@@ -164,7 +187,8 @@ pub async fn create_loot_finished_page(
             universe_name.to_string(),
             character_name.to_string(),
             is_late.to_string(),
-            items.join(",")
+            items_data.join(","),
+            universe_id.map(|id| id.to_hex()).unwrap_or_default()
         ],
     };
 
@@ -180,18 +204,22 @@ pub async fn handle_loot_carousel_interaction(
     universe_name: &str,
     character_name: &str,
     is_late: bool,
-    items_raw: &str,
+    items_data_raw: &str,
     page: usize,
+    universe_id_str: Option<&str>,
 ) -> Result<(), crate::discord::poise_structs::Error> {
-    let items: Vec<String> = items_raw.split(',').map(|s| s.to_string()).collect();
+    let items_data: Vec<String> = items_data_raw.split(',').map(|s| s.to_string()).collect();
     
+    let universe_id = universe_id_str.and_then(|id| mongodb::bson::oid::ObjectId::parse_str(id).ok());
+
     let (embed, components) = create_loot_finished_page(
         page,
-        &items,
+        &items_data,
         universe_name,
         character_name,
         is_late,
-        component.locale.as_str()
+        component.locale.as_str(),
+        universe_id
     ).await?;
 
     component.create_response(&ctx, CreateInteractionResponse::UpdateMessage(

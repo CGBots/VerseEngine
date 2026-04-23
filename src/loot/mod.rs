@@ -252,7 +252,7 @@ pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
         return Ok(None);
     }
 
-    let mut item_counts = HashMap::new();
+    let mut item_counts = std::collections::BTreeMap::new();
     for item_name in all_looted_items {
         *item_counts.entry(item_name).or_insert(0) += 1;
     }
@@ -275,18 +275,23 @@ pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
         };
 
         if let Some(item_data) = item_data {
-            if let Err(e) = Inventory::add_item(universe.universe_id, character._id, item_data._id, quantity).await {
-                eprintln!("Error adding item to inventory for character {}: {:?}", character._id, e);
-                return Err(format!("error:loot_table__error_adding_inventory:{}", e).into());
-            }
-            let mut line_args = FluentArgs::new();
-            line_args.set("item_name", item_name);
-            line_args.set("quantity", quantity);
-            if quantity > 1 {
-                item_list.push(crate::translation::get(ctx, "loot_table__item_line_quantity", None, Some(&line_args)));
-            } else {
-                item_list.push(crate::translation::get(ctx, "loot_table__item_line", None, Some(&line_args)));
-            }
+            let inventory_id = Inventory::add_item_to_inventory(
+                universe.universe_id,
+                character._id,
+                crate::database::inventory::HolderType::Character,
+                item_data._id,
+                quantity as u64
+            ).await;
+
+            let id_str = match inventory_id {
+                Ok(id) => id.to_hex(),
+                Err(e) => {
+                    eprintln!("Error adding item to inventory for character {}: {:?}", character._id, e);
+                    "N/A".to_string()
+                }
+            };
+
+            item_list.push(format!("- {}x {} (ID: `{}`)", quantity, item_name, id_str));
         } else {
             let mut line_args = FluentArgs::new();
             line_args.set("item_name", item_name);

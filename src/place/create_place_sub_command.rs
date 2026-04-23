@@ -137,7 +137,7 @@ pub async fn _create_place(ctx: &Context<'_>, name: String) -> Result<&'static s
         modifiers: vec![],
     };
 
-    match place.insert_place().await{
+    match place.insert().await{
         Ok(_) => {Ok("create_place__success")}
         Err(_) => {
             match role.delete(ctx).await {

@@ -77,13 +77,13 @@ async fn finalize_craft(mut craft: PlayerCraft, is_late: bool) -> Result<(), cra
 
     // Production des items
     for (qty, item_id) in &recipe.result {
-        Inventory::add_item_to_inventory(
+        let _ = Inventory::add_item_to_inventory(
             craft.universe_id,
             character._id,
             HolderType::Character,
             *item_id,
             *qty
-        ).await?;
+        ).await;
     }
 
     // Marquer comme fini et supprimer de la DB

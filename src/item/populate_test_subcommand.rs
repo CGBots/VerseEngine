@@ -48,13 +48,13 @@ pub async fn populate_test(ctx: Context<'_>) -> Result<(), Error> {
         item.save().await?;
 
         // Ajouter l'item à l'inventaire du personnage
-        Inventory::add_item_to_inventory(
+        let _ = Inventory::add_item_to_inventory(
             server.universe_id,
             character._id,
             HolderType::Character,
             item_id,
             1,
-        ).await?;
+        ).await;
     }
 
     ctx.say("Base de données peuplée avec 50 items de test pour votre personnage !").await?;
