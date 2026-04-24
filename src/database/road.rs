@@ -34,7 +34,17 @@ pub struct Road{
 }
 
 impl Road{
-    pub async fn insert(self) -> mongodb::error::Result<InsertOneResult> {
+    pub async fn update(self) -> mongodb::error::Result<mongodb::results::UpdateResult> {
+        let db_client = get_db_client().await;
+        let filter = doc! {"_id": self._id};
+        db_client
+            .database(VERSEENGINE_DB_NAME)
+            .collection::<Road>(ROADS_COLLECTION_NAME)
+            .replace_one(filter, self)
+            .await
+    }
+
+    pub async fn insert(&self) -> mongodb::error::Result<InsertOneResult> {
         let db_client = get_db_client().await;
         db_client
             .database(VERSEENGINE_DB_NAME)

@@ -139,29 +139,72 @@ impl EventHandler for Handler {
                             }
                         } else if modal_data.starts_with("loot_res:") {
                             let parts: Vec<&str> = modal_data.split(':').collect();
-                            if parts.len() == 7 {
-                                // format: loot_res:action:univ_name:char_name:is_late:items:page
+                            if parts.len() >= 7 {
+                                // format: loot_res:action:univ_name:char_name:is_late:items:page:univ_id
                                 let univ_name = parts[2];
                                 let char_name = parts[3];
                                 let is_late = parts[4] == "true";
                                 let items_raw = parts[5];
                                 let page = parts[6].parse::<usize>().unwrap_or(0);
-                                handle_loot_carousel_interaction(ctx.clone(), modal.clone(), univ_name, char_name, is_late, items_raw, page).await.map(|_| "")
+                                let univ_id = parts.get(7).copied();
+                                handle_loot_carousel_interaction(ctx.clone(), modal.clone(), univ_name, char_name, is_late, items_raw, page, univ_id).await.map(|_| "")
                             } else {
+                                return;
+                            }
+                        } else if modal_data.starts_with("item_lookup:") {
+                            let parts: Vec<&str> = modal_data.split(':').collect();
+                            if parts.len() == 5 {
+                                // format: item_lookup:action:char_id:univ_id:page
+                                let action = parts[1];
+                                let char_id = parts[2];
+                                let univ_id = parts[3];
+                                let page = parts[4].parse::<usize>().unwrap_or(0);
+                                crate::item::lookup_subcommand::handle_lookup_interaction(ctx.clone(), modal.clone(), action, char_id, univ_id, page).await.map(|_| "")
+                            } else {
+                                println!("item_lookup: parts.len() = {}", parts.len());
+                                return;
+                            }
+                        } else if modal_data.starts_with("item_consume:") {
+                            let parts: Vec<&str> = modal_data.split(':').collect();
+                            if parts.len() == 5 {
+                                // format: item_consume:action:char_id:univ_id:page
+                                let action = parts[1];
+                                let char_id = parts[2];
+                                let univ_id = parts[3];
+                                let page = parts[4].parse::<usize>().unwrap_or(0);
+                                crate::item::consume_subcommand::handle_consume_interaction(ctx.clone(), modal.clone(), action, char_id, univ_id, page).await.map(|_| "")
+                            } else {
+                                println!("item_consume: parts.len() = {}", parts.len());
+                                return;
+                            }
+                        } else if modal_data.starts_with("item_place:") {
+                            let parts: Vec<&str> = modal_data.split(":").collect();
+                            if parts.len() == 6 {
+                                // format: item_place:action:char_id:univ_id:immutable:page
+                                let action = parts[1];
+                                let char_id = parts[2];
+                                let univ_id = parts[3];
+                                let immutable = parts[4];
+                                let page = parts[5].parse::<usize>().unwrap_or(0);
+                                crate::item::place_subcommand::handle_place_interaction(ctx.clone(), modal.clone(), action, char_id, univ_id, immutable, page).await.map(|_| "")
+                            } else {
+                                println!("item_place: parts.len() = {}", parts.len());
                                 return;
                             }
                         } else if modal_data.starts_with("tool_sel:") {
                             let parts: Vec<&str> = modal_data.split(':').collect();
                             if parts.len() == 5 {
                                 // format: tool_sel:action:univ_id:chan_id:page
+                                let action = parts[1];
                                 let univ_id = parts[2];
                                 let chan_id = parts[3];
                                 let page = parts[4].parse::<usize>().unwrap_or(0);
-                                handle_tool_selection_interaction(ctx.clone(), modal.clone(), univ_id, chan_id, page).await
+                                crate::item::use_subcommand::handle_tool_selection_interaction(ctx.clone(), modal.clone(), action, univ_id, chan_id, page).await.map(|_| "")
                             } else {
                                 return;
                             }
                         } else {
+                            println!("modal data: {:?}", modal.data);
                             return;
                         }
                     }

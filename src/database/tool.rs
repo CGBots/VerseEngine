@@ -3,7 +3,7 @@ use mongodb::bson::oid::ObjectId;
 use mongodb::results::InsertOneResult;
 use serde::{Deserialize, Serialize};
 use crate::database::db_client::get_db_client;
-use crate::database::db_namespace::{PLACED_ITEMS_COLLECTION_NAME, VERSEENGINE_DB_NAME};
+use crate::database::db_namespace::{AREAS_COLLECTION_NAME, PLACED_ITEMS_COLLECTION_NAME, VERSEENGINE_DB_NAME};
 use futures::TryStreamExt;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -15,6 +15,7 @@ pub struct Tool{
     pub owner_id: Option<ObjectId>,
     pub category_id: u64,
     pub channel_id: u64,
+    pub area_id: Option<ObjectId>,
     pub original_item: ObjectId,
     pub name: String,
     pub chained: Option<ObjectId>,
@@ -36,15 +37,43 @@ impl Tool {
         let db_client = get_db_client().await;
         let collection = db_client
             .database(VERSEENGINE_DB_NAME)
-            .collection::<Tool>(PLACED_ITEMS_COLLECTION_NAME);
+            .collection::<mongodb::bson::Document>(PLACED_ITEMS_COLLECTION_NAME);
 
-        let filter = doc! {
-            "universe_id": universe_id,
-            "channel_id": channel_id as i64,
-        };
+        let pipeline = vec![
+            doc! {
+                "$match": {
+                    "universe_id": universe_id,
+                    "channel_id": channel_id as i64,
+                }
+            },
+            doc! {
+                "$lookup": {
+                    "from": AREAS_COLLECTION_NAME,
+                    "let": { "tool_channel": { "$toString": "$channel_id" }, "tool_universe": "$universe_id" },
+                    "pipeline": [
+                        {
+                            "$match": {
+                                "$expr": {
+                                    "$and": [
+                                        { "$eq": ["$channel_id", "$$tool_channel"] },
+                                        { "$eq": ["$universe_id", "$$tool_universe"] }
+                                    ]
+                                }
+                            }
+                        }
+                    ],
+                    "as": "area"
+                }
+            }
+        ];
 
-        let cursor = collection.find(filter).await?;
-        cursor.try_collect().await
+        let mut cursor = collection.aggregate(pipeline).await?;
+        let mut results = Vec::new();
+        while let Some(doc) = cursor.try_next().await? {
+            let tool: Tool = mongodb::bson::from_document(doc)?;
+            results.push(tool);
+        }
+        Ok(results)
     }
 
     pub async fn get_by_id(tool_id: ObjectId) -> mongodb::error::Result<Option<Tool>> {

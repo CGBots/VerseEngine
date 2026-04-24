@@ -6,7 +6,8 @@ use serenity::prelude::Context as SerenityContext;
 use crate::database::server::{get_server_by_id, Server};
 use crate::discord::channels::ITEM_TAG;
 use crate::discord::poise_structs::{Context, Error};
-use crate::item::ItemUsage;
+use crate::item::{ItemUsage, execute_item_effect_modal};
+use crate::utility::effect_parser::EffectParser;
 use crate::tr;
 use crate::utility::reply::{reply, reply_with_args, reply_with_args_and_ephemeral};
 use crate::utility::loot_table_parser::VALID_NAME_RE;
@@ -59,13 +60,27 @@ pub async fn create(
         return Ok(());
     }
 
+    let modal_result = if let poise::Context::Application(app_ctx) = ctx {
+        execute_item_effect_modal(app_ctx, "".to_string()).await?
+    } else {
+        None
+    };
+
+    let effects_raw = modal_result.map(|m| m.content).unwrap_or_default();
+
     if is_admin {
+        let effects = if !effects_raw.is_empty() {
+            EffectParser::parse(&effects_raw, universe_id, universe_id).await.map_err(|e| Error::from(e))?
+        } else {
+            vec![]
+        };
+
         let result = Item{
             _id: Default::default(),
             universe_id: universe_id,
             item_name: name.clone(),
             item_usage: usage.clone(),
-            effects: vec![],
+            effects,
             description: item_description.clone(),
             image: url.clone(),
             wiki_post_id: None,
@@ -79,13 +94,17 @@ pub async fn create(
             Err(_) => { let _ = reply(ctx, Err("create_item__db_error".into())).await; return Ok(()) }
         }
 
-        let embed = CreateEmbed::new()
+        let mut embed = CreateEmbed::new()
             .title(name.clone())
             .description(item_description.clone().unwrap_or("".to_string()))
             .field(tr!(ctx.clone(), "item_usage_title"), tr!(ctx.clone(), usage.name()), true)
             .field(tr!(ctx.clone(), "item_inventory_size"), inventory_size.unwrap_or(0).to_string(), true)
             .colour(Colour::from_rgb(25, 125, 255))
             .thumbnail(url.clone().unwrap_or("".to_string()));
+
+        if !effects_raw.is_empty() {
+            embed = embed.field(tr!(ctx.clone(), "item_effects_title"), effects_raw.clone(), false);
+        }
 
         if into_wiki {
             let Ok(servers_cursor) = server.get_other_servers().await else {return Err("item_db_error".into())};
@@ -113,7 +132,8 @@ pub async fn create(
             url,
             item_description,
             secret_informations,
-            server
+            server,
+            effects_raw,
         ).await?;
     }
     
@@ -130,6 +150,7 @@ async fn submit_item_for_approval(
     item_description: Option<String>,
     secret_informations: Option<String>,
     server: Server,
+    effects_raw: String,
 ) -> Result<(), Error> {
     use crate::database::universe::get_servers_from_universe;
     use crate::tr_locale;
@@ -158,6 +179,10 @@ async fn submit_item_for_approval(
     
     if let Some(secret) = &secret_informations {
         embed = embed.field(tr_locale!(locale, "create_item__secret_field"), secret, false);
+    }
+
+    if !effects_raw.is_empty() {
+        embed = embed.field(tr_locale!(locale, "item_effects_title"), effects_raw, false);
     }
 
     let servers_cursor = get_servers_from_universe(&server.universe_id).await?;
@@ -220,12 +245,21 @@ pub async fn approve_item(ctx: SerenityContext, component_interaction: Component
     let secret_informations = embed.fields.iter().find(|f| f.name.contains("Secret"))
         .map(|f| f.value.clone());
 
+    let effects_raw = embed.fields.iter().find(|f| f.name.contains("Effet") || f.name.contains("Effect"))
+        .map(|f| f.value.clone()).unwrap_or_default();
+
+    let effects = if !effects_raw.is_empty() {
+        EffectParser::parse(&effects_raw, server.universe_id, server.universe_id).await.map_err(|e| Error::from(e))?
+    } else {
+        vec![]
+    };
+
     let item = Item {
         _id: Default::default(),
         universe_id: server.universe_id,
         item_name: name.clone(),
         item_usage: usage.clone(),
-        effects: vec![],
+        effects,
         description: description.clone(),
         image: image.clone(),
         wiki_post_id: None,

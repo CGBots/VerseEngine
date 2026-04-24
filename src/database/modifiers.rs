@@ -10,6 +10,14 @@ pub enum ModifierType{
     Flats
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum ModifierLevel {
+    Player,
+    Place,
+    Area,
+    Universe,
+}
+
 #[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Modifier{
@@ -17,7 +25,13 @@ pub struct Modifier{
     pub value: StatValue,
     pub modifier_type: ModifierType,
     pub end_timestamp: Option<u64>,
-    pub source: ObjectId
+    pub source: ObjectId,
+    #[serde(default = "default_modifier_level")]
+    pub level: ModifierLevel,
+}
+
+fn default_modifier_level() -> ModifierLevel {
+    ModifierLevel::Player
 }
 
 impl Modifier {

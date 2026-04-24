@@ -104,13 +104,13 @@ pub async fn craft(
     } else {
         // Craft instantané
         for (qty, item_id) in &recipe.result {
-            Inventory::add_item_to_inventory(
+            let _ = Inventory::add_item_to_inventory(
                 server.universe_id,
                 character._id,
                 HolderType::Character,
                 *item_id,
                 *qty
-            ).await?;
+            ).await;
         }
 
         let mut args = FluentArgs::new();

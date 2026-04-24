@@ -362,17 +362,12 @@ pub async fn next_step_logic(actual_move: &PlayerMove) -> Result<PlayerMove, any
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
-    let stat_speed_kmh = stat_speed_bson.as_f64();
+    let final_speed_kmh = stat_speed_bson.as_f64();
 
-    // récupère road et universe
+    // récupère road
     let road_opt = get_road_by_channel_id(actual_move.universe_id, actual_move.road_id.ok_or_else(|| anyhow::anyhow!("road_id missing"))?).await?;
     let road = road_opt.ok_or_else(|| anyhow::anyhow!("road not found"))?;
 
-    let universe_opt = get_universe_by_id(actual_move.universe_id).await?;
-    let universe = universe_opt.ok_or_else(|| anyhow::anyhow!("universe not found"))?;
-
-    // final_speed en km/h
-    let final_speed_kmh = stat_speed_kmh * (universe.global_time_modifier as f64) / 100.0;
     if final_speed_kmh <= 0.0 {
         bail!("final_speed must be > 0");
     }
@@ -393,6 +388,9 @@ pub async fn next_step_logic(actual_move: &PlayerMove) -> Result<PlayerMove, any
     // remaining_distance_km / final_speed_kmh => heures ; *3600 => secondes
     let time_needed_secs_f = (remaining_distance_km / final_speed_kmh) * 3600.0;
     let full_time_needed_secs = time_needed_secs_f.ceil() as u64;
+
+    println!("[Travel Debug] User: {}, Speed: {:.2} km/h, Remaining Time: {}s (Dist: {:.2}km)", 
+             new_move.user_id, final_speed_kmh, full_time_needed_secs, remaining_distance_km);
 
     // clamp par le shortest_modifier s'il existe (modifier.end_timestamp est un timestamp absolu)
     let mut time_to_wait_secs = full_time_needed_secs;
@@ -889,6 +887,33 @@ pub async fn stop_travel(user_id: u64) -> Result<PlayerMove, anyhow::Error> {
     // Relâcher le lock avant d'appeler remove_move pour éviter les deadlocks
     drop(moves_lock);
     remove_move(user_id).await;
+
+    // Envoi du message d'interruption dans le salon de la route
+    if let Some(road_id) = player_move.road_id {
+        if let Some(http) = HTTP_CLIENT.lock().await.clone() {
+            let universe_id = player_move.universe_id;
+            let user_id = player_move.user_id;
+            let guild_id = player_move.server_id;
+
+            tokio::spawn(async move {
+                let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
+                    char.name
+                } else {
+                    let member_nick = http.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
+                    if let Some(nick) = member_nick {
+                        nick
+                    } else if let Ok(user) = http.get_user(UserId::new(user_id)).await {
+                        user.name
+                    } else {
+                        format!("User {}", user_id)
+                    }
+                };
+
+                let msg = tr_locale!("fr", "travel__interrupted", user: character_name);
+                let _ = ChannelId::new(road_id).send_message(&http, CreateMessage::new().content(msg)).await;
+            });
+        }
+    }
     
     Ok(player_move)
 }

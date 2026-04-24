@@ -4,14 +4,16 @@ use std::time::Duration;
 use std::sync::atomic::Ordering;
 use mongodb::bson::doc;
 use mongodb::bson::oid::ObjectId;
-use serenity::all::{ButtonStyle, Color, ComponentInteraction, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateInputText, CreateInteractionResponse, CreateMessage, EditMember, EditMessage, EmbedField, InputTextStyle, Permissions};
-use crate::discord::poise_structs::{Context, Error};
+use serenity::all::{ButtonStyle, Color, ComponentInteraction, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateInputText, CreateInteractionResponse, CreateMessage, EditMember, EditMessage, EmbedField, InputTextStyle, ModalInteraction, Permissions};
+use serenity::json::json;
+use crate::discord::poise_structs::{Context, Error, Data};
 use crate::utility::reply::reply;
 use serenity::client::Context as SerenityContext;
 use serenity::http::CacheHttp;
 use serenity::utils::CreateQuickModal;
 use crate::database::server::{get_server_by_id, Server};
 use crate::{tr, tr_locale};
+use crate::translation::get_by_locale;
 use crate::database::characters::Character;
 use crate::database::db_namespace::{CHARACTERS_COLLECTION_NAME, VERSEENGINE_DB_NAME};
 use crate::database::places::{Place};
@@ -35,6 +37,145 @@ pub static CHARACTER_INSTRUCTION: &str = "character_instruction";
 pub static CHARACTER_REJECT_REASON: &str = "character_reject_reason";
 pub static ACCEPT_CHARACTER_CHOOSE_PLACE: &str = "create_character__choose_place";
 pub static CHARACTER_ACCEPT__STAT_INPUT: &str = "character_stat_input";
+
+pub struct CharacterModal {
+    pub name: String,
+    pub description: String,
+    pub story: String,
+    pub special_request: String,
+    pub interaction: ModalInteraction,
+}
+
+pub async fn execute_character_modal(
+    ctx: &SerenityContext,
+    id: serenity::all::InteractionId,
+    token: &str,
+    locale: &str,
+    default_values: Option<(&str, &str, &str, &str)>,
+) -> Result<Option<CharacterModal>, Error> {
+    let title = get_by_locale(locale, CHARACTER_MODAL_TITLE, None, None);
+    let name_label = get_by_locale(locale, CHARACTER_NAME, None, None);
+    let desc_label = get_by_locale(locale, CHARACTER_DESCRIPTION, None, None);
+    let story_label = get_by_locale(locale, CHARACTER_STORY, None, None);
+    let request_label = get_by_locale(locale, CHARACTER_SPECIAL_REQUEST, None, None);
+    let instruction = get_by_locale(locale, CHARACTER_INSTRUCTION, None, None);
+
+    let (def_name, def_desc, def_story, def_request) = default_values.unwrap_or(("", "", "", ""));
+
+    let custom_id = format!("{}-{}", id, "character_modal");
+
+    let modal_json = json!({
+        "type": 9,
+        "data": {
+            "custom_id": custom_id,
+            "title": title,
+            "components": [
+                {
+                    "type": 10,
+                    "content": instruction
+                },
+                {
+                    "type": 1,
+                    "components": [
+                        {
+                            "type": 4,
+                            "custom_id": CHARACTER_NAME,
+                            "label": name_label,
+                            "style": 1,
+                            "value": def_name,
+                            "required": true,
+                            "max_length": 32
+                        }
+                    ]
+                },
+                {
+                    "type": 1,
+                    "components": [
+                        {
+                            "type": 4,
+                            "custom_id": CHARACTER_DESCRIPTION,
+                            "label": desc_label,
+                            "style": 2,
+                            "value": def_desc,
+                            "required": true,
+                            "max_length": 1024
+                        }
+                    ]
+                },
+                {
+                    "type": 1,
+                    "components": [
+                        {
+                            "type": 4,
+                            "custom_id": CHARACTER_STORY,
+                            "label": story_label,
+                            "style": 2,
+                            "value": def_story,
+                            "required": true,
+                            "max_length": 1024
+                        }
+                    ]
+                },
+                {
+                    "type": 1,
+                    "components": [
+                        {
+                            "type": 4,
+                            "custom_id": CHARACTER_SPECIAL_REQUEST,
+                            "label": request_label,
+                            "style": 2,
+                            "value": def_request,
+                            "required": false,
+                            "max_length": 1024
+                        }
+                    ]
+                }
+            ]
+        }
+    });
+
+    ctx.http.create_interaction_response(id, token, &modal_json, vec![]).await?;
+
+    let response = serenity::collector::ModalInteractionCollector::new(ctx)
+        .filter(move |m| m.data.custom_id == custom_id)
+        .timeout(std::time::Duration::from_secs(1800))
+        .await;
+
+    if let Some(m) = response {
+        let mut name = String::new();
+        let mut description = String::new();
+        let mut story = String::new();
+        let mut special_request = String::new();
+
+        for row in &m.data.components {
+            for component in &row.components {
+                if let serenity::all::ActionRowComponent::InputText(it) = component {
+                    if it.custom_id == CHARACTER_NAME {
+                        name = it.value.clone().unwrap_or_default();
+                    } else if it.custom_id == CHARACTER_DESCRIPTION {
+                        description = it.value.clone().unwrap_or_default();
+                    } else if it.custom_id == CHARACTER_STORY {
+                        story = it.value.clone().unwrap_or_default();
+                    } else if it.custom_id == CHARACTER_SPECIAL_REQUEST {
+                        special_request = it.value.clone().unwrap_or_default();
+                    }
+                }
+            }
+        }
+
+        m.create_response(ctx, CreateInteractionResponse::Acknowledge).await?;
+
+        Ok(Some(CharacterModal {
+            name,
+            description,
+            story,
+            special_request,
+            interaction: m,
+        }))
+    } else {
+        Ok(None)
+    }
+}
 
 /// Verifies that the interaction user owns the character in the message
 /// Verifies that the interaction user is the owner of the character described in the message.
@@ -164,37 +305,24 @@ pub async fn _create_character(ctx: Context<'_>) -> Result<&'static str, Error>{
         _ => return Err("create_character__guild_only".into()),
     };
 
-    let modal = CreateQuickModal::new(tr!(ctx, CHARACTER_MODAL_TITLE))
-        .field(
-            CreateInputText::new(InputTextStyle::Short, tr!(ctx, CHARACTER_NAME), CHARACTER_NAME)
-                .required(true).min_length(3).max_length(32)
-        )
-        .field(
-            CreateInputText::new(InputTextStyle::Paragraph, tr!(ctx, CHARACTER_DESCRIPTION), CHARACTER_DESCRIPTION)
-                .required(true).max_length(1024)
-                .value(tr!(ctx, CHARACTER_INSTRUCTION))
-        )
-        .field(
-            CreateInputText::new(InputTextStyle::Paragraph, tr!(ctx, CHARACTER_STORY), CHARACTER_STORY)
-                .required(true).max_length(1024)
-        )
-        .field(
-            CreateInputText::new(InputTextStyle::Paragraph, tr!(ctx, CHARACTER_SPECIAL_REQUEST), CHARACTER_SPECIAL_REQUEST)
-                .required(false).max_length(1024)
-        )
-        .timeout(Duration::from_mins(30));
-
-    let Ok(interaction) = app_ctx.interaction.quick_modal(ctx.serenity_context(), modal).await else { return Err("create_character__timed_out".into()) };
+    let locale = ctx.locale().unwrap_or("fr");
+    let interaction_id = app_ctx.interaction.id;
+    let interaction_token = &app_ctx.interaction.token;
+    let modal_result = execute_character_modal(ctx.serenity_context(), interaction_id, interaction_token, locale, None).await?;
+    
     app_ctx.has_sent_initial_response.store(true, Ordering::SeqCst);
-    let modal_response = match interaction {
-        Some(interaction) => {
-            let Ok(_) = interaction.interaction.create_response(ctx, CreateInteractionResponse::Acknowledge).await else { return Err("create_character__database_error".into()) };
-            interaction }
-        None => {
-            return Err("create_character__timed_out".into()) }
+    
+    let character_modal = match modal_result {
+        Some(m) => m,
+        None => return Err("create_character__timed_out".into()),
     };
 
-    let inputs = modal_response.inputs;
+    let inputs = vec![
+        character_modal.name,
+        character_modal.description,
+        character_modal.story,
+        character_modal.special_request,
+    ];
 
     let buttons = vec![
         CreateActionRow::Buttons(
@@ -289,61 +417,47 @@ pub async fn modify_character(ctx: SerenityContext, component_interaction: Compo
     let Ok(_) = verify_character_ownership(&ctx, &component_interaction).await else { return Err("create_character__not_owner".into()) };
 
     let embed_fields = component_interaction.message.embeds[0].clone().fields;
+    let embed_title = component_interaction.message.embeds[0].title.clone().unwrap_or_default();
+    
+    let default_values = (
+        embed_title.as_str(),
+        embed_fields[0].value.as_str(),
+        embed_fields[1].value.as_str(),
+        embed_fields[2].value.as_str(),
+    );
 
-    // Create modal with existing values from the embed
-    let modal = CreateQuickModal::new(tr_locale!(component_interaction.locale.as_str(), CHARACTER_MODAL_TITLE))
-        .field(
-            CreateInputText::new(InputTextStyle::Short, tr_locale!(component_interaction.locale.as_str(), CHARACTER_NAME), CHARACTER_NAME)
-                .required(true).min_length(3).max_length(32)
-                .value(component_interaction.message.embeds[0].title.clone().unwrap().as_str())
-        )
-        .field(
-            CreateInputText::new(InputTextStyle::Paragraph, tr_locale!(component_interaction.locale.as_str(), CHARACTER_DESCRIPTION), CHARACTER_DESCRIPTION)
-                .required(true).max_length(1024)
-                .value(embed_fields[0].value.clone())
-        )
-        .field(
-            CreateInputText::new(InputTextStyle::Paragraph, tr_locale!(component_interaction.locale.as_str(), CHARACTER_STORY), CHARACTER_STORY)
-                .required(true).max_length(1024)
-                .value(embed_fields[1].value.clone())
-        )
-        .field(
-            CreateInputText::new(InputTextStyle::Paragraph, tr_locale!(component_interaction.locale.as_str(), CHARACTER_SPECIAL_REQUEST), CHARACTER_SPECIAL_REQUEST)
-                .required(false).max_length(1024)
-                .value(embed_fields[2].value.clone())
-        )
-        .timeout(Duration::from_mins(30));
+    let locale = component_interaction.locale.as_str();
+    let modal_result = execute_character_modal(&ctx, component_interaction.id, &component_interaction.token, locale, Some(default_values)).await?;
 
-    let Ok(interaction) = component_interaction.quick_modal(&ctx, modal).await else { return Err("create_character__timed_out".into()) };
-    let modal_response = match interaction {
-        Some(interaction) => {
-            let Ok(_) = interaction.interaction.create_response(ctx.clone(), CreateInteractionResponse::Acknowledge).await else { return Err("create_character__database_error".into()) };
-            interaction
-        }
-        None => {
-            return Err("create_character__timed_out".into())
-        }
+    let character_modal = match modal_result {
+        Some(m) => m,
+        None => return Err("create_character__timed_out".into()),
     };
 
-    let inputs = modal_response.inputs.clone();
+    let inputs = vec![
+        character_modal.name,
+        character_modal.description,
+        character_modal.story,
+        character_modal.special_request,
+    ];
 
     let buttons = vec![
         CreateActionRow::Buttons(
             vec![
-                CreateButton::new(SUBMIT_CHARACTER_BUTTON_CUSTOM_ID).label(tr_locale!(modal_response.interaction.locale.as_str(), SUBMIT_CHARACTER_BUTTON_CUSTOM_ID)).style(ButtonStyle::Success),
-                CreateButton::new(MODIFY_CHARACTER_BUTTON_CUSTOM_ID).label(tr_locale!(modal_response.interaction.locale.as_str(), MODIFY_CHARACTER_BUTTON_CUSTOM_ID)).style(ButtonStyle::Primary),
-                CreateButton::new(DELETE_CHARACTER_BUTTON_CUSTOM_ID).label(tr_locale!(modal_response.interaction.locale.as_str(), DELETE_CHARACTER_BUTTON_CUSTOM_ID)).style(ButtonStyle::Danger),
+                CreateButton::new(SUBMIT_CHARACTER_BUTTON_CUSTOM_ID).label(tr_locale!(character_modal.interaction.locale.as_str(), SUBMIT_CHARACTER_BUTTON_CUSTOM_ID)).style(ButtonStyle::Success),
+                CreateButton::new(MODIFY_CHARACTER_BUTTON_CUSTOM_ID).label(tr_locale!(character_modal.interaction.locale.as_str(), MODIFY_CHARACTER_BUTTON_CUSTOM_ID)).style(ButtonStyle::Primary),
+                CreateButton::new(DELETE_CHARACTER_BUTTON_CUSTOM_ID).label(tr_locale!(character_modal.interaction.locale.as_str(), DELETE_CHARACTER_BUTTON_CUSTOM_ID)).style(ButtonStyle::Danger),
             ]
         )
     ];
 
-    let interaction = modal_response.interaction.clone();
+    let interaction = character_modal.interaction.clone();
 
-    let result_message = match modal_response.interaction.message {
+    let result_message = match character_modal.interaction.message.as_ref() {
         None => {
-            modal_response.interaction.channel_id.send_message(ctx, CreateMessage::new().embed(
+            character_modal.interaction.channel_id.send_message(ctx, CreateMessage::new().embed(
                 CreateEmbed::new()
-                    .footer(CreateEmbedFooter::new(modal_response.interaction.user.id.get().to_string()))
+                    .footer(CreateEmbedFooter::new(character_modal.interaction.user.id.get().to_string()))
                     .title(inputs[0].clone())
                     .field(tr_locale!(interaction.locale.as_str(), CHARACTER_DESCRIPTION), inputs[1].clone(), true)
                     .field(tr_locale!(interaction.locale.as_str(), CHARACTER_STORY), inputs[2].clone(), true)
@@ -372,7 +486,7 @@ pub async fn modify_character(ctx: SerenityContext, component_interaction: Compo
                     false
                 )
             ];
-            modal_response.interaction.channel_id.edit_message(ctx, message.id, EditMessage::new().embed(
+            character_modal.interaction.channel_id.edit_message(ctx, message.id, EditMessage::new().embed(
                 CreateEmbed::new()
                     .footer(CreateEmbedFooter::new(message.embeds.get(0).unwrap().footer.clone().unwrap().text.as_str()))
                     .title(inputs[0].clone())
@@ -404,42 +518,77 @@ pub async fn refuse_character(ctx: SerenityContext, component_interaction: Compo
 
     let Ok(_) = verify_moderator_permission(&ctx, &component_interaction, &server).await else { return Err("create_character__no_permission".into()) };
 
-    let modal = CreateQuickModal::new(tr_locale!(component_interaction.locale.as_str(), CHARACTER_MODAL_TITLE))
-        .field(
-            CreateInputText::new(InputTextStyle::Paragraph, tr_locale!(component_interaction.locale.as_str(), CHARACTER_REJECT_REASON), CHARACTER_REJECT_REASON)
-                .required(false).max_length(864)
-        )
-        .timeout(Duration::from_mins(30));
+    let locale = component_interaction.locale.as_str();
+    let title = get_by_locale(locale, CHARACTER_MODAL_TITLE, None, None);
+    let reason_label = get_by_locale(locale, CHARACTER_REJECT_REASON, None, None);
+    
+    let custom_id = format!("{}-{}", component_interaction.id, "refuse_modal");
+    
+    let modal_json = json!({
+        "type": 9,
+        "data": {
+            "custom_id": custom_id,
+            "title": title,
+            "components": [
+                {
+                    "type": 1,
+                    "components": [
+                        {
+                            "type": 4,
+                            "custom_id": CHARACTER_REJECT_REASON,
+                            "label": reason_label,
+                            "style": 2,
+                            "required": false,
+                            "max_length": 864
+                        }
+                    ]
+                }
+            ]
+        }
+    });
 
-    let Ok(interaction) = component_interaction.quick_modal(&ctx, modal).await else { return Err("create_character__timed_out".into()) };
-    let modal_response = match interaction {
-        Some(interaction) => {
-            let Ok(_) = interaction.interaction.create_response(ctx.clone(), CreateInteractionResponse::Acknowledge).await else { return Err("create_character__database_error".into()) };
-            interaction
-        }
-        None => {
-            return Err("create_character__timed_out".into())
-        }
+    ctx.http.create_interaction_response(component_interaction.id, &component_interaction.token, &modal_json, vec![]).await?;
+
+    let response = serenity::collector::ModalInteractionCollector::new(&ctx)
+        .filter(move |m| m.data.custom_id == custom_id)
+        .timeout(std::time::Duration::from_secs(1800))
+        .await;
+
+    let m = match response {
+        Some(m) => m,
+        None => return Err("create_character__timed_out".into()),
     };
 
-    let inputs = modal_response.inputs.clone();
+    let reason = m.data.components.iter()
+        .flat_map(|row| row.components.iter())
+        .find_map(|component| {
+            if let serenity::all::ActionRowComponent::InputText(it) = component {
+                if it.custom_id == CHARACTER_REJECT_REASON {
+                    return Some(it.value.clone().unwrap_or_default());
+                }
+            }
+            None
+        })
+        .unwrap_or_default();
 
-    let Ok(message) = modal_response.interaction.message
+    m.create_response(&ctx, CreateInteractionResponse::Acknowledge).await?;
+
+    let Ok(message) = m.message.clone()
         .ok_or("create_character__message_not_found") else { return Err("create_character__message_not_found".into()) };
 
     let mut embed_fields = component_interaction.message.embeds[0].clone().fields;
     embed_fields.push(EmbedField::new(
         tr_locale!(component_interaction.locale.as_str(), CHARACTER_REJECT_REASON),
-        inputs[0].clone(),
+        reason,
         false
     ));
 
     let buttons = vec![
         CreateActionRow::Buttons(
             vec![
-                CreateButton::new(SUBMIT_CHARACTER_BUTTON_CUSTOM_ID).label(tr_locale!(modal_response.interaction.locale.as_str(), SUBMIT_CHARACTER_BUTTON_CUSTOM_ID)).style(ButtonStyle::Success),
-                CreateButton::new(MODIFY_CHARACTER_BUTTON_CUSTOM_ID).label(tr_locale!(modal_response.interaction.locale.as_str(), MODIFY_CHARACTER_BUTTON_CUSTOM_ID)).style(ButtonStyle::Primary),
-                CreateButton::new(DELETE_CHARACTER_BUTTON_CUSTOM_ID).label(tr_locale!(modal_response.interaction.locale.as_str(), DELETE_CHARACTER_BUTTON_CUSTOM_ID)).style(ButtonStyle::Danger),
+                CreateButton::new(SUBMIT_CHARACTER_BUTTON_CUSTOM_ID).label(tr_locale!(m.locale.as_str(), SUBMIT_CHARACTER_BUTTON_CUSTOM_ID)).style(ButtonStyle::Success),
+                CreateButton::new(MODIFY_CHARACTER_BUTTON_CUSTOM_ID).label(tr_locale!(m.locale.as_str(), MODIFY_CHARACTER_BUTTON_CUSTOM_ID)).style(ButtonStyle::Primary),
+                CreateButton::new(DELETE_CHARACTER_BUTTON_CUSTOM_ID).label(tr_locale!(m.locale.as_str(), DELETE_CHARACTER_BUTTON_CUSTOM_ID)).style(ButtonStyle::Danger),
             ]
         )
     ];
@@ -449,10 +598,10 @@ pub async fn refuse_character(ctx: SerenityContext, component_interaction: Compo
         .map(|field| (field.name.clone(), field.value.clone(), field.inline))
         .collect();
 
-    let Ok(_) = modal_response.interaction.channel_id.edit_message(ctx, message.id, EditMessage::new().embed(
+    let Ok(_) = m.channel_id.edit_message(ctx, message.id, EditMessage::new().embed(
         CreateEmbed::new()
             .footer(CreateEmbedFooter::new(message.embeds.get(0).unwrap().footer.clone().unwrap().text.as_str()))
-            .title(inputs[0].clone())
+            .title(message.embeds.get(0).unwrap().title.clone().unwrap_or_default())
             .fields(embed_fields)
             .author(CreateEmbedAuthor::new(component_interaction.user.name.as_str()))
             .color(Color::from_rgb(255, 0, 0))
@@ -529,56 +678,98 @@ pub async fn accept_character(ctx: SerenityContext, component_interaction: Compo
     let Ok(stats) = stats_cursor.try_collect::<Vec<Stat>>().await else { return Err("create_character__database_error".into()) };
 
     // Prepare the stat template for the modal
-    let mut quick_modal = CreateQuickModal::new(tr_locale!(component_interaction.locale.as_str(), CHARACTER_MODAL_TITLE));
+    let locale = component_interaction.locale.as_str();
+    let title = get_by_locale(locale, CHARACTER_MODAL_TITLE, None, None);
+    let label = get_by_locale(locale, CHARACTER_ACCEPT__STAT_INPUT, None, None);
+
     let mut text = String::new();
     for stat in stats.clone() {
         text.push_str(&format!("{}: [{:?}]\n", stat.name, stat.base_value));
     };
-    quick_modal = quick_modal.field(CreateInputText::new(InputTextStyle::Paragraph, tr_locale!(component_interaction.locale.as_str(), CHARACTER_ACCEPT__STAT_INPUT) , "stats_input").value(text).required(false));
-    let Ok(interaction) = component_interaction.quick_modal(&ctx, quick_modal).await else { return Err("create_character__timed_out".into()) };
+
+    let custom_id = format!("{}-{}", component_interaction.id, "accept_modal");
+
+    let modal_json = json!({
+        "type": 9,
+        "data": {
+            "custom_id": custom_id,
+            "title": title,
+            "components": [
+                {
+                    "type": 1,
+                    "components": [
+                        {
+                            "type": 4,
+                            "custom_id": "stats_input",
+                            "label": label,
+                            "style": 2,
+                            "value": text,
+                            "required": false
+                        }
+                    ]
+                }
+            ]
+        }
+    });
+
+    ctx.http.create_interaction_response(component_interaction.id, &component_interaction.token, &modal_json, vec![]).await?;
+
+    let response = serenity::collector::ModalInteractionCollector::new(&ctx)
+        .filter(move |m| m.data.custom_id == custom_id)
+        .timeout(std::time::Duration::from_secs(1800))
+        .await;
+
+    let m = match response {
+        Some(m) => m,
+        None => return Err("create_character__timed_out".into()),
+    };
+
+    let input = m.data.components.iter()
+        .flat_map(|row| row.components.iter())
+        .find_map(|component| {
+            if let serenity::all::ActionRowComponent::InputText(it) = component {
+                if it.custom_id == "stats_input" {
+                    return Some(it.value.clone().unwrap_or_default());
+                }
+            }
+            None
+        })
+        .unwrap_or_default();
 
     let mut extracted_stats: Vec<Stat> = Vec::new();
-    match interaction {
-        Some(interaction) => {
-            let input = interaction.inputs[0].clone();
-            let mut line_matched = std::collections::HashSet::new();
+    let mut line_matched = std::collections::HashSet::new();
 
-            // Parse each line of the input to find stat values
-            for line in input.lines() {
-                for stat in stats.iter() {
-                    if line.contains(&stat.name) {
-                        line_matched.insert(stat.name.clone());
+    // Parse each line of the input to find stat values
+    for line in input.lines() {
+        for stat in stats.iter() {
+            if line.contains(&stat.name) {
+                line_matched.insert(stat.name.clone());
 
-                        // Value is expected after a colon, or the whole line if no colon
-                        let value_str = if let Some(colon_pos) = line.find(':') {
-                            &line[colon_pos + 1..].trim()
-                        } else {
-                            line.trim()
-                        };
+                // Value is expected after a colon, or the whole line if no colon
+                let value_str = if let Some(colon_pos) = line.find(':') {
+                    &line[colon_pos + 1..].trim()
+                } else {
+                    line.trim()
+                };
 
-                        if let Some(value) = parse_stat_value(value_str, &stat.base_value) {
-                            extracted_stats.push(create_stat_with_value(stat, value));
-                        } else {
-                            return Err("create_character__type_mismatch".into());
-                        }
-                        break;
-                    }
+                if let Some(value) = parse_stat_value(value_str, &stat.base_value) {
+                    extracted_stats.push(create_stat_with_value(stat, value));
+                } else {
+                    return Err("create_character__type_mismatch".into());
                 }
+                break;
             }
-
-            // For any stats not found in the input, use their default values
-            for stat in stats.iter() {
-                if !line_matched.contains(&stat.name) {
-                    extracted_stats.push(stat.clone());
-                }
-            }
-
-            let Ok(_) = interaction.interaction.create_response(ctx.clone(), CreateInteractionResponse::Acknowledge).await else { return Err("create_character__database_error".into()) };
-        }
-        None => {
-            return Err("create_character__timed_out".into());
         }
     }
+
+    // For any stats not found in the input, use their default values
+    for stat in stats.iter() {
+        if !line_matched.contains(&stat.name) {
+            extracted_stats.push(stat.clone());
+        }
+    }
+
+    m.create_response(ctx.clone(), CreateInteractionResponse::Acknowledge).await?;
 
     let character_user_id = match component_interaction.message.embeds[0]
         .footer.as_ref()

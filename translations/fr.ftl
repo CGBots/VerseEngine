@@ -178,10 +178,6 @@ loot_table__not_in_loot = Pas de fouille en cours
 loot_table__stopped = Fouille annulée
     .title = Succès
     .message = Votre fouille a été annulée.
-loot_table__item_line = - {$item_name}
-loot_table__item_line_quantity = - {$item_name} (x{$quantity})
-loot_table__item_not_found = - {$item_name} (x{$quantity}) (Objet inexistant dans la base de données)
-loot_table__item_db_error = - {$item_name} (x{$quantity}) (Erreur de base de données: {$error})
 create_item__invalid_name = Nom d'objet invalide
     .title = Nom incorrect
     .message = Le nom de l'objet **{$name}** contient des caractères non autorisés. Seuls les caractères alphanumériques, espaces, tirets et underscores sont autorisés.
@@ -646,10 +642,15 @@ travel__source_place_not_found = Lieu d'origine introuvable
     .title = Lieu d'origine introuvable
     .message = Votre position actuelle n'est pas reconnue comme un lieu valide.
 travel__started = Voyage commencé
-travel__stopped = Voyage arrêté. Vous pouvez maintenant choisir une destination ou rester ici.
-travel__not_in_move = Vous n'êtes pas en train de voyager.
     .title = Voyage commencé
     .message = Vous avez commencé votre voyage vers {$destination}.
+travel__stopped = Voyage arrêté
+    .title = Voyage arrêté
+    .message = Votre voyage a été arrêté. Vous pouvez maintenant choisir une destination ou rester ici.
+travel__interrupted = `{$user} interrompt son voyage.`
+travel__not_in_move = Pas de voyage en cours
+    .title = Pas de voyage en cours
+    .message = Vous n'êtes pas en train de voyager.
 travel__already_moving_to_destination = Déjà en route
     .title = Déjà en route
     .message = Vous êtes déjà en train de vous déplacer vers cette destination.
@@ -840,8 +841,11 @@ item_create = créer
 item_lookup = regarder
     .description = Affiche les détails d'un item possédé via son ID d'inventaire
     .id = id
-    .id-description = L'ID de la ligne d'inventaire (reçu par DM)
-item_place = placer
+    .id-description = L'ID de la ligne d'inventaire (facultatif si utilisation du carrousel)
+item_lookup__title = Regarder un objet
+item_lookup__select_placeholder = Sélectionnez un objet à regarder
+item_lookup__empty_inventory = Vous n'avez aucun objet à regarder dans votre inventaire.
+item_place_command = placer
     .description = Placer un objet dans le salon actuel.
     .inventory_id = id_inventaire
     .inventory_id-description = ID de l'entrée d'inventaire de l'objet à placer
@@ -856,6 +860,7 @@ item_inventory_size = Taille inventaire
 item_lookup_usage = Usage
 item_lookup_secret = Informations Secrètes
 item_lookup_effects = Effets
+item_effects_title = Effets
 item_lookup_stat = Stat
 item_lookup_value = Valeur
 item_lookup_type = Type
@@ -865,6 +870,29 @@ item_placed_success = Objet placé !
     .message = Vous avez placé **{$item_name}** dans **#{$channel_name}**.
 item_placed_rp = _**{$item_name}** a été placé par **{$character_name}**._
 item_immutable_footer = Cet objet est immuable.
+
+item_effect__modal_title = Effets de l'objet
+item_effect__modal_field_name = Liste des effets
+item_effect__modal_placeholder = # Guide de syntaxe des Effets
+    Stat: Valeur[Type] Durée Niveau
+    
+    Exemples:
+    Force: +5 10m joueur
+    Vitesse: x1.2 1h endroit
+    HP: 10 flat univers
+    
+    Types:
+    + : Addition
+    x : Multiplicateur
+    flat : Valeur fixe
+    
+    Durées: s, m, h, d/j (par défaut: m)
+    
+    Niveaux:
+    joueur : Par défaut
+    endroit : Salon ou route
+    lieu : Catégorie ou route
+    univers : Tout l'univers
 
 ItemUsage = Type d'usage
 Consumable = Consommable
@@ -996,11 +1024,8 @@ use__no_tools_found = Aucun objet trouvé
     .message = Aucun objet utilisable n'a été trouvé dans ce salon.
 use__list_tools = Objets disponibles
     .title = Objets disponibles
-    .description = Voici les objets avec lesquels vous pouvez intéragir dans ce lieu :
-    .footer = Page {$current} sur {$total} • Utilisez /item lookup [ID] pour plus de détails
-    .title = Objets utilisables dans ce salon
-    .message = Voici les objets avec lesquels vous pouvez interagir :
-        {$tools}
+    .select_placeholder = Sélectionnez un objet à utiliser
+    .footer = Page {$current} sur {$total}
 use__tool_not_found = Objet non trouvé
     .title = Objet non trouvé
     .message = L'objet spécifié est introuvable ou n'existe plus.
@@ -1023,3 +1048,16 @@ use__modal_instructions_value = # Guide de syntaxe des transactions
 use__transfer_success = Transfert réussi
     .title = Transfert terminé
     .message = Les objets ont été transférés avec succès.
+
+# Consommation d'items
+consume__title = Consommer un objet
+consume__empty_inventory = Vous n'avez aucun objet consommable dans votre inventaire.
+consume__select_placeholder = Sélectionnez un objet à consommer
+consume__success = Vous avez consommé **{ $item_name }** ! Les effets ont été appliqués.
+consume__error = Erreur lors de la consommation : { $error }
+consume__universe_not_found = Univers non trouvé.
+consume__character_not_found = Personnage non trouvé.
+
+item_place__title = Placer un objet
+item_place__select_placeholder = Sélectionnez un objet à placer
+item__error = Erreur : {$error}
