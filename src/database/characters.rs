@@ -1,7 +1,6 @@
 use mongodb::bson::doc;
 use serde_with::DisplayFromStr;
 use mongodb::bson::oid::ObjectId;
-use mongodb::results::InsertOneResult;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use crate::database::db_client::{get_db_client};

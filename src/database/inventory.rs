@@ -35,7 +35,7 @@ pub struct Inventory {
 }
 
 impl Inventory {
-    pub async fn add_item(universe_id: ObjectId, character_id: ObjectId, item_id: ObjectId, amount: u64) -> mongodb::error::Result<()> {
+    pub async fn _add_item(universe_id: ObjectId, character_id: ObjectId, item_id: ObjectId, amount: u64) -> mongodb::error::Result<()> {
         let db_client = get_db_client().await;
         let collection = db_client
             .database(VERSEENGINE_DB_NAME)

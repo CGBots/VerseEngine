@@ -2,9 +2,8 @@ use mongodb::bson::oid::ObjectId;
 use crate::database::areas::{get_area_by_channel_id, Area};
 use crate::database::characters::get_character_by_user_id;
 use crate::database::inventory::{Inventory, HolderType};
-use crate::database::items::{get_item_by_id, Item};
+use crate::database::items::{get_item_by_id};
 use crate::database::places::get_place_by_category_id;
-use crate::database::server::get_server_by_id;
 use crate::database::universe::get_universe_by_server_id;
 use crate::database::tool::Tool;
 use crate::discord::poise_structs::{Context, Error};
@@ -15,7 +14,6 @@ use serenity::all::{CreateInteractionResponse, CreateInteractionResponseMessage,
 use std::str::FromStr;
 
 use fluent::FluentArgs;
-use crate::utility::reply::{reply, reply_with_args_and_ephemeral};
 
 /// Place un objet dans le salon actuel.
 #[poise::command(slash_command, guild_only, rename = "item_place_command")]

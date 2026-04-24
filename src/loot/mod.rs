@@ -9,7 +9,6 @@ use crate::database::universe::{get_universe_by_server_id, get_servers_from_univ
 use crate::discord::poise_structs::{Context, Error};
 use crate::utility::reply::reply_with_args_and_ephemeral;
 use fluent::FluentArgs;
-use std::collections::HashMap;
 use serenity::all::ChannelId;
 use futures::TryStreamExt;
 use crate::database::loot::PlayerLoot;

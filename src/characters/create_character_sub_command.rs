@@ -1,16 +1,14 @@
 use std::str::FromStr;
 use futures::{TryStreamExt};
-use std::time::Duration;
 use std::sync::atomic::Ordering;
 use mongodb::bson::doc;
 use mongodb::bson::oid::ObjectId;
-use serenity::all::{ButtonStyle, Color, ComponentInteraction, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateInputText, CreateInteractionResponse, CreateMessage, EditMember, EditMessage, EmbedField, InputTextStyle, ModalInteraction, Permissions};
+use serenity::all::{ButtonStyle, Color, ComponentInteraction, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateInteractionResponse, CreateMessage, EditMember, EditMessage, EmbedField, ModalInteraction, Permissions};
 use serenity::json::json;
-use crate::discord::poise_structs::{Context, Error, Data};
+use crate::discord::poise_structs::{Context, Error};
 use crate::utility::reply::reply;
 use serenity::client::Context as SerenityContext;
 use serenity::http::CacheHttp;
-use serenity::utils::CreateQuickModal;
 use crate::database::server::{get_server_by_id, Server};
 use crate::{tr, tr_locale};
 use crate::translation::get_by_locale;
