@@ -13,7 +13,6 @@ use serenity::all::{CreateInteractionResponse, CreateInteractionResponseMessage,
 use crate::characters::create_character_sub_command::{accept_character, choose_character_place, delete_character, modify_character, refuse_character, submit_character};
 use crate::loot::logic::handle_loot_carousel_interaction;
 use crate::characters::inventory_subcommand::handle_inventory_interaction;
-use crate::item::use_subcommand::handle_tool_selection_interaction;
 use crate::recipe::create_subcommand::{approve_recipe, reject_recipe, modify_recipe_interaction};
 use crate::item::create_item_subcommand::{approve_item, reject_item};
 #[allow(unused_imports)]

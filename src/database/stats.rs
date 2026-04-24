@@ -42,11 +42,10 @@ use mongodb::bson::oid::ObjectId;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use crate::database::db_client::{get_db_client};
-use crate::database::db_namespace::{CHARACTERS_COLLECTION_NAME, ROADS_COLLECTION_NAME, STATS_COLLECTION_NAME, VERSEENGINE_DB_NAME, AREAS_COLLECTION_NAME};
+use crate::database::db_namespace::{CHARACTERS_COLLECTION_NAME, ROADS_COLLECTION_NAME, STATS_COLLECTION_NAME, VERSEENGINE_DB_NAME};
 use crate::database::modifiers::{Modifier, ModifierType};
 use crate::database::characters::Character;
 use crate::database::road::Road;
-use crate::database::areas::Area;
 use crate::discord::poise_structs::Error;
 
 pub static SPEED_STAT: &str = "speed";

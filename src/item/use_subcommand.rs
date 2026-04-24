@@ -5,7 +5,7 @@ use crate::database::universe::get_universe_by_server_id;
 use crate::database::db_client::get_db_client;
 use crate::database::items::{get_item_by_name, get_item_by_id};
 use crate::discord::poise_structs::{Context, Error, Data};
-use crate::utility::carousel::{CarouselConfig, CarouselPage, create_carousel_embed, create_carousel_components, paginate_text};
+use crate::utility::carousel::{CarouselConfig, CarouselPage, create_carousel_embed, create_carousel_components};
 use crate::translation::{get, get_by_locale};
 use fluent::FluentArgs;
 use mongodb::bson::oid::ObjectId;

@@ -13,7 +13,6 @@ use fluent::FluentArgs;
 use tokio::time::sleep;
 use crate::database::road::get_road_by_channel_id;
 use crate::database::stats::{get_stat_by_name, SPEED_STAT};
-use crate::database::universe::get_universe_by_id;
 use crate::tr_locale;
 use crate::translation::{get_by_locale};
 
