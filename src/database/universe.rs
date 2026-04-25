@@ -18,7 +18,7 @@ use crate::database::places::Place;
 use crate::database::road::Road;
 use crate::database::server::{Server};
 use crate::database::stats::Stat;
-use crate::database::travel::PlayerMove;
+use crate::database::travel::TravelGroup;
 use crate::discord::poise_structs::Error;
 
 pub static FREE_LIMIT_UNIVERSE: usize = 2;
@@ -415,7 +415,7 @@ impl Universe {
         let stats = db.collection::<Stat>(STATS_COLLECTION_NAME);
         let roads = db.collection::<Road>(ROADS_COLLECTION_NAME);
         let characters = db.collection::<Character>(CHARACTERS_COLLECTION_NAME);
-        let travels = db.collection::<PlayerMove>(TRAVELS_COLLECTION_NAME);
+        let travels = db.collection::<TravelGroup>(TRAVELS_COLLECTION_NAME);
 
         let universe_delete = universes.delete_one(doc! {"_id": self.universe_id});
         let servers_delete = servers.delete_many(filter.clone());

@@ -11,7 +11,7 @@ use crate::database::db_client::{get_db_client};
 use crate::database::db_namespace::{VERSEENGINE_DB_NAME, SERVERS_COLLECTION_NAME, ROADS_COLLECTION_NAME, TRAVELS_COLLECTION_NAME};
 use crate::database::characters::{get_character_by_user_id, Character};
 use crate::database::road::{get_road, Road};
-use crate::database::travel::PlayerMove;
+use crate::database::travel::TravelGroup;
 use crate::database::universe::get_servers_from_universe;
 use crate::discord::poise_structs::{Context, Error};
 
@@ -522,12 +522,12 @@ impl Server {
         }
     }
 
-    pub async fn get_player_move(self, user_id: u64) -> mongodb::error::Result<Option<PlayerMove>> {
+    pub async fn get_player_move(self, user_id: u64) -> mongodb::error::Result<Option<TravelGroup>> {
         let db_client = get_db_client().await;
-        let filter = doc!{"user_id": user_id.to_string().as_str(), "universe_id": self.universe_id};
+        let filter = doc!{"members": user_id.to_string(), "universe_id": self.universe_id};
         db_client
             .database(VERSEENGINE_DB_NAME)
-            .collection::<PlayerMove>(TRAVELS_COLLECTION_NAME)
+            .collection::<TravelGroup>(TRAVELS_COLLECTION_NAME)
             .find_one(filter)
             .await
     }

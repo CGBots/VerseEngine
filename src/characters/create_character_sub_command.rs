@@ -16,7 +16,7 @@ use crate::database::characters::Character;
 use crate::database::db_namespace::{CHARACTERS_COLLECTION_NAME, VERSEENGINE_DB_NAME};
 use crate::database::places::{Place};
 use crate::database::stats::{Stat, StatValue};
-use crate::database::travel::{PlayerMove};
+use crate::database::travel::{TravelGroup};
 use crate::database::universe::get_universe_by_id;
 
 pub static CHARACTER_MODAL_TITLE: &str = "character_modal_title";
@@ -807,7 +807,7 @@ pub async fn accept_character(ctx: SerenityContext, component_interaction: Compo
         stats: extracted_stats,
     };
 
-    let Ok(_character_result) = character.clone().update().await else { return Err("create_character__database_error".into()) };
+    let Ok(_character_result) = character.clone().upsert().await else { return Err("create_character__database_error".into()) };
 
     if let Some(player_role_id) = server.player_role_id {
         if let Ok(member) = ctx.http().get_member(guild_id, character_user_id.into()).await {
@@ -926,7 +926,7 @@ pub async fn choose_character_place(ctx: SerenityContext, component_interaction:
     let Ok(Some(_character)) = db_client.database(VERSEENGINE_DB_NAME).collection::<Character>(CHARACTERS_COLLECTION_NAME)
         .find_one(character_filter).await else {return Err("create_character__database_error".into())};
 
-    let player_move = PlayerMove{
+    let player_move = TravelGroup {
         _id: Default::default(),
         universe_id: server.universe_id,
         server_id: server.server_id,
@@ -947,7 +947,7 @@ pub async fn choose_character_place(ctx: SerenityContext, component_interaction:
         source_server_id: Some(place.server_id),
         modified_speed: 0.0,
         distance_traveled: 0.0,
-        user_id: character_user_id,
+        members: vec![character_user_id],
     };
 
     // Supprime l'ancien mouvement s'il existe dans un autre univers

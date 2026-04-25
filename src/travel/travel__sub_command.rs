@@ -2,13 +2,14 @@ use poise::serenity_prelude::Context as SerenityContext;
 use serenity::all::{CreateActionRow, CreateSelectMenuOption, ComponentInteraction};
 use crate::database::places::{get_place_by_category_id,};
 use crate::database::server::{get_server_by_id, Server};
-use crate::database::travel::{PlayerMove, SpaceType};
+use crate::database::travel::{TravelGroup, SpaceType};
 use crate::database::craft::PlayerCraft;
+use crate::database::universe::{get_universe_by_id};
 use crate::discord::poise_structs::{Context, Error};
-use crate::travel::logic::{add_travel, stop_travel};
+use crate::travel::logic::{add_travel, stop_travel, calculate_current_distance};
 use crate::utility::reply::{reply, reply_with_args};
 use futures::{TryStreamExt};
-use poise::{CreateReply};
+use poise::{CreateReply, serenity_prelude as serenity};
 use crate::database::road::{get_road, get_road_by_channel_id, get_road_by_source, Road};
 
 fn parse_channel_id(input: &str) -> Option<u64> {
@@ -23,8 +24,156 @@ fn parse_channel_id(input: &str) -> Option<u64> {
     None
 }
 
-#[poise::command(slash_command, guild_only, subcommands("stop", "start"), rename = "travel")]
+#[poise::command(slash_command, guild_only, subcommands("stop", "start", "join", "leave"), rename = "travel")]
 pub async fn travel(_ctx: Context<'_>) -> Result<(), Error> {
+    Ok(())
+}
+
+#[poise::command(slash_command, guild_only, rename = "travel_join")]
+pub async fn join(
+    ctx: Context<'_>,
+    #[description = "Le joueur dont vous souhaitez rejoindre le groupe"]
+    target: serenity::User,
+) -> Result<(), Error> {
+    let Ok(_) = ctx.defer_ephemeral().await else { return Err("reply__reply_failed".into()) };
+    let author_id = ctx.author().id.get();
+    let target_id = target.id.get();
+
+    if author_id == target_id {
+        return Err("travel__cannot_join_self".into());
+    }
+
+    let server = match get_server_by_id(ctx.guild_id().unwrap().get()).await {
+        Ok(Some(s)) => s,
+        _ => return Err("travel__server_not_found".into()),
+    };
+
+    let universe = match get_universe_by_id(server.universe_id).await {
+        Ok(Some(u)) => u,
+        _ => return Err("travel__universe_not_found".into()),
+    };
+
+    let my_move = match server.clone().get_player_move(author_id).await {
+        Ok(Some(m)) => m,
+        _ => return Err("travel__character_not_found".into()),
+    };
+
+    let mut target_move = match server.clone().get_player_move(target_id).await {
+        Ok(Some(m)) => m,
+        _ => return Err("travel__target_not_found".into()),
+    };
+
+    if my_move._id == target_move._id {
+        return Err("travel__already_in_same_group".into());
+    }
+
+    // Condition de salon/route
+    if my_move.actual_space_id != target_move.actual_space_id || my_move.actual_space_type != target_move.actual_space_type {
+        return Err("travel__too_far_different_place".into());
+    }
+
+    // Condition de proximité si en mouvement
+    if my_move.is_in_move || target_move.is_in_move {
+        let dist1 = calculate_current_distance(&my_move);
+        let dist2 = calculate_current_distance(&target_move);
+        let diff = (dist1 - dist2).abs();
+        let threshold = 50.0 + (5.0 * universe.global_time_modifier as f64);
+        
+        if diff > threshold / 1000.0 { // threshold est en mètres, distances en km
+            return Err("travel__too_far_to_join".into());
+        }
+
+        // Logique de position : moyenne des distances
+        let mean_dist = (dist1 + dist2) / 2.0;
+        target_move.distance_traveled = mean_dist;
+        
+        // On met à jour les timestamps pour forcer le recalcul
+        let now = chrono::Utc::now().timestamp() as u64;
+        target_move.step_start_timestamp = Some(now);
+        target_move.step_end_timestamp = Some(now);
+        target_move.modified_speed = 0.0;
+    }
+
+    // Fusion des membres
+    for member in my_move.members.clone() {
+        if !target_move.members.contains(&member) {
+            target_move.members.push(member);
+        }
+    }
+
+    // Supprimer mon ancien groupe et sauvegarder le nouveau
+    my_move.remove().await.map_err(|e| Error::from(format!("DB error: {:?}", e)))?;
+    target_move.upsert().await.map_err(|e| Error::from(format!("DB error: {:?}", e)))?;
+
+    // Si le groupe cible est en mouvement, on doit relancer le processus pour inclure les nouveaux membres (et leur vitesse)
+    if target_move.is_in_move {
+        // On arrête proprement pour nettoyer MOVES et SLEEPER
+        let leader_id = target_move.members[0];
+        stop_travel(leader_id).await?;
+        add_travel(ctx.serenity_context().http.clone(), server.server_id.into(), target_move).await?;
+    }
+
+    let _ = reply_with_args(ctx, Ok("travel__joined_group"), None).await;
+    Ok(())
+}
+
+#[poise::command(slash_command, guild_only, rename = "travel_leave")]
+pub async fn leave(ctx: Context<'_>) -> Result<(), Error> {
+    let Ok(_) = ctx.defer_ephemeral().await else { return Err("reply__reply_failed".into()) };
+    let user_id = ctx.author().id.get();
+
+    let server = match get_server_by_id(ctx.guild_id().unwrap().get()).await {
+        Ok(Some(s)) => s,
+        _ => return Err("travel__server_not_found".into()),
+    };
+
+    let mut player_move = match server.clone().get_player_move(user_id).await {
+        Ok(Some(m)) => m,
+        _ => return Err("travel__character_not_found".into()),
+    };
+
+    if player_move.members.len() <= 1 {
+        return Err("travel__cannot_leave_alone".into());
+    }
+
+    // Retirer l'utilisateur du groupe actuel
+    player_move.members.retain(|&id| id != user_id);
+    
+    // Créer un nouveau groupe pour l'utilisateur qui quitte
+    let mut new_group = player_move.clone();
+    new_group._id = mongodb::bson::oid::ObjectId::new();
+    new_group.members = vec![user_id];
+    
+    // Mettre à jour la distance actuelle pour les deux
+    let current_dist = calculate_current_distance(&player_move);
+    player_move.distance_traveled = current_dist;
+    new_group.distance_traveled = current_dist;
+    
+    let now = chrono::Utc::now().timestamp() as u64;
+    player_move.step_start_timestamp = Some(now);
+    player_move.step_end_timestamp = Some(now);
+    player_move.modified_speed = 0.0;
+    
+    new_group.step_start_timestamp = Some(now);
+    new_group.step_end_timestamp = Some(now);
+    new_group.modified_speed = 0.0;
+
+    // Sauvegarder les deux
+    player_move.upsert().await.map_err(|e| Error::from(format!("DB error: {:?}", e)))?;
+    new_group.clone().insert().await.map_err(|e| Error::from(format!("DB error: {:?}", e)))?;
+
+    // Relancer les processus si en mouvement
+    if player_move.is_in_move {
+        // Redémarrer le groupe original (le leader a pu changer ou la vitesse a pu changer)
+        let leader_id = player_move.members[0];
+        stop_travel(leader_id).await?;
+        add_travel(ctx.serenity_context().http.clone(), server.server_id.into(), player_move).await?;
+        
+        // Démarrer le nouveau groupe (l'utilisateur qui a quitté)
+        add_travel(ctx.serenity_context().http.clone(), server.server_id.into(), new_group).await?;
+    }
+
+    let _ = reply_with_args(ctx, Ok("travel__left_group"), None).await;
     Ok(())
 }
 
@@ -45,24 +194,36 @@ pub async fn start(
         _ => return Err("travel__character_not_found".into()),
     };
 
-    let player_move = match server.clone().get_player_move(ctx.author().id.get()).await {
+    let mut player_move = match server.clone().get_player_move(ctx.author().id.get()).await {
         Ok(Some(m)) => m,
         _ => {return Err("travel__character_not_found".into())}
     };
 
-    if let Ok(Some(_)) = PlayerCraft::get_by_user_id(server.universe_id, ctx.author().id.get()).await {
+    let author_id = ctx.author().id.get();
+    if let Ok(Some(_)) = PlayerCraft::get_by_user_id(server.universe_id, author_id).await {
         return Err("travel__cannot_move_while_crafting".into());
     }
 
     if player_move.is_in_move && player_move.actual_space_type == SpaceType::Road {
-        // Le joueur est sur une route, on l'arrête
-        let _ = stop_travel(ctx.author().id.get()).await;
+        // Seul le meneur peut modifier le trajet s'il est en mouvement
+        if !player_move.members.is_empty() && player_move.members[0] != author_id {
+            return Err("travel__only_leader_can_stop".into());
+        }
+
+        // Le joueur est sur une route, on l'arrête et on récupère la version mise à jour avec la distance calculée
+        match stop_travel(author_id).await {
+            Ok(m) => { player_move = m; }
+            Err(e) => {
+                log::error!("Failed to stop travel for user {}: {:?}", author_id, e);
+                // On continue avec l'ancienne version si l'arrêt échoue, bien que ce soit anormal
+            }
+        }
     }
 
     match destination {
         None => {travel_without_destination(ctx).await?}
         Some(dest) => {
-            let _error = match _travel(ctx, dest).await {
+            let _error = match _travel_with_move(ctx, dest, player_move).await {
                 Ok(_) => return Ok(()),
                 Err(e) => reply(ctx, Err(e)).await,
             };}
@@ -77,6 +238,18 @@ pub async fn stop(ctx: Context<'_>) -> Result<(), Error> {
     let Ok(_) = ctx.defer_ephemeral().await else { return Err("reply__reply_failed".into()) };
     let user_id = ctx.author().id.get();
     
+    // Vérification de leadership si le groupe est en mouvement
+    let server = match get_server_by_id(ctx.guild_id().unwrap().get()).await {
+        Ok(Some(s)) => s,
+        _ => return Err("travel__server_not_found".into()),
+    };
+
+    if let Ok(Some(player_move)) = server.get_player_move(user_id).await {
+        if player_move.is_in_move && !player_move.members.is_empty() && player_move.members[0] != user_id {
+            return Err("travel__only_leader_can_stop".into());
+        }
+    }
+
     match stop_travel(user_id).await {
         Ok(_) => {
             let _ = reply_with_args(ctx, Ok("travel__stopped"), None).await;
@@ -90,6 +263,24 @@ pub async fn stop(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 pub async fn _travel(ctx: Context<'_>, destination_input: String) -> Result<(), Error>{
+    let server = match get_server_by_id(ctx.guild_id().unwrap().get()).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return Err("travel__server_not_found".into()),
+        Err(e) => {
+            log::error!("Database error in _travel when fetching server: {:?}", e);
+            return Err("travel__database_error".into());
+        }
+    };
+
+    let player_move = match server.clone().get_player_move(ctx.author().id.get()).await {
+        Ok(Some(m)) => m,
+        _ => {return Err("travel__character_not_found".into())}
+    };
+
+    _travel_with_move(ctx, destination_input, player_move).await
+}
+
+pub async fn _travel_with_move(ctx: Context<'_>, destination_input: String, player_move: TravelGroup) -> Result<(), Error>{
     let server = match get_server_by_id(ctx.guild_id().unwrap().get()).await {
         Ok(Some(s)) => s,
         Ok(None) => return Err("travel__server_not_found".into()),
@@ -114,11 +305,6 @@ pub async fn _travel(ctx: Context<'_>, destination_input: String) -> Result<(), 
         _ => return Err("travel__character_not_found".into()),
     };
 
-    let player_move = match server.clone().get_player_move(ctx.author().id.get()).await {
-        Ok(Some(m)) => m,
-        _ => {return Err("travel__character_not_found".into())}
-    };
-
     match player_move.actual_space_type {
         SpaceType::Road => {
             move_from_road(ctx.serenity_context(), destination_place.category_id, server, player_move.clone()).await?;
@@ -133,7 +319,7 @@ pub async fn _travel(ctx: Context<'_>, destination_input: String) -> Result<(), 
     //Ok(("travel__started", destination_mention))
 }
 
-async fn move_from_road(_ctx: &SerenityContext, destination_id: u64, server: Server, mut player_move: PlayerMove) -> Result<&'static str, Error>{
+async fn move_from_road(_ctx: &SerenityContext, destination_id: u64, server: Server, mut player_move: TravelGroup) -> Result<&'static str, Error>{
     let dest_id = destination_id;
     
     // Si on est sur une route, on ne peut aller que vers les extrémités (source ou destination originelle)
@@ -160,6 +346,12 @@ async fn move_from_road(_ctx: &SerenityContext, destination_id: u64, server: Ser
         if let Ok(Some(road)) = get_road_by_channel_id(server.universe_id, player_move.road_id.unwrap()).await {
             player_move.distance_traveled = (road.distance as f64 - player_move.distance_traveled).max(0.0);
         }
+
+        // On réinitialise les timestamps pour forcer next_step_logic à recalculer un vrai step
+        let now = chrono::Utc::now().timestamp() as u64;
+        player_move.step_start_timestamp = Some(now);
+        player_move.step_end_timestamp = Some(now);
+        player_move.modified_speed = 0.0;
 
         add_travel(_ctx.http.clone(), server.server_id.into(), player_move.clone()).await?;
 
@@ -306,7 +498,7 @@ pub async fn travel_from_handler(ctx: SerenityContext, interaction: ComponentInt
 }
 
 
-async fn move_from_place(ctx: &SerenityContext, source_id: u64, destination_id: u64, server: Server, mut player_move: PlayerMove) -> Result<&'static str, Error>{
+async fn move_from_place(ctx: &SerenityContext, source_id: u64, destination_id: u64, server: Server, mut player_move: TravelGroup) -> Result<&'static str, Error>{
     let source = ctx.http.get_channel(source_id.into()).await.unwrap();
     let source_id = source.clone().guild().unwrap().parent_id.unwrap().get();
 
@@ -337,6 +529,7 @@ async fn move_from_place(ctx: &SerenityContext, source_id: u64, destination_id: 
     player_move.destination_id = Some(dest_id);
     player_move.destination_role_id = Some(dest_place.role);
     player_move.destination_server_id = Some(dest_place.server_id);
+    player_move.distance_traveled = 0.0;
     
     add_travel(ctx.http.clone(), source.guild().unwrap().id.get(), player_move.clone()).await?;
 

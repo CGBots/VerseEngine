@@ -6,7 +6,7 @@ use serde_with::serde_as;
 use crate::database::db_client::{get_db_client};
 use crate::database::db_namespace::{CHARACTERS_COLLECTION_NAME, TRAVELS_COLLECTION_NAME, VERSEENGINE_DB_NAME};
 use crate::database::stats::Stat;
-use crate::database::travel::PlayerMove;
+use crate::database::travel::TravelGroup;
 
 #[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -31,12 +31,27 @@ impl Character {
             .await
     }
 
-    pub async fn get_player_move(self) -> mongodb::error::Result<Option<PlayerMove>> {
-        let filter = doc!{"player_id": self._id, "universe_id": self.universe_id};
+    pub async fn upsert(self) -> mongodb::error::Result<mongodb::results::UpdateResult> {
+        let db_client = get_db_client().await;
+        let filter = doc! {
+            "user_id": self.user_id.to_string(),
+            "universe_id": self.universe_id,
+        };
+        let options = mongodb::options::ReplaceOptions::builder().upsert(true).build();
+        db_client
+            .database(VERSEENGINE_DB_NAME)
+            .collection::<Character>(CHARACTERS_COLLECTION_NAME)
+            .replace_one(filter, self)
+            .with_options(options)
+            .await
+    }
+
+    pub async fn get_player_move(self) -> mongodb::error::Result<Option<TravelGroup>> {
+        let filter = doc!{"members": self.user_id.to_string(), "universe_id": self.universe_id};
         let db_client = get_db_client().await;
         db_client
             .database(VERSEENGINE_DB_NAME)
-            .collection::<PlayerMove>(TRAVELS_COLLECTION_NAME)
+            .collection::<TravelGroup>(TRAVELS_COLLECTION_NAME)
             .find_one(filter)
             .await
     }

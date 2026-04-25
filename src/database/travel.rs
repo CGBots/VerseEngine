@@ -19,7 +19,7 @@ pub enum SpaceType{
 
 #[serde_as]
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct PlayerMove{
+pub struct TravelGroup {
     #[serde(rename = "_id")]
     pub _id: ObjectId,
     pub universe_id: ObjectId,
@@ -47,13 +47,13 @@ pub struct PlayerMove{
 
     pub modified_speed: f64,
     pub distance_traveled: f64,
-    #[serde_as(as = "DisplayFromStr")]
-    pub user_id: u64,
+    #[serde_as(as = "Vec<DisplayFromStr>")]
+    pub members: Vec<u64>,
     #[serde_as(as = "DisplayFromStr")]
     pub server_id: u64,
 }
 
-impl PlayerMove {
+impl TravelGroup {
     pub async fn insert(self) -> mongodb::error::Result<InsertOneResult> {
         let db_client = get_db_client().await;
         let db = db_client.database(VERSEENGINE_DB_NAME);
@@ -65,8 +65,8 @@ impl PlayerMove {
     pub async fn remove(&self) -> Result<DeleteResult, mongodb::error::Error> {
         let db_client = get_db_client().await;
         let db = db_client.database(VERSEENGINE_DB_NAME);
-        let filter = doc! {"user_id": self.user_id.to_string(), "universe_id":  self.universe_id};
-        db.collection::<PlayerMove>(TRAVELS_COLLECTION_NAME)
+        let filter = doc! {"_id": self._id};
+        db.collection::<TravelGroup>(TRAVELS_COLLECTION_NAME)
             .delete_one(filter)
             .await
     }
@@ -74,23 +74,23 @@ impl PlayerMove {
     pub async fn upsert(&self) -> mongodb::error::Result<UpdateResult> {
         let mut doc = to_document(self).unwrap();
         doc.remove("_id");
-        let filter = doc! {"user_id": self.user_id.to_string(), "universe_id":  self.universe_id};
+        let filter = doc! {"_id": self._id};
         let update = doc! {"$set": doc};
         let options = mongodb::options::UpdateOptions::builder().upsert(true).build();
 
         let db_client = get_db_client().await;
         let db = db_client.database(VERSEENGINE_DB_NAME);
-        db.collection::<PlayerMove>(TRAVELS_COLLECTION_NAME)
+        db.collection::<TravelGroup>(TRAVELS_COLLECTION_NAME)
             .update_one(filter, update)
             .with_options(options)
             .await
     }
 
-    pub async fn get_active_moves(universe_id: ObjectId) -> mongodb::error::Result<Vec<PlayerMove>> {
+    pub async fn get_active_moves(universe_id: ObjectId) -> mongodb::error::Result<Vec<TravelGroup>> {
         let db_client = get_db_client().await;
         let filter = doc! { "is_in_move": true, "universe_id":  universe_id };
         let mut cursor = db_client.database(VERSEENGINE_DB_NAME)
-            .collection::<PlayerMove>(TRAVELS_COLLECTION_NAME)
+            .collection::<TravelGroup>(TRAVELS_COLLECTION_NAME)
             .find(filter)
             .await?;
 
@@ -103,12 +103,12 @@ impl PlayerMove {
     }
 
     pub async fn next_step(self) -> Option<(StatValue, Option<Modifier>)>{
-        if !self.is_end{
+        if !self.is_end && !self.members.is_empty() {
             let Ok(Some(stat)) = get_stat_by_name(self.universe_id, SPEED_STAT).await else {
                 log!(log::Level::Error, "Failed to get stat. [{:?}]", self);
                 return None;
             };
-            let Ok((_speed, _shortest_modifier)) = stat.resolve(self.actual_space_id, self.user_id).await else { todo!() };
+            let Ok((_speed, _shortest_modifier)) = stat.resolve(self.actual_space_id, self.members[0]).await else { todo!() };
         };
         None
     }

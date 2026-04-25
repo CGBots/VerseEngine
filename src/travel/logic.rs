@@ -6,7 +6,7 @@ use anyhow::bail;
 use once_cell::sync::Lazy;
 use tokio::sync::{Mutex};
 use tokio::task::JoinHandle;
-use crate::database::travel::{PlayerMove, SpaceType};
+use crate::database::travel::{TravelGroup, SpaceType};
 use crate::database::characters::get_character_by_user_id;
 use chrono::{Local, Timelike, Utc};
 use fluent::FluentArgs;
@@ -16,7 +16,7 @@ use crate::database::stats::{get_stat_by_name, SPEED_STAT};
 use crate::tr_locale;
 use crate::translation::{get_by_locale};
 
-pub static MOVES: Lazy<Arc<Mutex<Vec<PlayerMove>>>> = Lazy::new(|| Arc::new(Mutex::new(vec![])));
+pub static MOVES: Lazy<Arc<Mutex<Vec<TravelGroup>>>> = Lazy::new(|| Arc::new(Mutex::new(vec![])));
 pub static SLEEPER: Lazy<Arc<Mutex<Option<JoinHandle<()>>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
 pub static HTTP_CLIENT: Lazy<Arc<Mutex<Option<Arc<Http>>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
 
@@ -118,7 +118,7 @@ fn move_process(delay: u64) -> JoinHandle<()> {
                         // Le voyage est totalement fini (le temps d'attente pour l'arrivée est écoulé)
                         let current = Local::now();
                         let date = format!("{:02}:{:02}:{:02}", current.hour(), current.minute(), current.second());
-                        println!("[{date}] Move for user {} finished", current_move.user_id);
+                        println!("[{date}] Move for group {} finished", current_move._id);
                         
                         // Envoi des messages de fin de voyage
                         let http_opt = {
@@ -128,58 +128,61 @@ fn move_process(delay: u64) -> JoinHandle<()> {
 
                         if let Some(http) = http_opt {
                             let guild_id = current_move.server_id;
-                            let user_id = current_move.user_id;
+                            let members = current_move.members.clone();
                             let road_id = current_move.road_id;
                             let dest_id = current_move.destination_id;
                             let universe_id = current_move.universe_id;
+                            let destination_server_id = current_move.destination_server_id;
 
                             tokio::spawn(async move {
                                 let http_arc = http.clone();
-                                if let Ok(user) = http_arc.get_user(UserId::new(user_id)).await {
-                                    let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
-                                        char.name
-                                    } else {
-                                        let member_nick = http_arc.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
-                                        member_nick.unwrap_or(user.name.clone())
-                                    };
-                                    let user_display_name = character_name;
-                                    
-                                    // Message dans le salon de la route
-                                    if let Some(rid) = road_id {
-                                        let mut destination_name = String::new();
-                                        if let Some(did) = dest_id {
-                                             if let Ok(Some(place)) = crate::database::places::get_place_by_category_id(universe_id, did).await {
-                                                 destination_name = place.name;
-                                             }
+                                for &user_id in &members {
+                                    if let Ok(user) = http_arc.get_user(UserId::new(user_id)).await {
+                                        let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
+                                            char.name
+                                        } else {
+                                            let member_nick = http_arc.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
+                                            member_nick.unwrap_or(user.name.clone())
+                                        };
+                                        let user_display_name = character_name;
+                                        
+                                        // Message dans le salon de la route
+                                        if let Some(rid) = road_id {
+                                            let mut destination_name = String::new();
+                                            if let Some(did) = dest_id {
+                                                 if let Ok(Some(place)) = crate::database::places::get_place_by_category_id(universe_id, did).await {
+                                                     destination_name = place.name;
+                                                 }
+                                            }
+                                            let msg = tr_locale!("fr", "travel__reached_destination", user: user_display_name.as_str(), destination: destination_name.as_str());
+                                            let _ = ChannelId::new(rid).send_message(&http_arc, CreateMessage::new().content(msg)).await;
                                         }
-                                        let msg = tr_locale!("fr", "travel__reached_destination", user: user_display_name.as_str(), destination: destination_name.as_str());
-                                        let _ = ChannelId::new(rid).send_message(&http_arc, CreateMessage::new().content(msg)).await;
-                                    }
 
-                                                // Message dans le salon de destination
-                                                if let Some(did) = dest_id {
-                                                    let target_guild_id = current_move.destination_server_id.unwrap_or(guild_id);
+                                        // Message dans le salon de destination
+                                        if let Some(did) = dest_id {
+                                            let target_guild_id = destination_server_id.unwrap_or(guild_id);
 
-                                                    if let Ok(mut channels) = http_arc.get_channels(GuildId::new(target_guild_id)).await {
-                                                        // On trie les salons par position pour être sûr de prendre le \"premier\"
-                                                        channels.sort_by_key(|c| c.position);
-                                                        
-                                                        // On cherche un salon dans la catégorie de destination, sinon n'importe quel salon textuel
-                                                        let target_channel = channels.iter().find(|c| c.parent_id == Some(ChannelId::new(did)) && (c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage))
-                                                            .or_else(|| channels.iter().find(|c| c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage));
+                                            if let Ok(mut channels) = http_arc.get_channels(GuildId::new(target_guild_id)).await {
+                                                // On trie les salons par position pour être sûr de prendre le \"premier\"
+                                                channels.sort_by_key(|c| c.position);
+                                                
+                                                // On cherche un salon dans la catégorie de destination, sinon n'importe quel salon textuel
+                                                let target_channel = channels.iter().find(|c| c.parent_id == Some(ChannelId::new(did)) && (c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage))
+                                                    .or_else(|| channels.iter().find(|c| c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage));
 
-                                                        if let Some(target_channel) = target_channel {
-                                                            let msg = tr_locale!("fr", "travel__arrived_at_destination", user: user_display_name.as_str());
-                                                            let _ = target_channel.id.send_message(&http_arc, CreateMessage::new().content(msg)).await;
-                                                        }
-                                                    }
+                                                if let Some(target_channel) = target_channel {
+                                                    let msg = tr_locale!("fr", "travel__arrived_at_destination", user: user_display_name.as_str());
+                                                    let _ = target_channel.id.send_message(&http_arc, CreateMessage::new().content(msg)).await;
                                                 }
+                                            }
+                                        }
+                                    }
                                 }
                             });
                         }
 
                         // Déclenche le retrait du rôle de la route et l'ajout du rôle du lieu de destination
-                        println!("[{date}] Trip for user {} finished. Destination role: {:?}, Road role: {:?}", current_move.user_id, current_move.destination_role_id, current_move.road_role_id);
+                        println!("[{date}] Trip for group {} finished. Destination role: {:?}, Road role: {:?}", current_move._id, current_move.destination_role_id, current_move.road_role_id);
                         
                         // Récupère la route pour savoir sur quel serveur est le salon de la route
                         let road_guild_id = current_move.road_server_id.unwrap_or(current_move.server_id);
@@ -187,8 +190,10 @@ fn move_process(delay: u64) -> JoinHandle<()> {
                         // La destination finale est sur le serveur spécifié dans le PlayerMove (plus fiable que de recalculer)
                         let target_guild_id = current_move.destination_server_id.unwrap_or(current_move.server_id);
 
-                        role_updates.push((road_guild_id, current_move.user_id, None, current_move.road_role_id));
-                        role_updates.push((target_guild_id, current_move.user_id, current_move.destination_role_id, None));
+                        for &user_id in &current_move.members {
+                            role_updates.push((road_guild_id, user_id, None, current_move.road_role_id));
+                            role_updates.push((target_guild_id, user_id, current_move.destination_role_id, None));
+                        }
                     } else {
                         // Pas encore fini ou vient de finir une étape, on réinsère
                         let i = moves.partition_point(|a| {
@@ -198,7 +203,7 @@ fn move_process(delay: u64) -> JoinHandle<()> {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error in next_step for user {}: {:?}", current_move.user_id, e);
+                    eprintln!("Error in next_step for group {}: {:?}", current_move._id, e);
                     // On pourrait décider de le remettre ou non, ici on l'abandonne pour éviter les boucles infinies d'erreurs
                 }
             }
@@ -207,8 +212,8 @@ fn move_process(delay: u64) -> JoinHandle<()> {
             if let Some(first) = moves.first() {
                 if let Some(end_ts) = first.step_end_timestamp {
                     let now = Utc::now().timestamp() as u64;
-            next_delay = Some(end_ts.saturating_sub(now));
-                    next_id = Some(first.user_id.to_string());
+                    next_delay = Some(end_ts.saturating_sub(now));
+                    next_id = Some(first._id.to_hex());
                 }
             }
         }
@@ -248,21 +253,21 @@ fn move_process(delay: u64) -> JoinHandle<()> {
 
 pub async fn remove_move(user_id: u64){
     let mut moves = MOVES.lock().await;
-    let task_index = moves.iter().position(|a| a.user_id == user_id);
+    let task_index = moves.iter().position(|a| a.members.contains(&user_id));
 
     if let Some(player_move_index) = task_index {
-        let p_move_user_id = moves[player_move_index].user_id;
+        let p_move_id = moves[player_move_index]._id;
         moves.remove(player_move_index);
 
         let current = Local::now();
         let date = format!("{:02}:{:02}:{:02}", current.hour(), current.minute(), current.second());
-        println!("[{date}] Move for user {p_move_user_id} successfully removed");
+        println!("[{date}] Move for group {p_move_id} successfully removed");
 
         if player_move_index == 0 {
             let mut sleeper = SLEEPER.lock().await;
             if let Some(handle) = sleeper.take() {
                 handle.abort();
-                println!("[{date}] Move for user {p_move_user_id} task aborted");
+                println!("[{date}] Move for group {p_move_id} task aborted");
             }
 
             if let Some(next_move) = moves.first() {
@@ -270,7 +275,7 @@ pub async fn remove_move(user_id: u64){
                     let now = Utc::now().timestamp() as u64;
                     let delay = end_ts.saturating_sub(now);
                     *sleeper = Some(move_process(delay));
-                    println!("[{date}] Move for user {} started (new first)", next_move.user_id);
+                    println!("[{date}] Move for group {} started (new first)", next_move._id);
                 }
             }
         }
@@ -279,7 +284,7 @@ pub async fn remove_move(user_id: u64){
     }
 }
 
-pub async fn add_move(player_move: PlayerMove){
+pub async fn add_move(player_move: TravelGroup){
     let mut moves = MOVES.lock().await;
     // Récupération de la position où insérer l'étape de déplacement (trié par step_end_timestamp)
     let i = moves.partition_point(|a| {
@@ -290,7 +295,7 @@ pub async fn add_move(player_move: PlayerMove){
 
     let current = Local::now();
     let date = format!("{:02}:{:02}:{:02}", current.hour(), current.minute(), current.second());
-    println!("[{date}] Move for user {} successfully added at index {i}", player_move.user_id);
+    println!("[{date}] Move for group {} successfully added at index {i}", player_move._id);
 
     if i == 0 {
         let mut sleeper = SLEEPER.lock().await;
@@ -303,18 +308,18 @@ pub async fn add_move(player_move: PlayerMove){
             let now = Utc::now().timestamp() as u64;
             let delay = end_ts.saturating_sub(now);
             *sleeper = Some(move_process(delay));
-            println!("[{date}] Move for user {} started (new first)", player_move.user_id);
+            println!("[{date}] Move for group {} started (new first)", player_move._id);
         }
     }
 }
 
 
-pub async fn next_step_logic(actual_move: &PlayerMove) -> Result<PlayerMove, anyhow::Error> {
+pub async fn next_step_logic(actual_move: &TravelGroup) -> Result<TravelGroup, anyhow::Error> {
     let mut new_move = actual_move.clone();
 
     // Si le move est déjà marqué comme terminé, on applique la logique d'arrivée
     if actual_move.is_end {
-        println!("[Arrival DB Update] User: {}, DestRole: {:?}, RoadRole: {:?}", new_move.user_id, new_move.destination_role_id, new_move.road_role_id);
+        println!("[Arrival DB Update] Members: {:?}, DestRole: {:?}, RoadRole: {:?}", new_move.members, new_move.destination_role_id, new_move.road_role_id);
         new_move.actual_space_id = new_move.destination_id.unwrap_or(new_move.actual_space_id);
         new_move.actual_space_type = SpaceType::Place;
         new_move.road_id = None;
@@ -325,10 +330,11 @@ pub async fn next_step_logic(actual_move: &PlayerMove) -> Result<PlayerMove, any
         new_move.step_start_timestamp = None;
         new_move.is_in_move = false;
         new_move.is_end = false;
+        new_move.distance_traveled = 0.0; // Reset distance at arrival
         
         // Sauvegarde en base de données pour la persistance de l'arrivée
         if let Err(e) = new_move.upsert().await {
-            eprintln!("Failed to update player move {} in DB at arrival: {:?}", new_move.user_id, e);
+            eprintln!("Failed to update travel group {} in DB at arrival: {:?}", new_move._id, e);
         }
         
         return Ok(new_move);
@@ -355,13 +361,42 @@ pub async fn next_step_logic(actual_move: &PlayerMove) -> Result<PlayerMove, any
 
 
     // résolution du stat pour obtenir la vitesse actuelle et le modifier le plus court
-    let (stat_speed_bson, shortest_modifier_opt) =
-        stat.resolve(actual_move.actual_space_id, actual_move.user_id).await
-            .map_err(|e| anyhow::anyhow!("stat.resolve error: {:?}", e))?;
+    let mut final_speed_kmh = f64::MAX;
+    let mut shortest_modifier_opt = None;
+
+    for &member_id in &new_move.members {
+        let (stat_speed_bson, mod_opt) =
+            stat.clone().resolve(actual_move.actual_space_id, member_id).await
+                .map_err(|e| anyhow::anyhow!("stat.resolve error for member {}: {:?}", member_id, e))?;
+
+        let speed = stat_speed_bson.as_f64();
+        if speed < final_speed_kmh {
+            final_speed_kmh = speed;
+        }
+
+        // On cherche le modifier qui se termine le plus tôt parmi tous les membres
+        if let Some(m) = mod_opt {
+            if let Some(end_ts) = m.end_timestamp {
+                if let Some(current_shortest) = &shortest_modifier_opt {
+                    if let Some(current_end_ts) = (current_shortest as &crate::database::modifiers::Modifier).end_timestamp {
+                        if end_ts < current_end_ts {
+                            shortest_modifier_opt = Some(m);
+                        }
+                    } else {
+                        shortest_modifier_opt = Some(m);
+                    }
+                } else {
+                    shortest_modifier_opt = Some(m);
+                }
+            }
+        }
+    }
+
+    if final_speed_kmh == f64::MAX {
+        bail!("No members in travel group or speed could not be determined");
+    }
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-
-    let final_speed_kmh = stat_speed_bson.as_f64();
 
     // récupère road
     let road_opt = get_road_by_channel_id(actual_move.universe_id, actual_move.road_id.ok_or_else(|| anyhow::anyhow!("road_id missing"))?).await?;
@@ -388,8 +423,8 @@ pub async fn next_step_logic(actual_move: &PlayerMove) -> Result<PlayerMove, any
     let time_needed_secs_f = (remaining_distance_km / final_speed_kmh) * 3600.0;
     let full_time_needed_secs = time_needed_secs_f.ceil() as u64;
 
-    println!("[Travel Debug] User: {}, Speed: {:.2} km/h, Remaining Time: {}s (Dist: {:.2}km)", 
-             new_move.user_id, final_speed_kmh, full_time_needed_secs, remaining_distance_km);
+    println!("[Travel Debug] Group: {}, Speed: {:.2} km/h, Remaining Time: {}s (Dist: {:.2}km)", 
+             new_move._id, final_speed_kmh, full_time_needed_secs, remaining_distance_km);
 
     // clamp par le shortest_modifier s'il existe (modifier.end_timestamp est un timestamp absolu)
     let mut time_to_wait_secs = full_time_needed_secs;
@@ -420,7 +455,7 @@ pub async fn next_step_logic(actual_move: &PlayerMove) -> Result<PlayerMove, any
 
     // Sauvegarde en base de données pour la persistance
     if let Err(e) = new_move.upsert().await {
-        eprintln!("Failed to update player move {} in DB: {:?}", new_move.user_id, e);
+        eprintln!("Failed to update travel group {} in DB: {:?}", new_move._id, e);
     }
 
     Ok(new_move)
@@ -440,7 +475,7 @@ pub async fn setup(){
     let mut all_moves = Vec::new();
 
     for universe in universes {
-        match crate::database::travel::PlayerMove::get_active_moves(universe.universe_id).await {
+        match crate::database::travel::TravelGroup::get_active_moves(universe.universe_id).await {
             Ok(moves) => all_moves.extend(moves),
             Err(e) => eprintln!("Failed to get active moves for universe {}: {:?}", universe.universe_id, e),
         }
@@ -470,7 +505,6 @@ pub async fn setup(){
 
     // On traite immédiatement ceux qui sont déjà finis ou en retard
     while let Some(m) = ready_to_process.pop_front() {
-        let user_id = m.user_id;
         match next_step_logic(&m).await {
             Ok(updated) => {
                 if updated.is_in_move {
@@ -490,7 +524,7 @@ pub async fn setup(){
                     if m.is_end {
                         let current = Local::now();
                         let date = format!("{:02}:{:02}:{:02}", current.hour(), current.minute(), current.second());
-                        println!("[{date}] Recovered move for user {} finished during setup", user_id);
+                        println!("[{date}] Recovered move for group {} finished during setup", m._id);
                         
                         let http_opt = {
                             let lock = HTTP_CLIENT.lock().await;
@@ -504,56 +538,60 @@ pub async fn setup(){
                             let universe_id = m.universe_id;
                             let dest_role = m.destination_role_id;
                             let road_role = m.road_role_id;
+                            let members = m.members.clone();
+                            let destination_server_id = m.destination_server_id;
 
                             tokio::spawn(async move {
                                 let http_arc = http.clone();
-                                if let Ok(user) = http_arc.get_user(UserId::new(user_id)).await {
-                                    let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
-                                        char.name
-                                    } else {
-                                        let member_nick = http_arc.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
-                                        member_nick.unwrap_or(user.name.clone())
-                                    };
-                                    let user_display_name = character_name;
-                                    
-                                    // Message dans le salon de la route
-                                    if let Some(rid) = road_id {
-                                        let mut destination_name = String::new();
-                                        if let Some(did) = dest_id {
-                                             if let Ok(Some(place)) = crate::database::places::get_place_by_category_id(universe_id, did).await {
-                                                 destination_name = place.name;
-                                             }
+                                for &user_id in &members {
+                                    if let Ok(user) = http_arc.get_user(UserId::new(user_id)).await {
+                                        let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
+                                            char.name
+                                        } else {
+                                            let member_nick = http_arc.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
+                                            member_nick.unwrap_or(user.name.clone())
+                                        };
+                                        let user_display_name = character_name;
+                                        
+                                        // Message dans le salon de la route
+                                        if let Some(rid) = road_id {
+                                            let mut destination_name = String::new();
+                                            if let Some(did) = dest_id {
+                                                 if let Ok(Some(place)) = crate::database::places::get_place_by_category_id(universe_id, did).await {
+                                                     destination_name = place.name;
+                                                 }
+                                            }
+                                            let msg = tr_locale!("fr", "travel__reached_destination", user: user_display_name.as_str(), destination: destination_name.as_str());
+                                            let _ = ChannelId::new(rid).send_message(&http_arc, CreateMessage::new().content(msg)).await;
                                         }
-                                        let msg = tr_locale!("fr", "travel__reached_destination", user: user_display_name.as_str(), destination: destination_name.as_str());
-                                        let _ = ChannelId::new(rid).send_message(&http_arc, CreateMessage::new().content(msg)).await;
-                                    }
 
-                                    // Message dans le salon de destination
-                                    if let Some(did) = dest_id {
-                                        let target_guild_id = m.destination_server_id.unwrap_or(guild_id);
+                                        // Message dans le salon de destination
+                                        if let Some(did) = dest_id {
+                                            let target_guild_id = destination_server_id.unwrap_or(guild_id);
 
-                                        if let Ok(mut channels) = http_arc.get_channels(GuildId::new(target_guild_id)).await {
-                                            channels.sort_by_key(|c| c.position);
-                                            
-                                            let target_channel = channels.iter().find(|c| c.parent_id == Some(ChannelId::new(did)) && (c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage))
-                                                .or_else(|| channels.iter().find(|c| c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage));
+                                            if let Ok(mut channels) = http_arc.get_channels(GuildId::new(target_guild_id)).await {
+                                                channels.sort_by_key(|c| c.position);
+                                                
+                                                let target_channel = channels.iter().find(|c| c.parent_id == Some(ChannelId::new(did)) && (c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage))
+                                                    .or_else(|| channels.iter().find(|c| c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage));
 
-                                            if let Some(target_channel) = target_channel {
-                                                let msg = tr_locale!("fr", "travel__arrived_at_destination", user: user_display_name.as_str());
-                                                let _ = target_channel.id.send_message(&http_arc, CreateMessage::new().content(msg)).await;
+                                                if let Some(target_channel) = target_channel {
+                                                    let msg = tr_locale!("fr", "travel__arrived_at_destination", user: user_display_name.as_str());
+                                                    let _ = target_channel.id.send_message(&http_arc, CreateMessage::new().content(msg)).await;
+                                                }
                                             }
                                         }
                                     }
+                                    // Gestion des rôles pour chaque membre
+                                    manage_roles(http_arc.clone(), destination_server_id.unwrap_or(guild_id), user_id, dest_role, None).await;
+                                    manage_roles(http_arc.clone(), guild_id, user_id, None, road_role).await;
                                 }
-                                // Gestion des rôles
-                                manage_roles(http_arc.clone(), m.destination_server_id.unwrap_or(guild_id), user_id, dest_role, None).await;
-                                manage_roles(http_arc, guild_id, user_id, None, road_role).await;
                             });
                         }
                     }
                 }
             }
-            Err(e) => eprintln!("Failed to process recovered move for user {}: {:?}", user_id, e),
+            Err(e) => eprintln!("Failed to process recovered move for group {}: {:?}", m._id, e),
         }
     }
 
@@ -632,16 +670,17 @@ pub async fn manage_roles(http: Arc<Http>, guild_id: u64, user_id: u64, role_to_
     }
 }
 
-pub async fn add_travel(http: Arc<Http>, guild_id: u64, mut player_move: PlayerMove) -> Result<(), anyhow::Error> {
-    // Vérifier si un craft est en cours
-    if let Ok(Some(_)) = crate::database::craft::PlayerCraft::get_by_user_id(player_move.universe_id, player_move.user_id).await {
-        bail!("travel__cannot_move_while_crafting");
+pub async fn add_travel(http: Arc<Http>, guild_id: u64, mut player_move: TravelGroup) -> Result<(), anyhow::Error> {
+    // Vérifier si un craft est en cours pour l'un des membres
+    for &user_id in &player_move.members {
+        if let Ok(Some(_)) = crate::database::craft::PlayerCraft::get_by_user_id(player_move.universe_id, user_id).await {
+            bail!("travel__cannot_move_while_crafting");
+        }
     }
 
     // Initialise les flags de base
     player_move.is_in_move = true;
     player_move.is_end = false;
-    player_move.distance_traveled = 0.0;
     
     // On s'assure que l'ID est valide
     if player_move._id.to_hex() == "000000000000000000000000" {
@@ -649,10 +688,13 @@ pub async fn add_travel(http: Arc<Http>, guild_id: u64, mut player_move: PlayerM
     }
     
     // On initialise les timestamps pour le calcul initial (step fictif fini à 'now')
+    // seulement si ce n'est pas déjà un voyage en cours (ex: demi-tour)
     let now = Utc::now().timestamp() as u64;
-    player_move.step_start_timestamp = Some(now);
-    player_move.step_end_timestamp = Some(now);
-    player_move.modified_speed = 0.0;
+    if player_move.step_start_timestamp.is_none() || player_move.distance_traveled == 0.0 {
+        player_move.step_start_timestamp = Some(now);
+        player_move.step_end_timestamp = Some(now);
+        player_move.modified_speed = 0.0;
+    }
     
     // Déterminer le serveur cible au cas où la route commence sur un autre serveur
     let mut start_guild_id = guild_id;
@@ -669,108 +711,121 @@ pub async fn add_travel(http: Arc<Http>, guild_id: u64, mut player_move: PlayerM
     }
     player_move.upsert().await?;
 
-    // Gestion des rôles au début du voyage
-    if let Some(source_server) = player_move.source_server_id {
-        manage_roles(http.clone(), source_server, player_move.user_id, None, player_move.source_role_id).await;
-    } else {
-        manage_roles(http.clone(), guild_id, player_move.user_id, None, player_move.source_role_id).await;
+    // Gestion des rôles au début du voyage pour tous les membres
+    for &user_id in &player_move.members {
+        if let Some(source_server) = player_move.source_server_id {
+            manage_roles(http.clone(), source_server, user_id, None, player_move.source_role_id).await;
+        } else {
+            manage_roles(http.clone(), guild_id, user_id, None, player_move.source_role_id).await;
+        }
     }
     
-    // Si la route est sur un serveur distant, envoyer une invitation
+    // Si la route est sur un serveur distant, envoyer une invitation à tous les membres
     if start_guild_id != guild_id {
         let http_arc = http.clone();
-        let user_id = player_move.user_id;
+        let members = player_move.members.clone();
         let road_id = player_move.road_id;
         let universe_id = player_move.universe_id;
         
-        println!("[Invitation Debug] Road server {} is different from current server {}. Attempting to send road invitation.", start_guild_id, guild_id);
+        println!("[Invitation Debug] Road server {} is different from current server {}. Attempting to send road invitations.", start_guild_id, guild_id);
         
         tokio::spawn(async move {
             if let Some(rid) = road_id {
-                if let Ok(user) = http_arc.get_user(UserId::new(user_id)).await {
-                    if let Ok(channels) = http_arc.get_channels(GuildId::new(start_guild_id)).await {
-                        // On cherche le salon de la route directement par son ID
-                        let target_channel = channels.iter().find(|c| c.id.get() == rid)
-                            .or_else(|| {
-                                // Fallback: premier salon textuel
-                                let mut sorted_channels: Vec<serenity::all::GuildChannel> = channels.clone();
+                for &user_id in &members {
+                    if let Ok(user) = http_arc.get_user(UserId::new(user_id)).await {
+                        if let Ok(channels) = http_arc.get_channels(GuildId::new(start_guild_id)).await {
+                            // On cherche le salon de la route directement par son ID
+                            let target_channel = channels.iter().find(|c| c.id.get() == rid)
+                                .or_else(|| {
+                                    // Fallback: premier salon textuel
+                                    let mut sorted_channels: Vec<serenity::all::GuildChannel> = channels.clone();
+                                    sorted_channels.sort_by_key(|c| c.position);
+                                    None
+                                });
+
+                            // Si on n'a pas trouvé par ID, on cherche dans la liste originale pour le fallback
+                            let target_channel = if target_channel.is_none() {
+                                let mut sorted_channels = channels.clone();
                                 sorted_channels.sort_by_key(|c| c.position);
-                                // On doit retourner une référence car .find sur un itérateur de références retourne une référence
-                                // Mais ici on veut utiliser le fallback si le premier .find a échoué.
-                                // Le problème est que sorted_channels est local.
-                                None
-                            });
+                                sorted_channels.into_iter().find(|c| c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage)
+                            } else {
+                                target_channel.cloned()
+                            };
 
-                        // Si on n'a pas trouvé par ID, on cherche dans la liste originale pour le fallback
-                        let target_channel = if target_channel.is_none() {
-                            let mut sorted_channels = channels.clone();
-                            sorted_channels.sort_by_key(|c| c.position);
-                            sorted_channels.into_iter().find(|c| c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage)
+                            if let Some(target_channel) = target_channel {
+                                 println!("[Invitation Debug] Found channel {} on road server {}. Creating invite.", target_channel.id, start_guild_id);
+                                 let url = get_or_create_invite(&http_arc, start_guild_id, target_channel.id).await;
+                                 
+                                 let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
+                                     char.name
+                                 } else {
+                                     let member_nick = http_arc.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
+                                     member_nick.unwrap_or(user.name.clone())
+                                 };
+                                 let user_display_name = character_name;
+                                 
+                                 send_travel_invitation(&http_arc, &user, &user_display_name, universe_id, &url, start_guild_id).await;
+                            } else {
+                                 println!("[Invitation Debug] No suitable channel found on road server {} for road invitation.", start_guild_id);
+                            }
                         } else {
-                            target_channel.cloned()
-                        };
-
-                        if let Some(target_channel) = target_channel {
-                             println!("[Invitation Debug] Found channel {} on road server {}. Creating invite.", target_channel.id, start_guild_id);
-                             let url = get_or_create_invite(&http_arc, start_guild_id, target_channel.id).await;
-                             
-                             let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
-                                 char.name
-                             } else {
-                                 let member_nick = http_arc.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
-                                 member_nick.unwrap_or(user.name.clone())
-                             };
-                             let user_display_name = character_name;
-                             
-                             send_travel_invitation(&http_arc, &user, &user_display_name, universe_id, &url, start_guild_id).await;
-                        } else {
-                             println!("[Invitation Debug] No suitable channel found on road server {} for road invitation.", start_guild_id);
+                            println!("[Invitation Debug] Failed to fetch channels for road server {}.", start_guild_id);
                         }
-                    } else {
-                        println!("[Invitation Debug] Failed to fetch channels for road server {}.", start_guild_id);
                     }
                 }
             }
         });
     }
 
-    // Si la destination est sur un serveur distant, envoyer une invitation également dès le début
+    // Si la destination est sur un serveur distant, envoyer une invitation également dès le début à tous les membres
     if let Some(dest_guild_id) = player_move.destination_server_id {
         if dest_guild_id != guild_id && Some(dest_guild_id) != player_move.road_server_id {
             let http_arc = http.clone();
-            let user_id = player_move.user_id;
+            let members = player_move.members.clone();
             let dest_id = player_move.destination_id;
             let universe_id = player_move.universe_id;
             
-            println!("[Invitation Debug] Destination server {} is different from current server {} and road server. Attempting to send destination invitation.", dest_guild_id, guild_id);
-
+            println!("[Invitation Debug] Destination server {} is different from current server {} and road server. Attempting to send destination invitations.", dest_guild_id, guild_id);
+            
             tokio::spawn(async move {
-                if let Some(did) = dest_id {
+                for &user_id in &members {
                     if let Ok(user) = http_arc.get_user(UserId::new(user_id)).await {
-                        if let Ok(mut channels) = http_arc.get_channels(GuildId::new(dest_guild_id)).await {
-                            channels.sort_by_key(|c| c.position);
+                        if let Ok(channels) = http_arc.get_channels(GuildId::new(dest_guild_id)).await {
+                             // On cherche un salon dans la catégorie de destination, sinon n'importe quel salon textuel
+                             let target_channel = if let Some(did) = dest_id {
+                                 channels.iter().find(|c| c.parent_id == Some(ChannelId::new(did)) && (c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage))
+                                     .or_else(|| {
+                                         let mut sorted_channels: Vec<serenity::all::GuildChannel> = channels.clone();
+                                         sorted_channels.sort_by_key(|c| c.position);
+                                         None
+                                     })
+                             } else {
+                                 None
+                             };
 
-                            let target_channel = channels.iter().find(|c| c.parent_id == Some(ChannelId::new(did)) && (c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage))
-                                .or_else(|| channels.iter().find(|c| c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage));
+                             // Si on n'a pas trouvé par ID, on cherche dans la liste originale pour le fallback
+                             let target_channel = if target_channel.is_none() {
+                                 let mut sorted_channels = channels.clone();
+                                 sorted_channels.sort_by_key(|c| c.position);
+                                 sorted_channels.into_iter().find(|c| c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage)
+                             } else {
+                                 target_channel.cloned()
+                             };
 
-                            if let Some(target_channel) = target_channel {
-                                println!("[Invitation Debug] Found channel {} for destination {} on server {}. Creating invite.", target_channel.id, did, dest_guild_id);
-                                let url = get_or_create_invite(&http_arc, dest_guild_id, target_channel.id).await;
-                                
-                                let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
-                                    char.name
-                                } else {
-                                    let member_nick = http_arc.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
-                                    member_nick.unwrap_or(user.name.clone())
-                                };
-                                let user_display_name = character_name;
-
-                                send_travel_invitation(&http_arc, &user, &user_display_name, universe_id, &url, dest_guild_id).await;
-                            } else {
-                                println!("[Invitation Debug] No suitable channel found for destination {} on server {}.", did, dest_guild_id);
-                            }
-                        } else {
-                            println!("[Invitation Debug] Failed to fetch channels for destination server {}.", dest_guild_id);
+                             if let Some(target_channel) = target_channel {
+                                 println!("[Invitation Debug] Found channel {} on destination server {}. Creating invite.", target_channel.id, dest_guild_id);
+                                 let url = get_or_create_invite(&http_arc, dest_guild_id, target_channel.id).await;
+                                 
+                                 let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
+                                     char.name
+                                 } else {
+                                     let member_nick = http_arc.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
+                                     member_nick.unwrap_or(user.name.clone())
+                                 };
+                                 let user_display_name = character_name;
+                                 
+                                 send_travel_invitation(&http_arc, &user, &user_display_name, universe_id, &url, dest_guild_id).await;
+                             }
                         }
                     }
                 }
@@ -779,7 +834,9 @@ pub async fn add_travel(http: Arc<Http>, guild_id: u64, mut player_move: PlayerM
     }
 
     let road_guild_id = player_move.road_server_id.unwrap_or(start_guild_id);
-    manage_roles(http.clone(), road_guild_id, player_move.user_id, player_move.road_role_id, None).await;
+    for &user_id in &player_move.members {
+        manage_roles(http.clone(), road_guild_id, user_id, player_move.road_role_id, None).await;
+    }
 
     // Calcule la première étape réelle (avec la vraie vitesse et le premier modifier)
     let first_step = next_step_logic(&player_move).await?;
@@ -787,52 +844,54 @@ pub async fn add_travel(http: Arc<Http>, guild_id: u64, mut player_move: PlayerM
     // Envoi du message de début de voyage dans le salon de la route
     if let Some(road_id) = first_step.road_id {
         let http_clone = http.clone();
-        let user_id = first_step.user_id;
         let universe_id = first_step.universe_id;
         let dest_id = first_step.destination_id;
+        let first_step_members = first_step.members.clone();
                 
         tokio::spawn(async move {
-            if let Ok(user) = http_clone.get_user(UserId::new(user_id)).await {
-                let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
-                    char.name
-                } else {
-                    let member_nick = http_clone.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
-                    member_nick.unwrap_or(user.name.clone())
-                };
-                let user_display_name = character_name;
+            for &user_id in &first_step_members {
+                if let Ok(user) = http_clone.get_user(UserId::new(user_id)).await {
+                    let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
+                        char.name
+                    } else {
+                        let member_nick = http_clone.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
+                        member_nick.unwrap_or(user.name.clone())
+                    };
+                    let user_display_name = character_name;
 
-                let mut destination_name = String::new();
-                let mut is_secret = false;
-                if let Some(rid) = first_step.road_id {
-                    if let Ok(Some(road)) = crate::database::road::get_road_by_channel_id(universe_id, rid).await {
-                        is_secret = road.secret;
+                    let mut destination_name = String::new();
+                    let mut is_secret = false;
+                    if let Some(rid) = first_step.road_id {
+                        if let Ok(Some(road)) = crate::database::road::get_road_by_channel_id(universe_id, rid).await {
+                            is_secret = road.secret;
+                        }
                     }
-                }
 
-                if let Some(did) = dest_id {
-                    if let Ok(Some(place)) = crate::database::places::get_place_by_category_id(universe_id, did).await {
-                        destination_name = place.name;
+                    if let Some(did) = dest_id {
+                        if let Ok(Some(place)) = crate::database::places::get_place_by_category_id(universe_id, did).await {
+                            destination_name = place.name;
+                        }
                     }
-                }
-                
-                let msg = tr_locale!("fr", "travel__moving_to_place", user: user_display_name.as_str(), destination: destination_name.as_str());
-                let _ = ChannelId::new(road_id).send_message(&http_clone, CreateMessage::new().content(msg.clone())).await;
+                    
+                    let msg = tr_locale!("fr", "travel__moving_to_place", user: user_display_name.as_str(), destination: destination_name.as_str());
+                    let _ = ChannelId::new(road_id).send_message(&http_clone, CreateMessage::new().content(msg.clone())).await;
 
-                // Envoi du message dans le lieu de départ si applicable
-                if let Some(source_id) = first_step.source_id {
-                    let source_guild_id = first_step.source_server_id.unwrap_or(guild_id);
-                    if let Ok(mut channels) = http_clone.get_channels(GuildId::new(source_guild_id)).await {
-                        channels.sort_by_key(|c| c.position);
-                        let target_channel = channels.iter().find(|c| c.parent_id == Some(ChannelId::new(source_id)) && (c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage))
-                            .or_else(|| channels.iter().find(|c| c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage));
+                    // Envoi du message dans le lieu de départ si applicable
+                    if let Some(source_id) = first_step.source_id {
+                        let source_guild_id = first_step.source_server_id.unwrap_or(guild_id);
+                        if let Ok(mut channels) = http_clone.get_channels(GuildId::new(source_guild_id)).await {
+                            channels.sort_by_key(|c| c.position);
+                            let target_channel = channels.iter().find(|c| c.parent_id == Some(ChannelId::new(source_id)) && (c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage))
+                                .or_else(|| channels.iter().find(|c| c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage));
 
-                        if let Some(target_channel) = target_channel {
-                            let departure_msg = if is_secret {
-                                tr_locale!("fr", "travel__taking_unknown_road", user: user_display_name.as_str())
-                            } else {
-                                msg
-                            };
-                            let _ = target_channel.id.send_message(&http_clone, CreateMessage::new().content(departure_msg)).await;
+                            if let Some(target_channel) = target_channel {
+                                let departure_msg = if is_secret {
+                                    tr_locale!("fr", "travel__taking_unknown_road", user: user_display_name.as_str())
+                                } else {
+                                    msg
+                                };
+                                let _ = target_channel.id.send_message(&http_clone, CreateMessage::new().content(departure_msg)).await;
+                            }
                         }
                     }
                 }
@@ -850,7 +909,7 @@ pub async fn remove_travel(user_id: u64) {
     remove_move(user_id).await;
 }
 
-pub fn calculate_current_distance(player_move: &PlayerMove) -> f64 {
+pub fn calculate_current_distance(player_move: &TravelGroup) -> f64 {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     let start_ts = player_move.step_start_timestamp.unwrap_or(now);
     let end_ts = player_move.step_end_timestamp.unwrap_or(now);
@@ -864,9 +923,9 @@ pub fn calculate_current_distance(player_move: &PlayerMove) -> f64 {
     player_move.distance_traveled + step_distance
 }
 
-pub async fn stop_travel(user_id: u64) -> Result<PlayerMove, anyhow::Error> {
+pub async fn stop_travel(user_id: u64) -> Result<TravelGroup, anyhow::Error> {
     let moves_lock = MOVES.lock().await;
-    let index = moves_lock.iter().position(|m| m.user_id == user_id);
+    let index = moves_lock.iter().position(|m| m.members.contains(&user_id));
     
     let mut player_move = if let Some(idx) = index {
         moves_lock[idx].clone()
@@ -887,29 +946,31 @@ pub async fn stop_travel(user_id: u64) -> Result<PlayerMove, anyhow::Error> {
     drop(moves_lock);
     remove_move(user_id).await;
 
-    // Envoi du message d'interruption dans le salon de la route
+    // Envoi du message d'interruption dans le salon de la route pour chaque membre
     if let Some(road_id) = player_move.road_id {
         if let Some(http) = HTTP_CLIENT.lock().await.clone() {
             let universe_id = player_move.universe_id;
-            let user_id = player_move.user_id;
+            let members = player_move.members.clone();
             let guild_id = player_move.server_id;
 
             tokio::spawn(async move {
-                let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
-                    char.name
-                } else {
-                    let member_nick = http.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
-                    if let Some(nick) = member_nick {
-                        nick
-                    } else if let Ok(user) = http.get_user(UserId::new(user_id)).await {
-                        user.name
+                for &m_id in &members {
+                    let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, m_id).await {
+                        char.name
                     } else {
-                        format!("User {}", user_id)
-                    }
-                };
+                        let member_nick = http.get_member(GuildId::new(guild_id), UserId::new(m_id)).await.ok().and_then(|m| m.nick.clone());
+                        if let Some(nick) = member_nick {
+                            nick
+                        } else if let Ok(user) = http.get_user(UserId::new(m_id)).await {
+                            user.name
+                        } else {
+                            format!("User {}", m_id)
+                        }
+                    };
 
-                let msg = tr_locale!("fr", "travel__interrupted", user: character_name);
-                let _ = ChannelId::new(road_id).send_message(&http, CreateMessage::new().content(msg)).await;
+                    let msg = tr_locale!("fr", "travel__interrupted", user: character_name);
+                    let _ = ChannelId::new(road_id).send_message(&http, CreateMessage::new().content(msg)).await;
+                }
             });
         }
     }
