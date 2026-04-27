@@ -909,6 +909,10 @@ pub async fn remove_travel(user_id: u64) {
     remove_move(user_id).await;
 }
 
+pub fn get_travel_threshold(modifier: u64) -> f64 {
+    100.0 + (modifier as f64 / 10.0)
+}
+
 pub fn calculate_current_distance(player_move: &TravelGroup) -> f64 {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     let start_ts = player_move.step_start_timestamp.unwrap_or(now);

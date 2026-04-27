@@ -78,7 +78,7 @@ pub async fn join(
         let dist2 = calculate_current_distance(&target_move);
         let diff = (dist1 - dist2).abs();
         let threshold = 50.0 + (5.0 * universe.global_time_modifier as f64);
-        
+
         if diff > threshold / 1000.0 { // threshold est en mètres, distances en km
             return Err("travel__too_far_to_join".into());
         }
@@ -86,7 +86,7 @@ pub async fn join(
         // Logique de position : moyenne des distances
         let mean_dist = (dist1 + dist2) / 2.0;
         target_move.distance_traveled = mean_dist;
-        
+
         // On met à jour les timestamps pour forcer le recalcul
         let now = chrono::Utc::now().timestamp() as u64;
         target_move.step_start_timestamp = Some(now);
@@ -138,22 +138,22 @@ pub async fn leave(ctx: Context<'_>) -> Result<(), Error> {
 
     // Retirer l'utilisateur du groupe actuel
     player_move.members.retain(|&id| id != user_id);
-    
+
     // Créer un nouveau groupe pour l'utilisateur qui quitte
     let mut new_group = player_move.clone();
     new_group._id = mongodb::bson::oid::ObjectId::new();
     new_group.members = vec![user_id];
-    
+
     // Mettre à jour la distance actuelle pour les deux
     let current_dist = calculate_current_distance(&player_move);
     player_move.distance_traveled = current_dist;
     new_group.distance_traveled = current_dist;
-    
+
     let now = chrono::Utc::now().timestamp() as u64;
     player_move.step_start_timestamp = Some(now);
     player_move.step_end_timestamp = Some(now);
     player_move.modified_speed = 0.0;
-    
+
     new_group.step_start_timestamp = Some(now);
     new_group.step_end_timestamp = Some(now);
     new_group.modified_speed = 0.0;
@@ -168,7 +168,7 @@ pub async fn leave(ctx: Context<'_>) -> Result<(), Error> {
         let leader_id = player_move.members[0];
         stop_travel(leader_id).await?;
         add_travel(ctx.serenity_context().http.clone(), server.server_id.into(), player_move).await?;
-        
+
         // Démarrer le nouveau groupe (l'utilisateur qui a quitté)
         add_travel(ctx.serenity_context().http.clone(), server.server_id.into(), new_group).await?;
     }
@@ -183,7 +183,7 @@ pub async fn start(
     destination: Option<String>,
 ) -> Result<(), Error> {
     let Ok(_) = ctx.defer_ephemeral().await else { return Err("reply__reply_failed".into()) };
-    
+
     let server = match get_server_by_id(ctx.guild_id().unwrap().get()).await {
         Ok(Some(s)) => s,
         _ => return Err("travel__server_not_found".into()),
@@ -237,7 +237,7 @@ pub async fn start(
 pub async fn stop(ctx: Context<'_>) -> Result<(), Error> {
     let Ok(_) = ctx.defer_ephemeral().await else { return Err("reply__reply_failed".into()) };
     let user_id = ctx.author().id.get();
-    
+
     // Vérification de leadership si le groupe est en mouvement
     let server = match get_server_by_id(ctx.guild_id().unwrap().get()).await {
         Ok(Some(s)) => s,
@@ -321,7 +321,7 @@ pub async fn _travel_with_move(ctx: Context<'_>, destination_input: String, play
 
 async fn move_from_road(_ctx: &SerenityContext, destination_id: u64, server: Server, mut player_move: TravelGroup) -> Result<&'static str, Error>{
     let dest_id = destination_id;
-    
+
     // Si on est sur une route, on ne peut aller que vers les extrémités (source ou destination originelle)
     if Some(dest_id) == player_move.destination_id {
         // Déjà en train d'y aller ? On ne fait rien ou on confirme
@@ -332,15 +332,15 @@ async fn move_from_road(_ctx: &SerenityContext, destination_id: u64, server: Ser
         let old_dest = player_move.destination_id;
         let old_dest_role = player_move.destination_role_id;
         let old_dest_server = player_move.destination_server_id;
-        
+
         player_move.destination_id = player_move.source_id;
         player_move.destination_role_id = player_move.source_role_id;
         player_move.destination_server_id = player_move.source_server_id;
-        
+
         player_move.source_id = old_dest;
         player_move.source_role_id = old_dest_role;
         player_move.source_server_id = old_dest_server;
-        
+
         // On recalcule la distance parcourue (on repart dans l'autre sens)
         // Pour simplifier, on inverse juste la progression
         if let Ok(Some(road)) = get_road_by_channel_id(server.universe_id, player_move.road_id.unwrap()).await {
@@ -428,9 +428,9 @@ async fn travel_without_destination(ctx: Context<'_>) -> Result<(), Error>{
     }
 
     let select_menu = serenity::all::CreateSelectMenu::new("select__menu__chose_destination",
-        serenity::all::CreateSelectMenuKind::String {
-            options: destinations,
-        }
+                                                           serenity::all::CreateSelectMenuKind::String {
+                                                               options: destinations,
+                                                           }
     );
 
     let components = vec![CreateActionRow::SelectMenu(select_menu)];
@@ -513,7 +513,7 @@ async fn move_from_place(ctx: &SerenityContext, source_id: u64, destination_id: 
     let source_place = crate::database::places::get_place_by_category_id(server.universe_id, source_id).await
         .map_err(|_| Error::from("travel__database_error"))?
         .ok_or_else(|| Error::from("travel__source_place_not_found"))?;
-    
+
     let dest_place = crate::database::places::get_place_by_category_id(server.universe_id, dest_id).await
         .map_err(|_| Error::from("travel__database_error"))?
         .ok_or_else(|| Error::from("travel__place_not_found"))?;
@@ -530,7 +530,7 @@ async fn move_from_place(ctx: &SerenityContext, source_id: u64, destination_id: 
     player_move.destination_role_id = Some(dest_place.role);
     player_move.destination_server_id = Some(dest_place.server_id);
     player_move.distance_traveled = 0.0;
-    
+
     add_travel(ctx.http.clone(), source.guild().unwrap().id.get(), player_move.clone()).await?;
 
     Ok("")

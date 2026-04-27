@@ -84,9 +84,20 @@ pub async fn reply_with_args_and_ephemeral<'a>(
         let parts: Vec<&str> = string.splitn(3, ':').collect();
         if parts.len() == 3 {
             let key = parts[1].to_string();
-            let err_msg = parts[2].to_string();
+            let err_content = parts[2];
             let mut new_args = args.unwrap_or_else(|| FluentArgs::new());
-            new_args.set("error", err_msg);
+            
+            // Si le message d'erreur contient des arguments formatés k1=v1,k2=v2
+            if err_content.contains('=') {
+                for part in err_content.split(',') {
+                    let kv: Vec<&str> = part.splitn(2, '=').collect();
+                    if kv.len() == 2 {
+                        new_args.set(kv[0], kv[1].to_string());
+                    }
+                }
+            } else {
+                new_args.set("error", err_content.to_string());
+            }
             (key, Some(new_args))
         } else {
             (string.clone(), args)

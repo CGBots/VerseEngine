@@ -109,6 +109,18 @@ pub async fn connect_bot() -> Result<Client, ()>{
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands,
+            on_error: |error| {
+                Box::pin(async move {
+                    match error {
+                        poise::FrameworkError::Command { ctx, error, .. } => {
+                            let _ = crate::utility::reply::reply(ctx, Err(error)).await;
+                        }
+                        _ => {
+                            let _ = poise::builtins::on_error(error).await;
+                        }
+                    }
+                })
+            },
             ..Default::default()
         })
         .setup(|ctx, _ready, framework| {

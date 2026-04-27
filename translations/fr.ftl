@@ -263,7 +263,16 @@ travel_start = départ
     .destination-description = Le lieu où vous souhaitez vous rendre (ID ou mention).
 travel_stop = stop
     .description = Arrêter votre voyage actuel sur la route où vous vous trouvez.
-
+travel_join = rejoindre
+    .description = Rejoindre le groupe de voyage d'un autre joueur.
+    .target = joueur
+    .target-description = Le joueur dont vous souhaitez rejoindre le groupe.
+travel_leave = quitter
+    .description = Quitter votre groupe de voyage actuel.
+travel_estimate = estimer
+    .description = Estimer la distance et le temps pour rejoindre un autre joueur sur la route.
+    .target = joueur
+    .target-description = Le joueur cible.
 ping = ping
     .description = Mesure la latence du bot.
 support = supporter
@@ -784,6 +793,84 @@ recipe__craft_already_in_progress = Craft déjà en cours
 travel__cannot_move_while_crafting = Craft en cours
     .title = Erreur
     .message = Vous ne pouvez pas vous déplacer pendant que vous craftez. Utilisez `/recipe stop` pour annuler le craft.
+
+travel__cannot_join_self = Action impossible
+    .title = Action impossible
+    .message = Vous ne pouvez pas rejoindre votre propre groupe.
+
+travel__universe_not_found = Univers introuvable
+    .title = Univers introuvable
+    .message = L'univers associé à ce serveur n'a pas été trouvé.
+
+travel__target_not_found = Joueur introuvable
+    .title = Joueur introuvable
+    .message = Le joueur cible n'a pas été trouvé ou ne possède pas de personnage.
+
+travel__already_in_same_group = Déjà dans le groupe
+    .title = Déjà dans le groupe
+    .message = Vous faites déjà partie du groupe de ce joueur.
+
+travel__too_far_different_place = Trop loin
+    .title = Trop loin
+    .message = Vous n'êtes pas au même endroit que ce joueur.
+
+travel__too_far_to_join = Trop loin
+    .title = Trop loin
+    .message = Vous êtes trop loin de ce joueur pour rejoindre son groupe en mouvement.
+
+travel__joined_group = Groupe rejoint
+    .title = Groupe rejoint
+    .message = Vous avez rejoint le groupe.
+
+travel__wrong_channel =
+    .title = Mauvais salon
+    .message = Vous n'êtes pas au bon endroit pour faire cela. Votre personnage se trouve actuellement dans la catégorie **{$category}**, salon **{$channel}**.
+
+travel__already_alone = Déjà seul
+    .title = Déjà seul
+    .message = Vous êtes déjà seul dans votre groupe.
+
+travel__left_group = Groupe quitté
+    .title = Groupe quitté
+    .message = Vous avez quitté le groupe.
+
+travel__only_leader_can_stop = Chef de groupe uniquement
+    .title = Chef de groupe uniquement
+    .message = Seul le chef du groupe peut arrêter le voyage. Vous pouvez quitter le groupe avec la commande `/voyage quitter`.
+
+travel__public_joined = `{$user} a rejoint le groupe de {$target}.`
+travel__public_left = `{$user} a quitté le groupe de {$leader}.`
+
+travel__cannot_estimate_self = Action impossible
+    .title = Action impossible
+    .message = Vous ne pouvez pas estimer la distance vers vous-même.
+
+travel__not_on_same_road = Pas sur la même route
+    .title = Pas sur la même route
+    .message = Vous et le joueur cible devez être sur la même route pour faire une estimation.
+
+travel__speed_stat_not_found = Statistique manquante
+    .title = Erreur
+    .message = La statistique de vitesse n'a pas été trouvée dans cet univers.
+
+travel__speed_resolve_failed = Erreur de calcul
+    .title = Erreur
+    .message = Impossible de calculer votre vitesse actuelle.
+
+travel__no_speed = Vitesse nulle
+    .title = Action impossible
+    .message = Votre vitesse est nulle, vous ne pouvez pas estimer de temps de trajet.
+
+travel__estimate_result = Estimation de distance
+    .title = Estimation
+    .message = Vous estimez que {$target} se trouve à environ **{$distance} mètres** de vous. En jeu, il vous faudrait environ **{$minutes} min {$seconds} s** pour le rejoindre.
+travel__estimate_can_join = Proche
+    .title = Proche
+    .message = {$target} est à portée de ralliement (environ **{$distance} mètres**). En jeu, il vous faudrait environ **{$minutes} min {$seconds} s** pour le rejoindre exactement.
+
+travel__estimate_too_far = Trop loin
+    .title = Trop loin
+    .message = Vous êtes trop loin de {$target} pour pouvoir estimer sa distance avec précision.
 recipe__empty_recipe = Recette vide
     .title = Erreur
     .message = La recette doit contenir au moins un ingrédient ou un résultat.
