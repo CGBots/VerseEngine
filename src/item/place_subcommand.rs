@@ -203,69 +203,86 @@ async fn _apply_place(
     channel_id_val: u64,
     immutable: bool,
 ) -> Result<(String, String), Error> {
-    let inventory_entry = Inventory::get_by_id(inventory_id).await?
-        .ok_or("item__not_found_in_inventory")?;
-        
-    if inventory_entry.holder.holder_id != character_id {
-        return Err("item__not_your_item".into());
-    }
-    
-    let item = get_item_by_id(inventory_entry.item_id).await?
-        .ok_or("item__not_found")?;
-        
-    if !matches!(item.item_usage, ItemUsage::Placeable) {
-        return Err("item__not_placeable".into());
-    }
-    
-    let channel_id = serenity::all::ChannelId::new(channel_id_val);
-    let channel = channel_id.to_channel(&ctx).await?.guild().ok_or("item__not_in_guild_channel")?;
-    let category_id = channel.parent_id.ok_or("item__not_in_category")?.get();
-    
-    let _place = get_place_by_category_id(universe_id, category_id).await?
-        .ok_or("item__not_a_place")?;
+    let db_client = crate::database::db_client::get_db_client().await;
+    let mut session = db_client.start_session().await?;
+    session.start_transaction().await?;
 
-    let area = match get_area_by_channel_id(universe_id, channel_id_val).await? {
-        Some(a) => a,
-        None => {
-            let new_area = Area::new(universe_id, channel_id_val).await;
-            new_area.insert().await?;
-            new_area
+    let result = async {
+        let inventory_entry = Inventory::get_by_id_with_session(&mut session, inventory_id).await?
+            .ok_or("item__not_found_in_inventory")?;
+
+        if inventory_entry.holder.holder_id != character_id {
+            return Err("item__not_your_item".into());
         }
-    };
-        
-    let owner_id = if immutable {
-        None
-    } else {
-        Some(character_id)
-    };
-    
-    let tool_id = ObjectId::new();
-    let tool_inventory_id = if item.inventory_size > 0 {
-        Some(Inventory::create_empty_inventory(universe_id, HolderType::Item, tool_id).await?)
-    } else {
-        None
-    };
-    
-    let tool = Tool {
-        _id: Some(tool_id),
-        universe_id,
-        server_id: channel.guild_id.get(),
-        owner_id,
-        category_id,
-        channel_id: channel_id_val,
-        area_id: Some(area._id),
-        original_item: item._id,
-        name: item.item_name.clone(),
-        chained: None,
-        inventory_id: tool_inventory_id,
-        inventory_size: item.inventory_size,
-    };
-    
-    if !Inventory::remove_item(inventory_id, 1).await? {
-        return Err("item__failed_to_remove".into());
+
+        let item = get_item_by_id(inventory_entry.item_id).await?
+            .ok_or("item__not_found")?;
+
+        if !matches!(item.item_usage, ItemUsage::Placeable) {
+            return Err("item__not_placeable".into());
+        }
+
+        let channel_id = serenity::all::ChannelId::new(channel_id_val);
+        let channel = channel_id.to_channel(&ctx).await?.guild().ok_or("item__not_in_guild_channel")?;
+        let category_id = channel.parent_id.ok_or("item__not_in_category")?.get();
+
+        let _place = get_place_by_category_id(universe_id, category_id).await?
+            .ok_or("item__not_a_place")?;
+
+        let area = match get_area_by_channel_id(universe_id, channel_id_val).await? {
+            Some(a) => a,
+            None => {
+                let new_area = Area::new(universe_id, channel_id_val).await;
+                new_area.insert_with_session(&mut session).await?;
+                new_area
+            }
+        };
+
+        let owner_id = if immutable {
+            None
+        } else {
+            Some(character_id)
+        };
+
+        let tool_id = ObjectId::new();
+        let tool_inventory_id = if item.inventory_size > 0 {
+            Some(Inventory::create_empty_inventory_with_session(&mut session, universe_id, HolderType::Item, tool_id).await?)
+        } else {
+            None
+        };
+
+        let tool = Tool {
+            _id: Some(tool_id),
+            universe_id,
+            server_id: channel.guild_id.get(),
+            owner_id,
+            category_id,
+            channel_id: channel_id_val,
+            area_id: Some(area._id),
+            original_item: item._id,
+            name: item.item_name.clone(),
+            chained: None,
+            inventory_id: tool_inventory_id,
+            inventory_size: item.inventory_size,
+        };
+
+        if !Inventory::remove_item_with_session(&mut session, inventory_id, 1).await? {
+            return Err("item__failed_to_remove".into());
+        }
+
+        tool.save_with_session(&mut session).await?;
+
+        Ok((item.item_name, channel.name))
+    }.await;
+
+    match result {
+        Ok(val) => {
+            session.commit_transaction().await?;
+            Ok(val)
+        }
+        Err(e) => {
+            session.abort_transaction().await?;
+            Err(e)
+        }
     }
-    
-    tool.save().await?;
-    
-    Ok((item.item_name, channel.name))
 }

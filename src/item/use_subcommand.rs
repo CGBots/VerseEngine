@@ -193,33 +193,11 @@ pub async fn execute_use_modal(
         let result = process_use_with_transaction(ctx, universe_id, character_id, tool.clone(), content.clone()).await;
         
         if let Err(e) = result {
-            // If transaction fails with IllegalOperation (likely standalone mongo), retry without transaction
-            let err_str = e.to_string();
-            if err_str.contains("IllegalOperation") || err_str.contains("Transaction numbers") {
-                let fallback_result = process_use_without_transaction(universe_id, character_id, tool, content).await;
-                match fallback_result {
-                    Ok(_) => {
-                        ctx.interaction.create_followup(ctx.serenity_context, 
-                            serenity::all::CreateInteractionResponseFollowup::new()
-                                .content(get(poise::Context::Application(ctx), "use__transfer_success", None, None))
-                                .ephemeral(true)
-                        ).await?;
-                    }
-                    Err(err_msg) => {
-                        ctx.interaction.create_followup(ctx.serenity_context, 
-                            serenity::all::CreateInteractionResponseFollowup::new()
-                                .content(format!("Error: {}", err_msg))
-                                .ephemeral(true)
-                        ).await?;
-                    }
-                }
-            } else {
-                ctx.interaction.create_followup(ctx.serenity_context, 
-                    serenity::all::CreateInteractionResponseFollowup::new()
-                        .content(format!("Error: {}", e))
-                        .ephemeral(true)
-                ).await?;
-            }
+            ctx.interaction.create_followup(ctx.serenity_context, 
+                serenity::all::CreateInteractionResponseFollowup::new()
+                    .content(format!("Error: {}", e))
+                    .ephemeral(true)
+            ).await?;
         } else {
             ctx.interaction.create_followup(ctx.serenity_context, 
                 serenity::all::CreateInteractionResponseFollowup::new()
@@ -258,45 +236,8 @@ async fn process_use_with_transaction(
     }
 }
 
-async fn process_use_without_transaction(
-    universe_id: ObjectId,
-    character_id: ObjectId,
-    tool: Tool,
-    content: String,
-) -> Result<(), String> {
-    let (tool_items, char_items) = validate_transfer(universe_id, &tool, character_id, &content).await?;
-
-    // Apply changes item by item (non-atomic)
-    let initial_tool_inv_map: std::collections::HashMap<_, _> = Inventory::get_by_holder(universe_id, tool._id.unwrap(), HolderType::Item).await
-        .map_err(|e| e.to_string())?
-        .into_iter().map(|i| (i.item_id, i.quantity)).collect();
-
-    for (item_id, &new_q) in &tool_items {
-        let old_q = initial_tool_inv_map.get(item_id).cloned().unwrap_or(0);
-        if new_q > old_q {
-            let _ = Inventory::add_item_to_inventory(universe_id, tool._id.unwrap(), HolderType::Item, *item_id, new_q - old_q).await.map_err(|e| e.to_string());
-        } else if new_q < old_q {
-            Inventory::remove_item_from_holder(universe_id, tool._id.unwrap(), HolderType::Item, *item_id, old_q - new_q).await.map_err(|e| e.to_string())?;
-        }
-    }
-
-    let initial_char_inv_map: std::collections::HashMap<_, _> = Inventory::get_by_holder(universe_id, character_id, HolderType::Character).await
-        .map_err(|e| e.to_string())?
-        .into_iter().map(|i| (i.item_id, i.quantity)).collect();
-
-    for (item_id, &new_q) in &char_items {
-        let old_q = initial_char_inv_map.get(item_id).cloned().unwrap_or(0);
-        if new_q > old_q {
-            let _ = Inventory::add_item_to_inventory(universe_id, character_id, HolderType::Character, *item_id, new_q - old_q).await.map_err(|e| e.to_string());
-        } else if new_q < old_q {
-            Inventory::remove_item_from_holder(universe_id, character_id, HolderType::Character, *item_id, old_q - new_q).await.map_err(|e| e.to_string())?;
-        }
-    }
-
-    Ok(())
-}
-
-async fn validate_transfer(
+async fn validate_transfer_with_session(
+    session: &mut mongodb::ClientSession,
     universe_id: ObjectId,
     tool: &Tool,
     character_id: ObjectId,
@@ -304,10 +245,10 @@ async fn validate_transfer(
 ) -> Result<(std::collections::HashMap<ObjectId, u64>, std::collections::HashMap<ObjectId, u64>), String> {
     let lines: Vec<&str> = content.lines().collect();
     
-    // 1. Get current inventories
-    let initial_tool_inv = Inventory::get_by_holder(universe_id, tool._id.unwrap(), HolderType::Item).await
+    // 1. Get current inventories with session
+    let initial_tool_inv = Inventory::get_by_holder_with_session(session, universe_id, tool._id.unwrap(), HolderType::Item).await
         .map_err(|e| e.to_string())?;
-    let initial_char_inv = Inventory::get_by_holder(universe_id, character_id, HolderType::Character).await
+    let initial_char_inv = Inventory::get_by_holder_with_session(session, universe_id, character_id, HolderType::Character).await
         .map_err(|e| e.to_string())?;
 
     let mut tool_items = std::collections::HashMap::new();
@@ -375,10 +316,10 @@ async fn process_use_transfer_with_session(
     tool: Tool,
     content: String,
 ) -> Result<(), String> {
-    let (tool_items, char_items) = validate_transfer(universe_id, &tool, character_id, &content).await?;
+    let (tool_items, char_items) = validate_transfer_with_session(session, universe_id, &tool, character_id, &content).await?;
 
     // 4. Apply changes using session
-    let initial_tool_inv_map: std::collections::HashMap<_, _> = Inventory::get_by_holder(universe_id, tool._id.unwrap(), HolderType::Item).await
+    let initial_tool_inv_map: std::collections::HashMap<_, _> = Inventory::get_by_holder_with_session(session, universe_id, tool._id.unwrap(), HolderType::Item).await
         .map_err(|e| e.to_string())?
         .into_iter().map(|i| (i.item_id, i.quantity)).collect();
 
@@ -391,7 +332,7 @@ async fn process_use_transfer_with_session(
         }
     }
 
-    let initial_char_inv_map: std::collections::HashMap<_, _> = Inventory::get_by_holder(universe_id, character_id, HolderType::Character).await
+    let initial_char_inv_map: std::collections::HashMap<_, _> = Inventory::get_by_holder_with_session(session, universe_id, character_id, HolderType::Character).await
         .map_err(|e| e.to_string())?
         .into_iter().map(|i| (i.item_id, i.quantity)).collect();
 
@@ -638,14 +579,15 @@ pub async fn execute_use_modal_from_interaction(
         m.create_response(ctx, CreateInteractionResponse::Acknowledge).await?;
 
         // Process the content
-        // On a besoin d'un AppContext simulé ou de refactoriser process_use_with_transaction
-        // Mais on peut utiliser process_use_without_transaction pour simplifier si besoin,
-        // ou mieux, créer une version qui prend juste les IDs.
-        
-        let result = process_use_without_transaction(universe_id, character_id, tool, content).await;
+        let db_client = get_db_client().await;
+        let mut session = db_client.start_session().await?;
+        session.start_transaction().await?;
+
+        let result = process_use_transfer_with_session(&mut session, universe_id, character_id, tool.clone(), content.clone()).await;
         
         match result {
             Ok(_) => {
+                session.commit_transaction().await?;
                 interaction.create_followup(ctx, 
                     serenity::all::CreateInteractionResponseFollowup::new()
                         .content(get_by_locale(locale, "use__transfer_success", None, None))
@@ -653,6 +595,7 @@ pub async fn execute_use_modal_from_interaction(
                 ).await?;
             }
             Err(err_msg) => {
+                session.abort_transaction().await?;
                 interaction.create_followup(ctx, 
                     serenity::all::CreateInteractionResponseFollowup::new()
                         .content(format!("Error: {}", err_msg))

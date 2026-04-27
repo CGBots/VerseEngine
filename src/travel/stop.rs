@@ -5,6 +5,15 @@ use crate::travel::logic::stop_travel;
 use crate::travel::utils::validate_channel;
 use crate::utility::reply::reply;
 
+/// Arrête le mouvement actuel du groupe du joueur.
+/// 
+/// Seul le leader du groupe peut arrêter le voyage s'il est en cours sur une route.
+/// 
+/// # Errors
+/// Retourne une erreur si :
+/// - Le joueur n'est pas dans le bon salon.
+/// - Le joueur n'est pas le leader du groupe.
+/// - Le groupe n'est pas en mouvement.
 #[poise::command(slash_command, guild_only, rename = "travel_stop")]
 pub async fn stop(ctx: Context<'_>) -> Result<(), Error> {
     let author_id = ctx.author().id.get();

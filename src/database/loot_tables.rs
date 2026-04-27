@@ -94,6 +94,14 @@ pub struct LootTable {
 
 impl LootTable {
     pub async fn save_or_update(&self) -> mongodb::error::Result<UpdateResult> {
+        self.save_or_update_with_optional_session(None).await
+    }
+
+    pub async fn save_or_update_with_session(&self, session: &mut mongodb::ClientSession) -> mongodb::error::Result<UpdateResult> {
+        self.save_or_update_with_optional_session(Some(session)).await
+    }
+
+    async fn save_or_update_with_optional_session(&self, session: Option<&mut mongodb::ClientSession>) -> mongodb::error::Result<UpdateResult> {
         let db_client = get_db_client().await;
         let filter = doc! {
             "universe_id": self.universe_id,
@@ -104,77 +112,79 @@ impl LootTable {
         doc.remove("_id");
 
         let options = mongodb::options::UpdateOptions::builder().upsert(true).build();
-        
-        db_client
+        let collection = db_client
             .database(VERSEENGINE_DB_NAME)
-            .collection::<LootTable>(LOOT_TABLES_COLLECTION_NAME)
-            .update_one(filter, doc! { "$set": doc })
-            .with_options(options)
-            .await
+            .collection::<LootTable>(LOOT_TABLES_COLLECTION_NAME);
+
+        if let Some(s) = session {
+            collection.update_one(filter, doc! { "$set": doc })
+                .with_options(options)
+                .session(s)
+                .await
+        } else {
+            collection.update_one(filter, doc! { "$set": doc })
+                .with_options(options)
+                .await
+        }
     }
 
     pub async fn delete(&self) -> mongodb::error::Result<mongodb::results::DeleteResult> {
+        self.delete_with_optional_session(None).await
+    }
+
+    pub async fn delete_with_session(&self, session: &mut mongodb::ClientSession) -> mongodb::error::Result<mongodb::results::DeleteResult> {
+        self.delete_with_optional_session(Some(session)).await
+    }
+
+    async fn delete_with_optional_session(&self, session: Option<&mut mongodb::ClientSession>) -> mongodb::error::Result<mongodb::results::DeleteResult> {
         let db_client = get_db_client().await;
         let filter = doc! {
             "universe_id": self.universe_id,
             "channel_id": self.channel_id.to_string()
         };
 
-        db_client
+        let collection = db_client
             .database(VERSEENGINE_DB_NAME)
-            .collection::<LootTable>(LOOT_TABLES_COLLECTION_NAME)
-            .delete_one(filter)
-            .await
+            .collection::<LootTable>(LOOT_TABLES_COLLECTION_NAME);
+
+        if let Some(s) = session {
+            collection.delete_one(filter)
+                .session(s)
+                .await
+        } else {
+            collection.delete_one(filter)
+                .await
+        }
     }
 
     pub async fn remove_item_from_all_tables(universe_id: ObjectId, item_name: &str) -> mongodb::error::Result<UpdateResult> {
+        Self::remove_item_from_all_tables_with_optional_session(universe_id, item_name, None).await
+    }
+
+    pub async fn remove_item_from_all_tables_with_session(universe_id: ObjectId, item_name: &str, session: &mut mongodb::ClientSession) -> mongodb::error::Result<UpdateResult> {
+        Self::remove_item_from_all_tables_with_optional_session(universe_id, item_name, Some(session)).await
+    }
+
+    pub async fn remove_item_from_all_tables_with_optional_session(universe_id: ObjectId, item_name: &str, session: Option<&mut mongodb::ClientSession>) -> mongodb::error::Result<UpdateResult> {
         let db_client = get_db_client().await;
         let filter = doc! { "universe_id": universe_id };
-        
-        // Supprime l'item s'il est directement dans entries (LootTableEntry::Item)
-        // Ou s'il est à l'intérieur d'un Set dans entries (LootTableEntry::Set -> items)
-        let _update = doc! {
-            "$pull": {
-                "entries": {
-                    "$or": [
-                        { "name": item_name }, // LootTableEntry::Item
-                        { "items": { "name": item_name } } // LootTableEntry::Set (on retire tout le set si l'item y est ? Non, probablment juste l'item du set)
-                    ]
-                }
-            }
-        };
-        
-        // Note: Le $pull sur "entries" avec "items.name" risque de supprimer tout le Set.
-        // Si on veut supprimer juste l'item du Set, c'est plus complexe en une seule requête MongoDB.
-        // Mais généralement, si un item disparait, le set qui le contenait doit être mis à jour.
-        
-        // Rectification: $pull avec une condition sur un tableau imbriqué peut être délicat.
-        // Utilisons deux étapes ou une requête plus précise si possible.
-        
-        // Étape 1: Retirer l'item s'il est directement dans entries
-        let _res1 = db_client
+        let coll = db_client
             .database(VERSEENGINE_DB_NAME)
-            .collection::<LootTable>(LOOT_TABLES_COLLECTION_NAME)
-            .update_many(filter.clone(), doc! {
-                "$pull": {
-                    "entries": { "name": item_name }
-                }
-            })
-            .await?;
+            .collection::<LootTable>(LOOT_TABLES_COLLECTION_NAME);
 
-        // Étape 2: Retirer l'item s'il est dans le champ 'items' d'un Set dans 'entries'
-        // MongoDB permet d'utiliser entries.$[].items pour cibler tous les items de tous les sets.
-        let res2 = db_client
-            .database(VERSEENGINE_DB_NAME)
-            .collection::<LootTable>(LOOT_TABLES_COLLECTION_NAME)
-            .update_many(filter, doc! {
-                "$pull": {
-                    "entries.$[].items": { "name": item_name }
-                }
-            })
-            .await?;
-            
-        Ok(res2)
+        let pull1 = doc! { "$pull": { "entries": { "name": item_name } } };
+        let pull2 = doc! { "$pull": { "entries.$[].items": { "name": item_name } } };
+
+        match session {
+            Some(s) => {
+                coll.update_many(filter.clone(), pull1).session(&mut *s).await?;
+                coll.update_many(filter, pull2).session(s).await
+            },
+            None => {
+                coll.update_many(filter.clone(), pull1).await?;
+                coll.update_many(filter, pull2).await
+            }
+        }
     }
 }
 

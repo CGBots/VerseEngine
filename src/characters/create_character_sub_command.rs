@@ -14,6 +14,7 @@ use crate::{tr, tr_locale};
 use crate::translation::get_by_locale;
 use crate::database::characters::Character;
 use crate::database::db_namespace::{CHARACTERS_COLLECTION_NAME, VERSEENGINE_DB_NAME};
+use crate::database::db_client::get_db_client;
 use crate::database::places::{Place};
 use crate::database::stats::{Stat, StatValue};
 use crate::database::travel::{TravelGroup};
@@ -807,15 +808,25 @@ pub async fn accept_character(ctx: SerenityContext, component_interaction: Compo
         stats: extracted_stats,
     };
 
-    let Ok(_character_result) = character.clone().upsert().await else { return Err("create_character__database_error".into()) };
+    let mut session = get_db_client().await.start_session().await?;
+    session.start_transaction().await?;
+
+    let upsert_result = character.clone().upsert_with_session(&mut session).await;
+    if upsert_result.is_err() {
+        session.abort_transaction().await?;
+        return Err("create_character__database_error".into());
+    }
 
     if let Some(player_role_id) = server.player_role_id {
         if let Ok(member) = ctx.http().get_member(guild_id, character_user_id.into()).await {
             let _ = member.add_role(&ctx.http(), player_role_id.id).await;
         }
-    } else {return Err("accept_character__no_player_role_id".into())}
+    } else {
+        session.abort_transaction().await?;
+        return Err("accept_character__no_player_role_id".into());
+    }
 
-    let _ = if let Ok(member) = ctx.http().get_member(guild_id, character_user_id.into()).await {
+    let nick_result = if let Ok(member) = ctx.http().get_member(guild_id, character_user_id.into()).await {
         let nickname = if (character.clone().name.to_string() + "│" + member.user.display_name()).chars().count() > 32 {
             character.clone().name.to_string()
         } else { character.clone().name.to_string() + "│" + member.user.display_name() };
@@ -824,7 +835,17 @@ pub async fn accept_character(ctx: SerenityContext, component_interaction: Compo
             character_user_id.into(),
             &EditMember::new().nickname(nickname),
             None).await
-    } else { return Err("accept_character__member_not_found".into())};
+    } else {
+        session.abort_transaction().await?;
+        return Err("accept_character__member_not_found".into());
+    };
+
+    if nick_result.is_err() {
+        session.abort_transaction().await?;
+        return Err("accept_character__nickname_error".into());
+    }
+
+    session.commit_transaction().await?;
 
     let message = component_interaction.message.clone();
     let original_embed: CreateEmbed = message.embeds[0].clone().into();

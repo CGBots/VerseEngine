@@ -241,17 +241,26 @@ impl Stat {
     ///
     /// If `DB_CLIENT` initialization fails or the database operation fails, the proper 
     /// error handling mechanism should be in place to avoid runtime panics.
-    pub async fn insert_stat(&self) -> Result<Stat, Error>{
+    pub async fn insert_stat(&self) -> Result<Stat, Error> {
+        self.insert_stat_with_optional_session(None).await
+    }
+
+    pub async fn insert_stat_with_session(&self, session: &mut mongodb::ClientSession) -> Result<Stat, Error> {
+        self.insert_stat_with_optional_session(Some(session)).await
+    }
+
+    pub async fn insert_stat_with_optional_session(&self, session: Option<&mut mongodb::ClientSession>) -> Result<Stat, Error> {
         let db_client = get_db_client().await;
-        let result = db_client
+        let coll = db_client
             .database(VERSEENGINE_DB_NAME)
-            .collection::<Stat>(STATS_COLLECTION_NAME)
-            .insert_one(self)
-            .await;
+            .collection::<Stat>(STATS_COLLECTION_NAME);
+        let result = match session {
+            Some(s) => coll.insert_one(self).session(s).await,
+            None => coll.insert_one(self).await,
+        };
         match result {
-            Ok(_) => {
-                Ok(self.clone()) }
-            Err(_) => { Err("stat_insert__failed".into()) }
+            Ok(_) => Ok(self.clone()),
+            Err(_) => Err("stat_insert__failed".into()),
         }
     }
 

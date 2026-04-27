@@ -12,6 +12,7 @@ use serenity::all as serenity;
 use serenity::all::{CreateActionRow, CreateSelectMenuOption, ComponentInteraction};
 use futures::TryStreamExt;
 
+/// Tente d'extraire un identifiant numérique d'une chaîne (ex: mention de salon ou ID brut).
 pub fn parse_channel_id(input: &str) -> Option<u64> {
     if let Ok(id) = input.parse::<u64>() {
         return Some(id);
@@ -24,6 +25,13 @@ pub fn parse_channel_id(input: &str) -> Option<u64> {
     None
 }
 
+/// Démarre un voyage vers une destination spécifiée ou propose une liste de destinations possibles.
+/// 
+/// # Arguments
+/// * `destination` - Optionnellement, le nom ou la mention d'un lieu vers lequel voyager.
+/// 
+/// # Errors
+/// Retourne une erreur si le joueur est en train de crafter ou si la destination est invalide.
 #[poise::command(slash_command, guild_only, rename = "travel_start")]
 pub async fn start(
     ctx: Context<'_>,
@@ -54,7 +62,7 @@ pub async fn start(
     match destination {
         None => travel_without_destination(ctx).await,
         Some(dest) => {
-            match _travel_with_move(ctx, dest, player_move).await {
+            match travel_with_destination(ctx, dest, player_move).await {
                 Ok(_) => Ok(()),
                 Err(e) => {
                     let _ = reply(ctx, Err(e)).await;
@@ -65,7 +73,8 @@ pub async fn start(
     }
 }
 
-pub async fn _travel_with_move(ctx: Context<'_>, destination_input: String, player_move: TravelGroup) -> Result<(), Error>{
+/// Initialise un voyage vers une destination précise fournie par l'utilisateur.
+pub async fn travel_with_destination(ctx: Context<'_>, destination_input: String, player_move: TravelGroup) -> Result<(), Error>{
     let server = get_server_by_id(ctx.guild_id().unwrap().get()).await?
         .ok_or("travel__server_not_found")?;
 
@@ -86,6 +95,7 @@ pub async fn _travel_with_move(ctx: Context<'_>, destination_input: String, play
     Ok(())
 }
 
+/// Gère le mouvement d'un groupe se trouvant déjà sur une route.
 async fn move_from_road(_ctx: &serenity::Context, destination_id: u64, server: Server, mut player_move: TravelGroup) -> Result<&'static str, Error>{
     let dest_id = destination_id;
 
@@ -121,6 +131,7 @@ async fn move_from_road(_ctx: &serenity::Context, destination_id: u64, server: S
     Ok("travel__started")
 }
 
+/// Affiche un menu de sélection des destinations possibles depuis la position actuelle.
 async fn travel_without_destination(ctx: Context<'_>) -> Result<(), Error>{
     let server = get_server_by_id(ctx.guild_id().unwrap().get()).await?
         .ok_or("travel__server_not_found")?;
@@ -176,6 +187,7 @@ async fn travel_without_destination(ctx: Context<'_>) -> Result<(), Error>{
     Ok(())
 }
 
+/// Gère l'interaction provenant du menu de sélection de destination (Select Menu).
 pub async fn travel_from_handler(ctx: serenity::Context, interaction: ComponentInteraction) -> Result<&'static str, Error> {
     let server = get_server_by_id(interaction.guild_id.unwrap().get()).await?
         .ok_or("travel__server_not_found")?;
@@ -201,25 +213,19 @@ pub async fn travel_from_handler(ctx: serenity::Context, interaction: ComponentI
     Ok("travel__started")
 }
 
+/// Gère le mouvement d'un groupe quittant un lieu (Place) pour s'engager sur une route (Road).
 async fn move_from_place(_ctx: &serenity::Context, _source_id: u64, destination_id: u64, server: Server, mut player_move: TravelGroup) -> Result<&'static str, Error>{
     let road = get_road(server.universe_id, player_move.actual_space_id, destination_id).await?
         .ok_or("travel__no_road_found")?;
 
+    let source_place_id = if road.place_one_id == destination_id { road.place_two_id } else { road.place_one_id };
+    
     player_move.actual_space_id = road.channel_id;
     player_move.actual_space_type = SpaceType::Road;
     player_move.is_in_move = true;
     player_move.road_id = Some(road.channel_id);
     player_move.road_role_id = Some(road.role_id);
     player_move.road_server_id = Some(road.server_id);
-    player_move.source_id = Some(player_move.actual_space_id); 
-    // Attendez, source_id dans TravelGroup semble être l'id de la Place de départ
-    player_move.source_id = Some(if road.place_one_id == destination_id { road.place_two_id } else { road.place_one_id });
-    
-    // Correction: On vient de Place, donc source_id est l'ID de la Place actuelle (avant changement)
-    // Mais on a déjà écrasé actual_space_id...
-    // En fait move_from_place est appelé avec la Place actuelle.
-    
-    let source_place_id = if road.place_one_id == destination_id { road.place_two_id } else { road.place_one_id };
     player_move.source_id = Some(source_place_id);
     player_move.destination_id = Some(destination_id);
     player_move.distance_traveled = 0.0;

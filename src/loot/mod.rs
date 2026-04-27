@@ -1,6 +1,7 @@
 pub mod logic;
+use crate::database::db_client::get_db_client;
 use crate::database::items::get_item_by_name;
-use crate::database::inventory::{Inventory};
+use crate::database::inventory::{Inventory, HolderType};
 use rand::RngExt;
 use crate::database::characters::get_character_by_user_id;
 use crate::database::loot_tables::{get_loot_table_by_channel_id, LootTable, LootTableEntry};
@@ -127,6 +128,7 @@ pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
     let mut all_looted_items = Vec::new();
     let mut total_delay = 0;
 
+    let mut channel_loot_table_final = None;
     if let Some(mut channel_table) = channel_loot_table {
         if let Some(limit) = channel_table.rate_limit {
             if let Some(last_loots) = &channel_table.last_loot {
@@ -146,8 +148,6 @@ pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
 
         let (items, updated) = channel_table.roll();
         if channel_table.entries.is_empty() {
-            channel_table.delete().await?;
-            
             // Notification dans les logs de l'univers
             let mut servers_cursor = get_servers_from_universe(&universe.universe_id).await?;
             let mut log_args = FluentArgs::new();
@@ -162,17 +162,19 @@ pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
                     ).await;
                 }
             }
+            channel_loot_table_final = Some(channel_table);
         } else if updated || channel_table.rate_limit.is_some() {
             if channel_table.rate_limit.is_some() {
                 let mut last_loots = channel_table.last_loot.unwrap_or_default();
                 last_loots.insert(character._id.to_string(), chrono::Utc::now());
                 channel_table.last_loot = Some(last_loots);
             }
-            channel_table.save_or_update().await?;
+            channel_loot_table_final = Some(channel_table);
         }
         all_looted_items.extend(items);
     }
 
+    let mut category_loot_table_final = None;
     if let Some(mut category_table) = category_loot_table {
         if let Some(limit) = category_table.rate_limit {
             if let Some(last_loots) = &category_table.last_loot {
@@ -180,10 +182,6 @@ pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
                     let now = chrono::Utc::now();
                     let elapsed = now.signed_duration_since(*last_loot_time).num_seconds() as u64;
                     if elapsed < limit {
-                        // Si le canal a déjà donné du loot, on ne bloque pas forcément par la catégorie,
-                        // mais ici le comportement attendu est probablement de bloquer si l'un des deux est limité.
-                        // Cependant, si on a déjà looté sur le canal, on ne veut peut-être pas bloquer après coup.
-                        // Vu la structure, on vérifie avant de roll.
                         if all_looted_items.is_empty() {
                             return Err(format!("error:loot_table__rate_limited:{}", limit - elapsed).into());
                         }
@@ -198,8 +196,6 @@ pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
 
         let (items, updated) = category_table.roll();
         if category_table.entries.is_empty() {
-            category_table.delete().await?;
-
             // Notification dans les logs de l'univers
             let mut servers_cursor = get_servers_from_universe(&universe.universe_id).await?;
             let mut log_args = FluentArgs::new();
@@ -215,13 +211,14 @@ pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
                     ).await;
                 }
             }
+            category_loot_table_final = Some(category_table);
         } else if updated || category_table.rate_limit.is_some() {
             if category_table.rate_limit.is_some() {
                 let mut last_loots = category_table.last_loot.unwrap_or_default();
                 last_loots.insert(character._id.to_string(), chrono::Utc::now());
                 category_table.last_loot = Some(last_loots);
             }
-            category_table.save_or_update().await?;
+            category_loot_table_final = Some(category_table);
         }
         all_looted_items.extend(items);
     }
@@ -231,6 +228,10 @@ pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
     }
 
     if total_delay > 0 {
+        let client = get_db_client().await;
+        let mut session = client.start_session().await?;
+        session.start_transaction().await?;
+
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         let player_loot = PlayerLoot {
             _id: None,
@@ -243,12 +244,38 @@ pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
             is_finished: false,
         };
 
-        add_loot(ctx.serenity_context().http.clone(), player_loot).await?;
+        let result: Result<(), Error> = async {
+            if let Some(channel_table) = &channel_loot_table_final {
+                if channel_table.entries.is_empty() {
+                    channel_table.delete_with_session(&mut session).await?;
+                } else {
+                    channel_table.save_or_update_with_session(&mut session).await?;
+                }
+            }
+            if let Some(category_table) = &category_loot_table_final {
+                if category_table.entries.is_empty() {
+                    category_table.delete_with_session(&mut session).await?;
+                } else {
+                    category_table.save_or_update_with_session(&mut session).await?;
+                }
+            }
+            add_loot(ctx.serenity_context().http.clone(), player_loot).await?;
+            Ok(())
+        }.await;
 
-        let mut args = FluentArgs::new();
-        args.set("delay", total_delay);
-        reply_with_args_and_ephemeral(ctx, Ok("loot_table__loot_started"), Some(args), true).await?;
-        return Ok(None);
+        match result {
+            Ok(_) => {
+                session.commit_transaction().await?;
+                let mut args = FluentArgs::new();
+                args.set("delay", total_delay);
+                reply_with_args_and_ephemeral(ctx, Ok("loot_table__loot_started"), Some(args), true).await?;
+                return Ok(None);
+            }
+            Err(e) => {
+                session.abort_transaction().await?;
+                return Err(e);
+            }
+        }
     }
 
     let mut item_counts = std::collections::BTreeMap::new();
@@ -257,52 +284,86 @@ pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
     }
 
     let mut item_list = Vec::new();
-    for (item_name, quantity) in item_counts {
-        let item_data_res = get_item_by_name(universe.universe_id, &item_name).await;
-        let item_data = match item_data_res {
-            Ok(Some(i)) => Some(i),
-            Ok(None) => None,
-            Err(e) => {
-                eprintln!("Error fetching item '{}' for universe {}: {:?}", item_name, universe.universe_id, e);
-                let mut err_args = FluentArgs::new();
-                err_args.set("item_name", item_name);
-                err_args.set("quantity", quantity);
-                err_args.set("error", e.to_string());
-                item_list.push(crate::translation::get(ctx, "loot_table__item_db_error", None, Some(&err_args)));
-                continue;
+
+    let client = get_db_client().await;
+    let mut session = client.start_session().await?;
+    session.start_transaction().await?;
+
+    let result: Result<Option<FluentArgs<'_>>, Error> = async {
+        // Mettre à jour les tables de loot si nécessaire
+        if let Some(channel_table) = &channel_loot_table_final {
+            if channel_table.entries.is_empty() {
+                channel_table.delete_with_session(&mut session).await?;
+            } else {
+                channel_table.save_or_update_with_session(&mut session).await?;
             }
-        };
+        }
+        if let Some(category_table) = &category_loot_table_final {
+            if category_table.entries.is_empty() {
+                category_table.delete_with_session(&mut session).await?;
+            } else {
+                category_table.save_or_update_with_session(&mut session).await?;
+            }
+        }
 
-        if let Some(item_data) = item_data {
-            let inventory_id = Inventory::add_item_to_inventory(
-                universe.universe_id,
-                character._id,
-                crate::database::inventory::HolderType::Character,
-                item_data._id,
-                quantity as u64
-            ).await;
-
-            let id_str = match inventory_id {
-                Ok(id) => id.to_hex(),
+        for (item_name, quantity) in item_counts {
+            let item_data_res = get_item_by_name(universe.universe_id, &item_name).await;
+            let item_data = match item_data_res {
+                Ok(Some(i)) => Some(i),
+                Ok(None) => None,
                 Err(e) => {
-                    eprintln!("Error adding item to inventory for character {}: {:?}", character._id, e);
-                    "N/A".to_string()
+                    eprintln!("Error fetching item '{}' for universe {}: {:?}", item_name, universe.universe_id, e);
+                    let mut err_args = FluentArgs::new();
+                    err_args.set("item_name", item_name);
+                    err_args.set("quantity", quantity);
+                    err_args.set("error", e.to_string());
+                    item_list.push(crate::translation::get(ctx, "loot_table__item_db_error", None, Some(&err_args)));
+                    continue;
                 }
             };
 
-            item_list.push(format!("- {}x {} (ID: `{}`)", quantity, item_name, id_str));
-        } else {
-            let mut line_args = FluentArgs::new();
-            line_args.set("item_name", item_name);
-            line_args.set("quantity", quantity);
-            item_list.push(crate::translation::get(ctx, "loot_table__item_not_found", None, Some(&line_args)));
+            if let Some(item_data) = item_data {
+                let inventory_id = Inventory::add_item_to_inventory_with_session(
+                    &mut session,
+                    universe.universe_id,
+                    character._id,
+                    HolderType::Character,
+                    item_data._id,
+                    quantity as u64
+                ).await;
+
+                let id_str = match inventory_id {
+                    Ok(id) => id.to_hex(),
+                    Err(e) => {
+                        eprintln!("Error adding item to inventory for character {}: {:?}", character._id, e);
+                        "N/A".to_string()
+                    }
+                };
+
+                item_list.push(format!("- {}x {} (ID: `{}`)", quantity, item_name, id_str));
+            } else {
+                let mut line_args = FluentArgs::new();
+                line_args.set("item_name", item_name);
+                line_args.set("quantity", quantity);
+                item_list.push(crate::translation::get(ctx, "loot_table__item_not_found", None, Some(&line_args)));
+            }
+        }
+
+        let mut args = FluentArgs::new();
+        args.set("items", format!("\n{}", item_list.join("\n")));
+        Ok(Some(args))
+    }.await;
+
+    match result {
+        Ok(args) => {
+            session.commit_transaction().await?;
+            Ok(args)
+        }
+        Err(e) => {
+            session.abort_transaction().await?;
+            Err(e)
         }
     }
-
-    let mut args = FluentArgs::new();
-    args.set("items", format!("\n{}", item_list.join("\n")));
-
-    Ok(Some(args))
 }
 
 impl LootTable {

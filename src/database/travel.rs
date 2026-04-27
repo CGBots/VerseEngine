@@ -62,12 +62,31 @@ impl TravelGroup {
             .await
     }
 
+    pub async fn insert_with_session(&self, session: &mut mongodb::ClientSession) -> mongodb::error::Result<InsertOneResult> {
+        let db_client = get_db_client().await;
+        let db = db_client.database(VERSEENGINE_DB_NAME);
+        db.collection::<TravelGroup>(TRAVELS_COLLECTION_NAME)
+            .insert_one(self)
+            .session(session)
+            .await
+    }
+
     pub async fn remove(&self) -> Result<DeleteResult, mongodb::error::Error> {
         let db_client = get_db_client().await;
         let db = db_client.database(VERSEENGINE_DB_NAME);
         let filter = doc! {"_id": self._id};
         db.collection::<TravelGroup>(TRAVELS_COLLECTION_NAME)
             .delete_one(filter)
+            .await
+    }
+
+    pub async fn remove_with_session(&self, session: &mut mongodb::ClientSession) -> Result<DeleteResult, mongodb::error::Error> {
+        let db_client = get_db_client().await;
+        let db = db_client.database(VERSEENGINE_DB_NAME);
+        let filter = doc! {"_id": self._id};
+        db.collection::<TravelGroup>(TRAVELS_COLLECTION_NAME)
+            .delete_one(filter)
+            .session(session)
             .await
     }
 
@@ -83,6 +102,22 @@ impl TravelGroup {
         db.collection::<TravelGroup>(TRAVELS_COLLECTION_NAME)
             .update_one(filter, update)
             .with_options(options)
+            .await
+    }
+
+    pub async fn upsert_with_session(&self, session: &mut mongodb::ClientSession) -> mongodb::error::Result<UpdateResult> {
+        let mut doc = to_document(self).unwrap();
+        doc.remove("_id");
+        let filter = doc! {"_id": self._id};
+        let update = doc! {"$set": doc};
+        let options = mongodb::options::UpdateOptions::builder().upsert(true).build();
+
+        let db_client = get_db_client().await;
+        let db = db_client.database(VERSEENGINE_DB_NAME);
+        db.collection::<TravelGroup>(TRAVELS_COLLECTION_NAME)
+            .update_one(filter, update)
+            .with_options(options)
+            .session(session)
             .await
     }
 

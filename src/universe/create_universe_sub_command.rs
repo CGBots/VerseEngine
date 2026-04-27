@@ -137,20 +137,30 @@ pub async fn _create_universe(
         creation_timestamp: now_ms
     };
 
-    match universe.insert_universe().await{
-        Ok(_) => {
-            if universe.setup_constraints().await.is_err() { return Err("create_universe__setup_constraints_failed".into()); }
+    let mut session = crate::database::db_client::get_db_client().await.start_session().await?;
+    session.start_transaction().await?;
 
-            let server = Server::default()
-                .universe_id(universe.universe_id)
-                .server_id(ctx.guild_id().unwrap().get()).clone();
+    let insert_universe_res = universe.insert_universe_with_session(&mut session).await;
+    if insert_universe_res.is_err() {
+        session.abort_transaction().await?;
+        return Err("create_universe__universe_insert_failed".into());
+    }
 
-            if server.insert_server().await.is_err(){ return Err("create_universe__server_insert_failed".into())}
-        }
-        Err(_) => { return Err("create_universe__universe_insert_failed".into()) }
-    };
+    if universe.setup_constraints().await.is_err() {
+        session.abort_transaction().await?;
+        return Err("create_universe__setup_constraints_failed".into());
+    }
 
-    let speed_stat = Stat{
+    let server = Server::default()
+        .universe_id(universe.universe_id)
+        .server_id(ctx.guild_id().unwrap().get()).clone();
+
+    if server.insert_server_with_session(&mut session).await.is_err() {
+        session.abort_transaction().await?;
+        return Err("create_universe__server_insert_failed".into());
+    }
+
+    let speed_stat = Stat {
         _id: Default::default(),
         universe_id: universe.universe_id,
         name: SPEED_STAT.to_string(),
@@ -161,10 +171,12 @@ pub async fn _create_universe(
         modifiers: vec![],
     };
 
-    let Ok(_) = speed_stat.insert_stat().await else {
-        let _ = universe.delete().await;
+    if speed_stat.insert_stat_with_session(&mut session).await.is_err() {
+        session.abort_transaction().await?;
         return Err("create_universe__speed_stat_insert_failed".into());
-    };
+    }
+
+    session.commit_transaction().await?;
 
     let Ok(_) = _setup(ctx, setup_type).await else { return Err("setup_server__failed".into()) };
 

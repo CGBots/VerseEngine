@@ -4,6 +4,18 @@ use crate::database::travel::SpaceType;
 use crate::database::places::get_place_by_category_id;
 use crate::database::road::get_road_by_channel_id;
 
+/// Valide que l'utilisateur se trouve dans le bon salon Discord par rapport à sa position RP.
+/// 
+/// Si le personnage est dans un lieu (Place), il doit être dans un salon appartenant à la catégorie du lieu.
+/// Si le personnage est sur une route (Road), il doit être dans le salon spécifique de la route.
+/// 
+/// # Arguments
+/// * `ctx` - Le contexte de la commande Poise.
+/// * `author_id` - L'identifiant Discord de l'auteur de la commande.
+/// 
+/// # Errors
+/// Retourne une erreur si le serveur, le personnage ou le lieu/route n'est pas trouvé,
+/// ou si le salon actuel ne correspond pas à la position du personnage.
 pub async fn validate_channel(ctx: &Context<'_>, author_id: u64) -> Result<(), Error> {
     let server = get_server_by_id(ctx.guild_id().unwrap().get()).await?
         .ok_or("travel__server_not_found")?;

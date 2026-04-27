@@ -75,20 +75,35 @@ async fn finalize_craft(mut craft: PlayerCraft, is_late: bool) -> Result<(), cra
     let character = crate::database::characters::get_character_by_user_id(craft.universe_id, craft.user_id).await?
         .ok_or("recipe__character_not_found")?;
 
-    // Production des items
-    for (qty, item_id) in &recipe.result {
-        let _ = Inventory::add_item_to_inventory(
-            craft.universe_id,
-            character._id,
-            HolderType::Character,
-            *item_id,
-            *qty
-        ).await;
+    let db_client = crate::database::db_client::get_db_client().await;
+    let mut session = db_client.start_session().await?;
+    session.start_transaction().await?;
+
+    let result: Result<(), crate::discord::poise_structs::Error> = async {
+        // Production des items
+        for (qty, item_id) in &recipe.result {
+            Inventory::add_item_to_inventory_with_session(
+                &mut session,
+                craft.universe_id,
+                character._id,
+                HolderType::Character,
+                *item_id,
+                *qty
+            ).await?;
+        }
+
+        // Marquer comme fini et supprimer de la DB
+        craft.is_finished = true;
+        craft.remove_with_session(&mut session).await?;
+        Ok(())
+    }.await;
+
+    if let Err(e) = result {
+        session.abort_transaction().await?;
+        return Err(e);
     }
 
-    // Marquer comme fini et supprimer de la DB
-    craft.is_finished = true;
-    let _ = craft.remove().await;
+    session.commit_transaction().await?;
 
     // Notifier l'utilisateur
     if let Some(http) = HTTP_CLIENT.lock().await.as_ref() {

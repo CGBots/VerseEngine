@@ -219,12 +219,22 @@ impl Server {
     ///
     /// Returns a MongoDB error if the insert operation fails.
     pub async fn insert_server(&self) -> mongodb::error::Result<InsertOneResult> {
+        self.insert_server_with_optional_session(None).await
+    }
+
+    pub async fn insert_server_with_session(&self, session: &mut mongodb::ClientSession) -> mongodb::error::Result<InsertOneResult> {
+        self.insert_server_with_optional_session(Some(session)).await
+    }
+
+    pub async fn insert_server_with_optional_session(&self, session: Option<&mut mongodb::ClientSession>) -> mongodb::error::Result<InsertOneResult> {
         let db_client = get_db_client().await;
-        db_client
+        let coll = db_client
             .database(VERSEENGINE_DB_NAME)
-            .collection::<Server>(SERVERS_COLLECTION_NAME)
-            .insert_one(self)
-            .await
+            .collection::<Server>(SERVERS_COLLECTION_NAME);
+        match session {
+            Some(s) => coll.insert_one(self).session(s).await,
+            None => coll.insert_one(self).await,
+        }
     }
 
     /// Updates this server configuration in the database.

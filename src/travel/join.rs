@@ -9,6 +9,20 @@ use crate::utility::reply::reply_with_args_and_ephemeral;
 use serenity::all as serenity;
 use fluent::FluentArgs;
 
+/// Permet à un joueur de rejoindre le groupe d'un autre joueur.
+/// 
+/// Les deux joueurs doivent se trouver au même endroit (Lieu) ou à proximité sur une même Route.
+/// Le seuil de proximité est calculé dynamiquement via `get_travel_threshold`.
+/// 
+/// # Arguments
+/// * `ctx` - Le contexte de la commande Poise.
+/// * `target` - L'utilisateur Discord dont on souhaite rejoindre le groupe.
+/// 
+/// # Errors
+/// Retourne une erreur si :
+/// - Le joueur tente de se rejoindre lui-même.
+/// - Les joueurs ne sont pas dans le même lieu ou sur la même route.
+/// - La distance entre les deux est supérieure au seuil autorisé.
 #[poise::command(slash_command, guild_only, rename = "travel_join")]
 pub async fn join(
     ctx: Context<'_>,
@@ -45,6 +59,10 @@ pub async fn join(
     }
 
     let threshold = get_travel_threshold(universe.global_time_modifier.into());
+
+    let db_client = crate::database::db_client::get_db_client().await;
+    let mut session = db_client.start_session().await?;
+    session.start_transaction().await?;
 
     if my_move.is_in_move || target_move.is_in_move {
         let road = get_road_by_channel_id(server.universe_id, my_move.actual_space_id).await?
@@ -84,8 +102,10 @@ pub async fn join(
         }
     }
 
-    my_move.remove().await?;
-    target_move.upsert().await?;
+    my_move.remove_with_session(&mut session).await?;
+    target_move.upsert_with_session(&mut session).await?;
+
+    session.commit_transaction().await?;
 
     if target_move.is_in_move {
         add_travel(ctx.serenity_context().http.clone(), server.server_id.into(), target_move.clone()).await?;

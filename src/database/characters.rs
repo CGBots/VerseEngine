@@ -22,28 +22,47 @@ pub struct Character {
 
 impl Character {
     pub async fn update(self) -> mongodb::error::Result<mongodb::results::UpdateResult> {
+        self.update_with_optional_session(None).await
+    }
+
+    pub async fn update_with_session(self, session: &mut mongodb::ClientSession) -> mongodb::error::Result<mongodb::results::UpdateResult> {
+        self.update_with_optional_session(Some(session)).await
+    }
+
+    pub async fn update_with_optional_session(self, session: Option<&mut mongodb::ClientSession>) -> mongodb::error::Result<mongodb::results::UpdateResult> {
         let db_client = get_db_client().await;
         let filter = doc! {"_id": self._id};
-        db_client
+        let coll = db_client
             .database(VERSEENGINE_DB_NAME)
-            .collection::<Character>(CHARACTERS_COLLECTION_NAME)
-            .replace_one(filter, self)
-            .await
+            .collection::<Character>(CHARACTERS_COLLECTION_NAME);
+        match session {
+            Some(s) => coll.replace_one(filter, self).session(s).await,
+            None => coll.replace_one(filter, self).await,
+        }
     }
 
     pub async fn upsert(self) -> mongodb::error::Result<mongodb::results::UpdateResult> {
+        self.upsert_with_optional_session(None).await
+    }
+
+    pub async fn upsert_with_session(self, session: &mut mongodb::ClientSession) -> mongodb::error::Result<mongodb::results::UpdateResult> {
+        self.upsert_with_optional_session(Some(session)).await
+    }
+
+    pub async fn upsert_with_optional_session(self, session: Option<&mut mongodb::ClientSession>) -> mongodb::error::Result<mongodb::results::UpdateResult> {
         let db_client = get_db_client().await;
         let filter = doc! {
             "user_id": self.user_id.to_string(),
             "universe_id": self.universe_id,
         };
         let options = mongodb::options::ReplaceOptions::builder().upsert(true).build();
-        db_client
+        let coll = db_client
             .database(VERSEENGINE_DB_NAME)
-            .collection::<Character>(CHARACTERS_COLLECTION_NAME)
-            .replace_one(filter, self)
-            .with_options(options)
-            .await
+            .collection::<Character>(CHARACTERS_COLLECTION_NAME);
+        match session {
+            Some(s) => coll.replace_one(filter, self).with_options(options).session(s).await,
+            None => coll.replace_one(filter, self).with_options(options).await,
+        }
     }
 
     pub async fn get_player_move(self) -> mongodb::error::Result<Option<TravelGroup>> {

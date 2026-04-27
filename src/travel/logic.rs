@@ -1,3 +1,14 @@
+/// # Moteur de Logique de Voyage
+/// 
+/// Ce module gère le déplacement asynchrone des personnages dans l'univers.
+/// Il utilise un système de file d'attente globale (`MOVES`) et une tâche de fond (`SLEEPER`)
+/// pour traiter les étapes de voyage de manière efficace sans bloquer le bot.
+///
+/// **Concepts clés :**
+/// - **Segmentation :** Les voyages sont découpés en "steps" (étapes) basées sur la vitesse actuelle.
+/// - **Dynamisme :** Si la vitesse d'un membre change (fin d'un buff), le voyage recalcule son temps d'arrivée.
+/// - **Multi-serveur :** Gère les invitations automatiques lors des changements de serveurs Discord.
+
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -16,10 +27,25 @@ use crate::database::stats::{get_stat_by_name, SPEED_STAT};
 use crate::tr_locale;
 use crate::translation::{get_by_locale};
 
+/// Liste globale des déplacements actifs, triée par temps de fin d'étape (`step_end_timestamp`).
+///
+/// Cette file est maintenue en permanence par le moteur de voyage. Lorsqu'un groupe de voyage est ajouté
+/// ou mis à jour, il est inséré de manière à conserver l'ordre chronologique.
+/// Le premier élément de cette liste est toujours celui qui doit expirer le plus tôt.
 pub static MOVES: Lazy<Arc<Mutex<Vec<TravelGroup>>>> = Lazy::new(|| Arc::new(Mutex::new(vec![])));
+
+/// Handle de la tâche asynchrone (Tokio) actuellement en attente du prochain événement de mouvement.
+///
+/// Le `SLEEPER` contient la tâche `move_process` qui dort pendant la durée nécessaire jusqu'à
+/// l'expiration du premier voyage dans `MOVES`.
+/// Si un nouveau voyage est ajouté en tête de file, la tâche précédente est annulée (aborted)
+/// et un nouveau `SLEEPER` est créé pour refléter le nouveau délai plus court.
 pub static SLEEPER: Lazy<Arc<Mutex<Option<JoinHandle<()>>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
+
+/// Client HTTP partagé pour les notifications de voyage hors contexte de commande.
 pub static HTTP_CLIENT: Lazy<Arc<Mutex<Option<Arc<Http>>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
 
+/// Récupère une URL d'invitation existante ou en crée une nouvelle pour un salon cible.
 async fn get_or_create_invite(http: &Arc<Http>, target_guild_id: u64, target_channel_id: ChannelId) -> String {
     let mut invite_url = None;
     let mut server_to_update = None;
@@ -60,6 +86,7 @@ async fn get_or_create_invite(http: &Arc<Http>, target_guild_id: u64, target_cha
     String::new()
 }
 
+/// Envoie une invitation de voyage par message privé à un utilisateur.
 async fn send_travel_invitation(http: &Arc<Http>, user: &serenity::all::User, user_display_name: &str, universe_id: mongodb::bson::oid::ObjectId, url: &str, target_guild_id: u64) {
     if url.is_empty() { return; }
 
@@ -91,6 +118,18 @@ async fn send_travel_invitation(http: &Arc<Http>, user: &serenity::all::User, us
     let _ = user.direct_message(http, CreateMessage::new().content(url).embed(embed)).await;
 }
 
+/// Déclenche une tâche Tokio qui attend la fin de la prochaine étape de voyage.
+///
+/// **Fonctionnement :**
+/// 1. Dort pendant `delay` secondes.
+/// 2. À son réveil, elle extrait le premier groupe de `MOVES`.
+/// 3. Appelle `next_step_logic` pour calculer l'état suivant du voyage.
+/// 4. Si le voyage continue, elle le réinsère dans la file à la bonne position.
+/// 5. Si le voyage est terminé (`is_end`), elle gère l'arrivée (messages, rôles Discord).
+/// 6. Enfin, elle relance récursivement un nouveau `move_process` pour le prochain élément de la file.
+///
+/// Cette fonction assure la continuité du mouvement sans boucle `while` bloquante,
+/// permettant une gestion efficace des milliers de groupes potentiels.
 fn move_process(delay: u64) -> JoinHandle<()> {
     tokio::spawn(async move {
         sleep(Duration::from_secs(delay)).await;
@@ -251,6 +290,7 @@ fn move_process(delay: u64) -> JoinHandle<()> {
 }
 
 
+/// Retire un utilisateur (et son groupe) de la liste des déplacements actifs.
 pub async fn remove_move(user_id: u64){
     let mut moves = MOVES.lock().await;
     let task_index = moves.iter().position(|a| a.members.contains(&user_id));
@@ -284,6 +324,14 @@ pub async fn remove_move(user_id: u64){
     }
 }
 
+/// Ajoute un nouveau groupe de voyage à la file d'attente globale et réinitialise le `SLEEPER` si nécessaire.
+///
+/// **Actions :**
+/// 1. Verrouille la file `MOVES`.
+/// 2. Utilise `partition_point` pour trouver l'index d'insertion correct afin de maintenir le tri chronologique.
+/// 3. Insère le groupe dans la file.
+/// 4. Si l'élément est inséré à l'index 0 (il devient le plus proche), annule l'ancienne tâche `SLEEPER`
+///    et démarre un nouveau `move_process` avec le délai calculé.
 pub async fn add_move(player_move: TravelGroup){
     let mut moves = MOVES.lock().await;
     // Récupération de la position où insérer l'étape de déplacement (trié par step_end_timestamp)
@@ -314,154 +362,184 @@ pub async fn add_move(player_move: TravelGroup){
 }
 
 
+/// Calcule l'état suivant d'un groupe de voyage après une étape de mouvement.
+/// 
+/// **Logique de calcul :**
+/// - Calcule la distance parcourue depuis la dernière étape : `(temps_écoulé * vitesse_précédente)`.
+/// - Met à jour `distance_traveled`.
+/// - Résout la vitesse actuelle du groupe (la plus petite vitesse parmi tous les membres).
+/// - Calcule le "temps de segment" jusqu'au prochain changement de vitesse prévu
+///   (ex: fin d'un bonus/malus de vitesse sur un des membres).
+/// - Détermine si la distance restante jusqu'à la destination sera parcourue avant la fin de ce segment.
+/// - Si oui, marque le voyage comme `is_end` et calcule le timestamp d'arrivée.
+/// - Si non, définit le prochain `step_end_timestamp` à la fin du segment actuel.
+///
+/// Cette segmentation permet de gérer dynamiquement les changements de vitesse en cours de route.
 pub async fn next_step_logic(actual_move: &TravelGroup) -> Result<TravelGroup, anyhow::Error> {
-    let mut new_move = actual_move.clone();
+    let db_client = crate::database::db_client::get_db_client().await;
+    let mut session = db_client.start_session().await?;
+    session.start_transaction().await?;
 
-    // Si le move est déjà marqué comme terminé, on applique la logique d'arrivée
-    if actual_move.is_end {
-        println!("[Arrival DB Update] Members: {:?}, DestRole: {:?}, RoadRole: {:?}", new_move.members, new_move.destination_role_id, new_move.road_role_id);
-        new_move.actual_space_id = new_move.destination_id.unwrap_or(new_move.actual_space_id);
-        new_move.actual_space_type = SpaceType::Place;
-        new_move.road_id = None;
-        new_move.road_role_id = None;
-        new_move.destination_id = None;
-        new_move.destination_role_id = None;
-        new_move.step_end_timestamp = None;
-        new_move.step_start_timestamp = None;
-        new_move.is_in_move = false;
-        new_move.is_end = false;
-        new_move.distance_traveled = 0.0; // Reset distance at arrival
-        
-        // Sauvegarde en base de données pour la persistance de l'arrivée
-        if let Err(e) = new_move.upsert().await {
-            eprintln!("Failed to update travel group {} in DB at arrival: {:?}", new_move._id, e);
-        }
-        
-        return Ok(new_move);
-    }
+    let result: Result<TravelGroup, anyhow::Error> = async {
+        let mut new_move = actual_move.clone();
 
-    // Récupère le stat speed
-    let stat_opt = get_stat_by_name(actual_move.universe_id, SPEED_STAT).await?;
-    let stat = stat_opt.ok_or_else(|| anyhow::anyhow!("Speed stat not found"))?;
+        // Si le move est déjà marqué comme terminé, on applique la logique d'arrivée
+        if actual_move.is_end {
+            println!("[Arrival DB Update] Members: {:?}, DestRole: {:?}, RoadRole: {:?}", new_move.members, new_move.destination_role_id, new_move.road_role_id);
+            new_move.actual_space_id = new_move.destination_id.unwrap_or(new_move.actual_space_id);
+            new_move.actual_space_type = SpaceType::Place;
+            new_move.road_id = None;
+            new_move.road_role_id = None;
+            new_move.destination_id = None;
+            new_move.destination_role_id = None;
+            new_move.step_end_timestamp = None;
+            new_move.step_start_timestamp = None;
+            new_move.is_in_move = false;
+            new_move.is_end = false;
+            new_move.distance_traveled = 0.0; // Reset distance at arrival
 
-    // Récupère timestamps du step précédent (sécurisé)
-    let end_timestamp = new_move.step_end_timestamp.ok_or_else(|| anyhow::anyhow!("step_end_timestamp missing"))?;
-    let start_timestamp = new_move.step_start_timestamp.ok_or_else(|| anyhow::anyhow!("step_start_timestamp missing"))?;
+            // Sauvegarde en base de données pour la persistance de l'arrivée
+            new_move.upsert_with_session(&mut session).await
+                .map_err(|e| anyhow::anyhow!("Failed to update travel group {} in DB at arrival: {:?}", new_move._id, e))?;
 
-    // vitesse utilisée pour le pas précédent (km/h)
-    let prev_speed_kmh = new_move.modified_speed;
-    if prev_speed_kmh < 0.0 {
-        bail!("previous modified speed is negative");
-    }
-
-    // travel_time en secondes (peut être 0)
-    let travel_time_secs = (end_timestamp as i128 - start_timestamp as i128) as f64;
-    let traveled_distance_km = (travel_time_secs / 3600.0) * prev_speed_kmh;
-    new_move.distance_traveled += traveled_distance_km;
-
-
-    // résolution du stat pour obtenir la vitesse actuelle et le modifier le plus court
-    let mut final_speed_kmh = f64::MAX;
-    let mut shortest_modifier_opt = None;
-
-    for &member_id in &new_move.members {
-        let (stat_speed_bson, mod_opt) =
-            stat.clone().resolve(actual_move.actual_space_id, member_id).await
-                .map_err(|e| anyhow::anyhow!("stat.resolve error for member {}: {:?}", member_id, e))?;
-
-        let speed = stat_speed_bson.as_f64();
-        if speed < final_speed_kmh {
-            final_speed_kmh = speed;
+            return Ok(new_move);
         }
 
-        // On cherche le modifier qui se termine le plus tôt parmi tous les membres
-        if let Some(m) = mod_opt {
-            if let Some(end_ts) = m.end_timestamp {
-                if let Some(current_shortest) = &shortest_modifier_opt {
-                    if let Some(current_end_ts) = (current_shortest as &crate::database::modifiers::Modifier).end_timestamp {
-                        if end_ts < current_end_ts {
+        // Récupère le stat speed
+        let stat_opt = get_stat_by_name(actual_move.universe_id, SPEED_STAT).await?;
+        let stat = stat_opt.ok_or_else(|| anyhow::anyhow!("Speed stat not found"))?;
+
+        // Récupère timestamps du step précédent (sécurisé)
+        let end_timestamp = new_move.step_end_timestamp.ok_or_else(|| anyhow::anyhow!("step_end_timestamp missing"))?;
+        let start_timestamp = new_move.step_start_timestamp.ok_or_else(|| anyhow::anyhow!("step_start_timestamp missing"))?;
+
+        // vitesse utilisée pour le pas précédent (km/h)
+        let prev_speed_kmh = new_move.modified_speed;
+        if prev_speed_kmh < 0.0 {
+            bail!("previous modified speed is negative");
+        }
+
+        // travel_time en secondes (peut être 0)
+        let travel_time_secs = (end_timestamp as i128 - start_timestamp as i128) as f64;
+        let traveled_distance_km = (travel_time_secs / 3600.0) * prev_speed_kmh;
+        new_move.distance_traveled += traveled_distance_km;
+
+
+        // résolution du stat pour obtenir la vitesse actuelle et le modifier le plus court
+        let mut final_speed_kmh = f64::MAX;
+        let mut shortest_modifier_opt = None;
+
+        for &member_id in &new_move.members {
+            let (stat_speed_bson, mod_opt) =
+                stat.clone().resolve(actual_move.actual_space_id, member_id).await
+                    .map_err(|e| anyhow::anyhow!("stat.resolve error for member {}: {:?}", member_id, e))?;
+
+            let speed = stat_speed_bson.as_f64();
+            if speed < final_speed_kmh {
+                final_speed_kmh = speed;
+            }
+
+            // On cherche le modifier qui se termine le plus tôt parmi tous les membres
+            if let Some(m) = mod_opt {
+                if let Some(end_ts) = m.end_timestamp {
+                    if let Some(current_shortest) = &shortest_modifier_opt {
+                        if let Some(current_end_ts) = (current_shortest as &crate::database::modifiers::Modifier).end_timestamp {
+                            if end_ts < current_end_ts {
+                                shortest_modifier_opt = Some(m);
+                            }
+                        } else {
                             shortest_modifier_opt = Some(m);
                         }
                     } else {
                         shortest_modifier_opt = Some(m);
                     }
-                } else {
-                    shortest_modifier_opt = Some(m);
                 }
             }
         }
-    }
 
-    if final_speed_kmh == f64::MAX {
-        bail!("No members in travel group or speed could not be determined");
-    }
+        if final_speed_kmh == f64::MAX {
+            bail!("No members in travel group or speed could not be determined");
+        }
 
-    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
-    // récupère road
-    let road_opt = get_road_by_channel_id(actual_move.universe_id, actual_move.road_id.ok_or_else(|| anyhow::anyhow!("road_id missing"))?).await?;
-    let road = road_opt.ok_or_else(|| anyhow::anyhow!("road not found"))?;
+        // récupère road
+        let road_opt = get_road_by_channel_id(actual_move.universe_id, actual_move.road_id.ok_or_else(|| anyhow::anyhow!("road_id missing"))?).await?;
+        let road = road_opt.ok_or_else(|| anyhow::anyhow!("road not found"))?;
 
-    if final_speed_kmh <= 0.0 {
-        bail!("final_speed must be > 0");
-    }
+        if final_speed_kmh <= 0.0 {
+            bail!("final_speed must be > 0");
+        }
 
-    // remaining distance en km
-    let road_distance_km = road.distance as f64;
-    let remaining_distance_km = (road_distance_km - new_move.distance_traveled).max(0.0);
+        // remaining distance en km
+        let road_distance_km = road.distance as f64;
+        let remaining_distance_km = (road_distance_km - new_move.distance_traveled).max(0.0);
 
-    // si on est déjà arrivé
-    if remaining_distance_km <= std::f64::EPSILON {
-        new_move.is_end = true;
-        new_move.step_start_timestamp = None;
-        new_move.step_end_timestamp = None;
-        return Ok(new_move);
-    }
+        // si on est déjà arrivé
+        if remaining_distance_km <= std::f64::EPSILON {
+            new_move.is_end = true;
+            new_move.step_start_timestamp = None;
+            new_move.step_end_timestamp = None;
+            return Ok(new_move);
+        }
 
-    // temps total nécessaire pour finir (secondes)
-    // remaining_distance_km / final_speed_kmh => heures ; *3600 => secondes
-    let time_needed_secs_f = (remaining_distance_km / final_speed_kmh) * 3600.0;
-    let full_time_needed_secs = time_needed_secs_f.ceil() as u64;
+        // temps total nécessaire pour finir (secondes)
+        // remaining_distance_km / final_speed_kmh => heures ; *3600 => secondes
+        let time_needed_secs_f = (remaining_distance_km / final_speed_kmh) * 3600.0;
+        let full_time_needed_secs = time_needed_secs_f.ceil() as u64;
 
-    println!("[Travel Debug] Group: {}, Speed: {:.2} km/h, Remaining Time: {}s (Dist: {:.2}km)", 
-             new_move._id, final_speed_kmh, full_time_needed_secs, remaining_distance_km);
+        println!("[Travel Debug] Group: {}, Speed: {:.2} km/h, Remaining Time: {}s (Dist: {:.2}km)",
+                 new_move._id, final_speed_kmh, full_time_needed_secs, remaining_distance_km);
 
-    // clamp par le shortest_modifier s'il existe (modifier.end_timestamp est un timestamp absolu)
-    let mut time_to_wait_secs = full_time_needed_secs;
+        // clamp par le shortest_modifier s'il existe (modifier.end_timestamp est un timestamp absolu)
+        let mut time_to_wait_secs = full_time_needed_secs;
 
-    if let Some(shortest_modifier) = shortest_modifier_opt {
-        if let Some(mod_end_ts) = shortest_modifier.end_timestamp {
-            // si le modifier se termine avant now -> il est expiré, pas d'effet
-            if mod_end_ts > now {
-                let remaining_modifier_secs = mod_end_ts - now;
-                if remaining_modifier_secs < time_to_wait_secs {
-                    time_to_wait_secs = remaining_modifier_secs;
+        if let Some(shortest_modifier) = shortest_modifier_opt {
+            if let Some(mod_end_ts) = shortest_modifier.end_timestamp {
+                // si le modifier se termine avant now -> il est expiré, pas d'effet
+                if mod_end_ts > now {
+                    let remaining_modifier_secs = mod_end_ts - now;
+                    if remaining_modifier_secs < time_to_wait_secs {
+                        time_to_wait_secs = remaining_modifier_secs;
+                    }
                 }
             }
         }
+
+        // si time_to_wait >= full_time_needed => on arrivera au bout de la route
+        if time_to_wait_secs >= full_time_needed_secs {
+            new_move.is_end = true;
+        } else {
+            new_move.is_end = false;
+        }
+
+        // met à jour timestamps et speed
+        new_move.step_start_timestamp = Some(now);
+        new_move.step_end_timestamp = Some(now + time_to_wait_secs);
+        new_move.modified_speed = final_speed_kmh;
+
+        // Sauvegarde en base de données pour la persistance
+        new_move.upsert_with_session(&mut session).await
+            .map_err(|e| anyhow::anyhow!("Failed to update travel group {} in DB: {:?}", new_move._id, e))?;
+
+        Ok(new_move)
+    }.await;
+
+    match result {
+        Ok(val) => {
+            session.commit_transaction().await?;
+            Ok(val)
+        }
+        Err(e) => {
+            session.abort_transaction().await?;
+            Err(e)
+        }
     }
-
-    // si time_to_wait >= full_time_needed => on arrivera au bout de la route
-    if time_to_wait_secs >= full_time_needed_secs {
-        new_move.is_end = true;
-    } else {
-        new_move.is_end = false;
-    }
-
-    // met à jour timestamps et speed
-    new_move.step_start_timestamp = Some(now);
-    new_move.step_end_timestamp = Some(now + time_to_wait_secs);
-    new_move.modified_speed = final_speed_kmh;
-
-    // Sauvegarde en base de données pour la persistance
-    if let Err(e) = new_move.upsert().await {
-        eprintln!("Failed to update travel group {} in DB: {:?}", new_move._id, e);
-    }
-
-    Ok(new_move)
 }
 
-//Method to recover moves from database
+/// Initialise le système de voyage au démarrage du bot.
+/// 
+/// Recharge tous les voyages actifs depuis la base de données et relance les processus.
 #[allow(dead_code)]
 pub async fn setup(){
     let universes = match crate::database::universe::Universe::get_all_universes().await {
@@ -619,6 +697,7 @@ pub async fn setup(){
     }
 }
 
+/// Ajoute ou retire un rôle Discord à un utilisateur.
 pub async fn manage_roles(http: Arc<Http>, guild_id: u64, user_id: u64, role_to_add: Option<u64>, role_to_remove: Option<u64>) {
     let guild_id_obj = GuildId::new(guild_id);
     let user_id_obj = UserId::new(user_id);
@@ -670,46 +749,78 @@ pub async fn manage_roles(http: Arc<Http>, guild_id: u64, user_id: u64, role_to_
     }
 }
 
+/// Enregistre un nouveau voyage pour un groupe de joueurs et initialise le mouvement.
+/// 
+/// **Étapes clés :**
+/// 1. **Validation :** Vérifie qu'aucun membre n'est en train de crafter.
+/// 2. **Initialisation :** Définit les flags `is_in_move`, `is_end`, et les timestamps de départ.
+/// 3. **Gestion des Rôles :** Retire le rôle du lieu de départ pour tous les membres.
+/// 4. **Multi-serveur :** Si la route se trouve sur un autre serveur Discord :
+///    - Identifie le salon cible.
+///    - Crée ou récupère une invitation permanente.
+///    - Envoie l'invitation en DM à chaque membre du groupe.
+/// 5. **Mise en file :** Appelle `add_move` pour insérer le voyage dans le moteur asynchrone.
 pub async fn add_travel(http: Arc<Http>, guild_id: u64, mut player_move: TravelGroup) -> Result<(), anyhow::Error> {
-    // Vérifier si un craft est en cours pour l'un des membres
-    for &user_id in &player_move.members {
-        if let Ok(Some(_)) = crate::database::craft::PlayerCraft::get_by_user_id(player_move.universe_id, user_id).await {
-            bail!("travel__cannot_move_while_crafting");
-        }
-    }
+    let db_client = crate::database::db_client::get_db_client().await;
+    let mut session = db_client.start_session().await?;
+    session.start_transaction().await?;
 
-    // Initialise les flags de base
-    player_move.is_in_move = true;
-    player_move.is_end = false;
-    
-    // On s'assure que l'ID est valide
-    if player_move._id.to_hex() == "000000000000000000000000" {
-        player_move._id = mongodb::bson::oid::ObjectId::new();
-    }
-    
-    // On initialise les timestamps pour le calcul initial (step fictif fini à 'now')
-    // seulement si ce n'est pas déjà un voyage en cours (ex: demi-tour)
-    let now = Utc::now().timestamp() as u64;
-    if player_move.step_start_timestamp.is_none() || player_move.distance_traveled == 0.0 {
-        player_move.step_start_timestamp = Some(now);
-        player_move.step_end_timestamp = Some(now);
-        player_move.modified_speed = 0.0;
-    }
-    
-    // Déterminer le serveur cible au cas où la route commence sur un autre serveur
-    let mut start_guild_id = guild_id;
-    if let Some(road_id) = player_move.road_id {
-        if let Ok(Some(road)) = crate::database::road::get_road_by_channel_id(player_move.universe_id, road_id).await {
-             start_guild_id = road.server_id;
+    let result: Result<TravelGroup, anyhow::Error> = async {
+        // Vérifier si un craft est en cours pour l'un des membres
+        for &user_id in &player_move.members {
+            if let Ok(Some(_)) = crate::database::craft::PlayerCraft::get_by_user_id(player_move.universe_id, user_id).await {
+                return Err(anyhow::anyhow!("travel__cannot_move_while_crafting"));
+            }
         }
-    }
 
-    // On upsert en base pour que l'appel à upsert() dans next_step_logic fonctionne
-    player_move.server_id = start_guild_id;
-    if player_move.road_server_id.is_none() {
-        player_move.road_server_id = Some(start_guild_id);
-    }
-    player_move.upsert().await?;
+        // Initialise les flags de base
+        player_move.is_in_move = true;
+        player_move.is_end = false;
+
+        // On s'assure que l'ID est valide
+        if player_move._id.to_hex() == "000000000000000000000000" {
+            player_move._id = mongodb::bson::oid::ObjectId::new();
+        }
+
+        // On initialise les timestamps pour le calcul initial (step fictif fini à 'now')
+        // seulement si ce n'est pas déjà un voyage en cours (ex: demi-tour)
+        let now = Utc::now().timestamp() as u64;
+        if player_move.step_start_timestamp.is_none() || player_move.distance_traveled == 0.0 {
+            player_move.step_start_timestamp = Some(now);
+            player_move.step_end_timestamp = Some(now);
+            player_move.modified_speed = 0.0;
+        }
+
+        // Déterminer le serveur cible au cas où la route commence sur un autre serveur
+        let mut start_guild_id = guild_id;
+        if let Some(road_id) = player_move.road_id {
+            if let Ok(Some(road)) = crate::database::road::get_road_by_channel_id(player_move.universe_id, road_id).await {
+                 start_guild_id = road.server_id;
+            }
+        }
+
+        // On upsert en base pour que l'appel à upsert() dans next_step_logic fonctionne
+        player_move.server_id = start_guild_id;
+        if player_move.road_server_id.is_none() {
+            player_move.road_server_id = Some(start_guild_id);
+        }
+        player_move.upsert_with_session(&mut session).await?;
+
+        Ok(player_move)
+    }.await;
+
+    let player_move = match result {
+        Ok(pm) => {
+            session.commit_transaction().await?;
+            pm
+        }
+        Err(e) => {
+            session.abort_transaction().await?;
+            return Err(e);
+        }
+    };
+
+    let start_guild_id = player_move.server_id;
 
     // Gestion des rôles au début du voyage pour tous les membres
     for &user_id in &player_move.members {
@@ -904,15 +1015,18 @@ pub async fn add_travel(http: Arc<Http>, guild_id: u64, mut player_move: TravelG
     Ok(())
 }
 
+/// Retire un voyage de la file active pour un utilisateur donné.
 #[allow(dead_code)]
 pub async fn remove_travel(user_id: u64) {
     remove_move(user_id).await;
 }
 
+/// Calcule le seuil de proximité autorisé pour rejoindre ou estimer, basé sur le modificateur de temps.
 pub fn get_travel_threshold(modifier: u64) -> f64 {
     100.0 + (modifier as f64 / 10.0)
 }
 
+/// Calcule la distance parcourue réelle (en km) d'un groupe à l'instant T.
 pub fn calculate_current_distance(player_move: &TravelGroup) -> f64 {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     let start_ts = player_move.step_start_timestamp.unwrap_or(now);
@@ -927,27 +1041,46 @@ pub fn calculate_current_distance(player_move: &TravelGroup) -> f64 {
     player_move.distance_traveled + step_distance
 }
 
+/// Arrête immédiatement le voyage d'un groupe et met à jour sa position finale.
 pub async fn stop_travel(user_id: u64) -> Result<TravelGroup, anyhow::Error> {
-    let moves_lock = MOVES.lock().await;
-    let index = moves_lock.iter().position(|m| m.members.contains(&user_id));
-    
-    let mut player_move = if let Some(idx) = index {
-        moves_lock[idx].clone()
-    } else {
-        bail!("No active move found for user {}", user_id);
+    let db_client = crate::database::db_client::get_db_client().await;
+    let mut session = db_client.start_session().await?;
+    session.start_transaction().await?;
+
+    let result: Result<TravelGroup, anyhow::Error> = async {
+        let moves_lock = MOVES.lock().await;
+        let index = moves_lock.iter().position(|m| m.members.contains(&user_id));
+
+        let mut player_move = if let Some(idx) = index {
+            moves_lock[idx].clone()
+        } else {
+            return Err(anyhow::anyhow!("No active move found for user {}", user_id));
+        };
+
+        // Calculer la distance actuelle avant de l'arrêter
+        player_move.distance_traveled = calculate_current_distance(&player_move);
+        player_move.is_in_move = false;
+        player_move.step_start_timestamp = None;
+        player_move.step_end_timestamp = None;
+
+        // Sauvegarder en DB
+        player_move.upsert_with_session(&mut session).await
+            .map_err(|e| anyhow::anyhow!("DB error: {:?}", e))?;
+
+        Ok(player_move)
+    }.await;
+
+    let player_move = match result {
+        Ok(pm) => {
+            session.commit_transaction().await?;
+            pm
+        }
+        Err(e) => {
+            session.abort_transaction().await?;
+            return Err(e);
+        }
     };
 
-    // Calculer la distance actuelle avant de l'arrêter
-    player_move.distance_traveled = calculate_current_distance(&player_move);
-    player_move.is_in_move = false;
-    player_move.step_start_timestamp = None;
-    player_move.step_end_timestamp = None;
-    
-    // Sauvegarder en DB
-    player_move.upsert().await.map_err(|e| anyhow::anyhow!("DB error: {:?}", e))?;
-    
-    // Relâcher le lock avant d'appeler remove_move pour éviter les deadlocks
-    drop(moves_lock);
     remove_move(user_id).await;
 
     // Envoi du message d'interruption dans le salon de la route pour chaque membre
@@ -978,6 +1111,6 @@ pub async fn stop_travel(user_id: u64) -> Result<TravelGroup, anyhow::Error> {
             });
         }
     }
-    
+
     Ok(player_move)
 }

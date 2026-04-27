@@ -82,12 +82,16 @@ pub async fn delete(
         }
     }
 
-    // 3. Supprimer de l'inventaire et de la base de données (Processus critique)
-    let delete_item_res = Item::delete(universe_id, &name).await;
-    let remove_inv_res = Inventory::remove_all_by_item_id(universe_id, item_id).await;
-    let remove_loot_res = LootTable::remove_item_from_all_tables(universe_id, &name).await;
+    // 3. Supprimer de l'inventaire et de la base de données (Processus critique sécurisé par transaction)
+    let mut session = crate::database::db_client::get_db_client().await.start_session().await?;
+    session.start_transaction().await?;
+
+    let delete_item_res = Item::delete_with_session(universe_id, &name, &mut session).await;
+    let remove_inv_res = Inventory::remove_all_by_item_id_with_session(&mut session, universe_id, item_id).await;
+    let remove_loot_res = LootTable::remove_item_from_all_tables_with_session(universe_id, &name, &mut session).await;
 
     if delete_item_res.is_err() || remove_inv_res.is_err() || remove_loot_res.is_err() {
+        session.abort_transaction().await?;
         // Notification dans les salons de log des serveurs de l'univers en cas d'échec critique
         let error_msg = format!("CRITICAL ERROR during item deletion: item='{}', universe='{}' (ID: {}). Database state may be inconsistent.", name, universe_name, universe_id);
         log::error!("{}", error_msg);
@@ -111,6 +115,8 @@ pub async fn delete(
 
         return Err("item_delete__critical_error".into());
     }
+
+    session.commit_transaction().await?;
 
     // 4. Si le processus a réussi, envoyer les messages et supprimer le wiki
     if !characters.is_empty() {

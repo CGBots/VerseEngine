@@ -9,6 +9,20 @@ use crate::utility::reply::reply_with_args_and_ephemeral;
 use serenity::all as serenity;
 use fluent::FluentArgs;
 
+/// Estime la distance et le temps de trajet RP pour rejoindre un autre joueur.
+/// 
+/// L'estimation est possible si la cible est sur la même route/lieu et à moins de 2 fois le seuil de ralliement.
+/// Le temps indiqué est le temps "In-Game" (RP).
+/// 
+/// # Arguments
+/// * `ctx` - Le contexte de la commande Poise.
+/// * `target` - L'utilisateur Discord cible.
+/// 
+/// # Errors
+/// Retourne une erreur si :
+/// - Le joueur tente de s'estimer lui-même.
+/// - La cible est trop loin (au-delà de 2 * threshold).
+/// - Les joueurs ne sont pas sur le même tronçon.
 #[poise::command(slash_command, guild_only, rename = "travel_estimate")]
 pub async fn estimate(
     ctx: Context<'_>,

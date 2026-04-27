@@ -5,6 +5,7 @@ use crate::travel::start::start;
 use crate::travel::stop::stop;
 use crate::travel::estimate::estimate;
 
+/// Commande principale pour la gestion des déplacements et des groupes de voyage.
 #[poise::command(
     slash_command, 
     guild_only, 
