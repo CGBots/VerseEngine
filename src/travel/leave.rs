@@ -3,7 +3,6 @@ use crate::database::server::get_server_by_id;
 use crate::database::characters::get_character_by_user_id;
 use crate::travel::logic::{calculate_current_distance, stop_travel, add_travel};
 use crate::travel::utils::validate_channel;
-use crate::utility::reply::reply_with_args_and_ephemeral;
 use fluent::FluentArgs;
 
 /// Permet à un joueur de quitter son groupe actuel.
@@ -79,7 +78,8 @@ pub async fn leave(ctx: Context<'_>) -> Result<(), Error> {
     args.set("user", char_quitting);
     args.set("leader", char_leader);
 
-    reply_with_args_and_ephemeral(ctx, Ok("travel__public_left"), Some(args), false).await?;
+    let content = crate::translation::get(ctx, "travel__public_left", None, Some(&args));
+    ctx.channel_id().say(&ctx.serenity_context().http, content).await?;
     
     Ok(())
 }

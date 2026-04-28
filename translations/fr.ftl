@@ -428,9 +428,45 @@ setup__error_during_role_creation = Erreur lors de la création des rôles
     .message = Une erreur s'est produite lors de la création des rôles
             Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 setup__reorder_went_wrong = Erreur lors du réordonnancement
-    .title = Erreur de réordonnancement
-    .message = Une erreur s'est produite lors du réordonnancement des rôles
+    .title = Erreur
+    .message = Le réordonnancement des salons ou rôles a échoué.
             Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
+
+create_universe__check_universe_limit_failed = Échec de la vérification de la limite
+    .title = Erreur
+    .message = Impossible de vérifier votre limite d'univers.
+
+create_universe__universe_limit_reached = Limite d'univers atteinte
+    .title = Limite atteinte
+    .message = Vous avez atteint le nombre maximum d'univers autorisés pour votre compte.
+
+create_universe__get_server_failed = Échec de récupération du serveur
+    .title = Erreur
+    .message = Impossible de récupérer les informations du serveur Discord.
+
+create_universe__already_exist_for_this_server = Univers déjà existant
+    .title = Erreur
+    .message = Un univers est déjà associé à ce serveur Discord.
+
+create_universe__universe_insert_failed = Échec de création de l'univers
+    .title = Erreur
+    .message = L'enregistrement de l'univers en base de données a échoué.
+
+create_universe__setup_constraints_failed = Échec de configuration des contraintes
+    .title = Erreur
+    .message = La configuration des contraintes d'unicité pour l'univers a échoué.
+
+create_universe__server_insert_failed = Échec d'enregistrement du serveur
+    .title = Erreur
+    .message = L'association du serveur à l'univers a échoué.
+
+create_universe__speed_stat_insert_failed = Échec d'initialisation des statistiques
+    .title = Erreur
+    .message = L'initialisation de la statistique de vitesse a échoué.
+
+create_universe__universe_successfully_created = Univers créé avec succès
+    .title = Succès
+    .message = Votre univers a été créé et configuré avec succès !
 road_channel_name = Routes
 setup__road_category_not_created = Catégorie Routes non créée
     .title = Erreur de création
@@ -565,6 +601,9 @@ CharacterModal = character_modal
     .character_story = Histoire du personnage
     .value = Il était une fois...
     .character_special_request = Requêtes spéciales
+create_character__modal_opened = Formulaire ouvert
+    .title = Création de personnage
+    .message = Le formulaire de création de personnage a été ouvert.
 create_character__submitted = Personnage envoyé
     .title = Personnage envoyé
     .message = Votre fiche de personnage a été envoyée pour vérification. Veuillez attendre la décision d'un modérateur.
@@ -620,6 +659,10 @@ create_character__choose_place = Choisir un lieu
     .title = Choisir un lieu
     .message = Veuillez sélectionner la catégorie où le personnage sera situé.
 character_stat_input = Statistiques du personnage
+accept_character__nickname_error = Erreur de changement de pseudo
+    .title = Erreur de pseudo
+    .message = Le bot n'a pas pu modifier votre pseudo. Cela arrive souvent pour les administrateurs. Un modérateur devra le faire manuellement.
+accept_character__nickname_skipped_log = ⚠️ Le pseudo de {$user} ({$character}) n'a pas pu être modifié automatiquement (probablement un administrateur).
 accept_character__no_player_role_id = Serveur non setup
     .title = Serveur non setup
     .message = Le role {player_role_name} n'as pas été trouvé.
@@ -635,6 +678,9 @@ travel__server_not_found = Serveur introuvable
 travel__place_not_found = Lieu introuvable
     .title = Lieu introuvable
     .message = Le lieu de destination spécifié n'existe pas dans cet univers.
+travel__road_not_found = Route introuvable
+    .title = Route introuvable
+    .message = Vous ne vous trouvez pas sur une route valide.
 travel__character_not_found = Personnage introuvable
     .title = Personnage introuvable
     .message = Vous n'avez pas de personnage dans cet univers.
@@ -652,11 +698,13 @@ travel__source_place_not_found = Lieu d'origine introuvable
     .message = Votre position actuelle n'est pas reconnue comme un lieu valide.
 travel__started = Voyage commencé
     .title = Voyage commencé
-    .message = Vous avez commencé votre voyage vers {$destination}.
+    .message = Votre groupe s'est mis en route.
 travel__stopped = Voyage arrêté
     .title = Voyage arrêté
     .message = Votre voyage a été arrêté. Vous pouvez maintenant choisir une destination ou rester ici.
-travel__interrupted = `{$user} interrompt son voyage.`
+travel__interrupted = Voyage interrompu
+    .title = Voyage interrompu
+    .message = Vous avez arrêté votre voyage.
 travel__not_in_move = Pas de voyage en cours
     .title = Pas de voyage en cours
     .message = Vous n'êtes pas en train de voyager.
@@ -670,9 +718,12 @@ move_from_place__road_not_found = Aucune route trouvée
     .title = Aucune route trouvée
     .message = Il n'y a pas de route directe entre votre position actuelle et {$destination}.
 
+travel__rejoining_route = `{$user} se dirige vers {$destination}.`
 travel__moving_to_place = `{$user} se déplace vers {$destination}.`
-travel__reached_destination = `{$user} est arrivé à {$destination}.`
+travel__reached_destination = `{$user} arrive à {$destination}.`
 travel__arrived_at_destination = `{$user} vient d'arriver.`
+travel__interrupted_towards = `{$user} interrompt son trajet.`
+travel__moving_to_place_from_start = `{$user} prend la route vers {$destination}.`
 travel__taking_unknown_road = `{$user} emprunte une route inconnue.`
 travel__invitation = Frontière atteinte
     .title = Frontière atteinte

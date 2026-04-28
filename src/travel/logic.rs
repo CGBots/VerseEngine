@@ -197,6 +197,13 @@ fn move_process(delay: u64) -> JoinHandle<()> {
                                             let _ = ChannelId::new(rid).send_message(&http_arc, CreateMessage::new().content(msg)).await;
                                         }
 
+                    let mut source_name = String::new();
+                                        if let Some(source_id) = current_move.source_id {
+                                            if let Ok(Some(place)) = crate::database::places::get_place_by_category_id(universe_id, source_id).await {
+                                                source_name = place.name;
+                                            }
+                                        }
+
                                         // Message dans le salon de destination
                                         if let Some(did) = dest_id {
                                             let target_guild_id = destination_server_id.unwrap_or(guild_id);
@@ -210,7 +217,7 @@ fn move_process(delay: u64) -> JoinHandle<()> {
                                                     .or_else(|| channels.iter().find(|c| c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage));
 
                                                 if let Some(target_channel) = target_channel {
-                                                    let msg = tr_locale!("fr", "travel__arrived_at_destination", user: user_display_name.as_str());
+                                                    let msg = tr_locale!("fr", "travel__arrived_at_destination", user: user_display_name.as_str(), source: source_name.as_str());
                                                     let _ = target_channel.id.send_message(&http_arc, CreateMessage::new().content(msg)).await;
                                                 }
                                             }
@@ -388,10 +395,6 @@ pub async fn next_step_logic(actual_move: &TravelGroup) -> Result<TravelGroup, a
             println!("[Arrival DB Update] Members: {:?}, DestRole: {:?}, RoadRole: {:?}", new_move.members, new_move.destination_role_id, new_move.road_role_id);
             new_move.actual_space_id = new_move.destination_id.unwrap_or(new_move.actual_space_id);
             new_move.actual_space_type = SpaceType::Place;
-            new_move.road_id = None;
-            new_move.road_role_id = None;
-            new_move.destination_id = None;
-            new_move.destination_role_id = None;
             new_move.step_end_timestamp = None;
             new_move.step_start_timestamp = None;
             new_move.is_in_move = false;
@@ -401,6 +404,13 @@ pub async fn next_step_logic(actual_move: &TravelGroup) -> Result<TravelGroup, a
             // Sauvegarde en base de données pour la persistance de l'arrivée
             new_move.upsert_with_session(&mut session).await
                 .map_err(|e| anyhow::anyhow!("Failed to update travel group {} in DB at arrival: {:?}", new_move._id, e))?;
+
+            // Nettoyage des informations de trajet APRES l'upsert pour que move_process puisse encore les lire
+            // mais l'objet retourné sera propre pour les prochaines étapes si besoin.
+            new_move.road_id = None;
+            new_move.road_role_id = None;
+            new_move.destination_id = None;
+            new_move.destination_role_id = None;
 
             return Ok(new_move);
         }
@@ -643,22 +653,29 @@ pub async fn setup(){
                                             let _ = ChannelId::new(rid).send_message(&http_arc, CreateMessage::new().content(msg)).await;
                                         }
 
-                                        // Message dans le salon de destination
-                                        if let Some(did) = dest_id {
-                                            let target_guild_id = destination_server_id.unwrap_or(guild_id);
-
-                                            if let Ok(mut channels) = http_arc.get_channels(GuildId::new(target_guild_id)).await {
-                                                channels.sort_by_key(|c| c.position);
-                                                
-                                                let target_channel = channels.iter().find(|c| c.parent_id == Some(ChannelId::new(did)) && (c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage))
-                                                    .or_else(|| channels.iter().find(|c| c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage));
-
-                                                if let Some(target_channel) = target_channel {
-                                                    let msg = tr_locale!("fr", "travel__arrived_at_destination", user: user_display_name.as_str());
-                                                    let _ = target_channel.id.send_message(&http_arc, CreateMessage::new().content(msg)).await;
+                                            let mut source_name = String::new();
+                                            if let Some(source_id) = m.source_id {
+                                                if let Ok(Some(place)) = crate::database::places::get_place_by_category_id(universe_id, source_id).await {
+                                                    source_name = place.name;
                                                 }
                                             }
-                                        }
+
+                                            // Message dans le salon de destination
+                                            if let Some(did) = dest_id {
+                                                let target_guild_id = destination_server_id.unwrap_or(guild_id);
+
+                                                if let Ok(mut channels) = http_arc.get_channels(GuildId::new(target_guild_id)).await {
+                                                    channels.sort_by_key(|c| c.position);
+                                                    
+                                                    let target_channel = channels.iter().find(|c| c.parent_id == Some(ChannelId::new(did)) && (c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage))
+                                                        .or_else(|| channels.iter().find(|c| c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage));
+
+                                                    if let Some(target_channel) = target_channel {
+                                                        let msg = tr_locale!("fr", "travel__arrived_at_destination", user: user_display_name.as_str(), source: source_name.as_str());
+                                                        let _ = target_channel.id.send_message(&http_arc, CreateMessage::new().content(msg)).await;
+                                                    }
+                                                }
+                                            }
                                     }
                                     // Gestion des rôles pour chaque membre
                                     manage_roles(http_arc.clone(), destination_server_id.unwrap_or(guild_id), user_id, dest_role, None).await;
@@ -761,6 +778,7 @@ pub async fn manage_roles(http: Arc<Http>, guild_id: u64, user_id: u64, role_to_
 ///    - Envoie l'invitation en DM à chaque membre du groupe.
 /// 5. **Mise en file :** Appelle `add_move` pour insérer le voyage dans le moteur asynchrone.
 pub async fn add_travel(http: Arc<Http>, guild_id: u64, mut player_move: TravelGroup) -> Result<(), anyhow::Error> {
+    let is_starting_from_place = player_move.actual_space_type == crate::database::travel::SpaceType::Place;
     let db_client = crate::database::db_client::get_db_client().await;
     let mut session = db_client.start_session().await?;
     session.start_transaction().await?;
@@ -952,63 +970,76 @@ pub async fn add_travel(http: Arc<Http>, guild_id: u64, mut player_move: TravelG
     // Calcule la première étape réelle (avec la vraie vitesse et le premier modifier)
     let first_step = next_step_logic(&player_move).await?;
 
-    // Envoi du message de début de voyage dans le salon de la route
-    if let Some(road_id) = first_step.road_id {
-        let http_clone = http.clone();
-        let universe_id = first_step.universe_id;
-        let dest_id = first_step.destination_id;
-        let first_step_members = first_step.members.clone();
-                
-        tokio::spawn(async move {
-            for &user_id in &first_step_members {
-                if let Ok(user) = http_clone.get_user(UserId::new(user_id)).await {
-                    let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
-                        char.name
-                    } else {
-                        let member_nick = http_clone.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
-                        member_nick.unwrap_or(user.name.clone())
-                    };
-                    let user_display_name = character_name;
+        // Envoi du message de début de voyage ou reprise de route
+        if let Some(_road_id) = first_step.road_id {
+            let is_starting_from_road = player_move.actual_space_type == crate::database::travel::SpaceType::Road;
 
-                    let mut destination_name = String::new();
-                    let mut is_secret = false;
-                    if let Some(rid) = first_step.road_id {
-                        if let Ok(Some(road)) = crate::database::road::get_road_by_channel_id(universe_id, rid).await {
-                            is_secret = road.secret;
-                        }
-                    }
+            if is_starting_from_place || is_starting_from_road {
+                let http_clone = http.clone();
+                let universe_id = first_step.universe_id;
+                let dest_id = first_step.destination_id;
+                let first_step_members = first_step.members.clone();
+                let first_step_road_id = first_step.road_id;
+                let first_step_source_id = first_step.source_id;
+                let first_step_source_server_id = first_step.source_server_id;
 
-                    if let Some(did) = dest_id {
-                        if let Ok(Some(place)) = crate::database::places::get_place_by_category_id(universe_id, did).await {
-                            destination_name = place.name;
-                        }
-                    }
-                    
-                    let msg = tr_locale!("fr", "travel__moving_to_place", user: user_display_name.as_str(), destination: destination_name.as_str());
-                    let _ = ChannelId::new(road_id).send_message(&http_clone, CreateMessage::new().content(msg.clone())).await;
+                tokio::spawn(async move {
+                    for &user_id in &first_step_members {
+                        if let Ok(user) = http_clone.get_user(UserId::new(user_id)).await {
+                            let character_name = if let Ok(Some(char)) = get_character_by_user_id(universe_id, user_id).await {
+                                char.name
+                            } else {
+                                let member_nick = http_clone.get_member(GuildId::new(guild_id), UserId::new(user_id)).await.ok().and_then(|m| m.nick.clone());
+                                member_nick.unwrap_or(user.name.clone())
+                            };
+                            let user_display_name = character_name;
 
-                    // Envoi du message dans le lieu de départ si applicable
-                    if let Some(source_id) = first_step.source_id {
-                        let source_guild_id = first_step.source_server_id.unwrap_or(guild_id);
-                        if let Ok(mut channels) = http_clone.get_channels(GuildId::new(source_guild_id)).await {
-                            channels.sort_by_key(|c| c.position);
-                            let target_channel = channels.iter().find(|c| c.parent_id == Some(ChannelId::new(source_id)) && (c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage))
-                                .or_else(|| channels.iter().find(|c| c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage));
+                            let mut destination_name = String::new();
+                            let mut is_secret = false;
+                            if let Some(rid) = first_step_road_id {
+                                if let Ok(Some(road)) = crate::database::road::get_road_by_channel_id(universe_id, rid).await {
+                                    is_secret = road.secret;
+                                }
+                            }
 
-                            if let Some(target_channel) = target_channel {
-                                let departure_msg = if is_secret {
-                                    tr_locale!("fr", "travel__taking_unknown_road", user: user_display_name.as_str())
-                                } else {
-                                    msg
-                                };
-                                let _ = target_channel.id.send_message(&http_clone, CreateMessage::new().content(departure_msg)).await;
+                            if let Some(did) = dest_id {
+                                if let Ok(Some(place)) = crate::database::places::get_place_by_category_id(universe_id, did).await {
+                                    destination_name = place.name;
+                                }
+                            }
+                            
+                            let msg_key = if is_starting_from_place { "travel__moving_to_place" } else { "travel__rejoining_route" };
+                            let msg = tr_locale!("fr", msg_key, user: user_display_name.as_str(), destination: destination_name.as_str());
+
+                            if let Some(rid) = first_step_road_id {
+                                let _ = ChannelId::new(rid).send_message(&http_clone, CreateMessage::new().content(msg.clone())).await;
+                            }
+
+                            // Envoi du message dans le lieu de départ seulement si on commence depuis un lieu
+                            if is_starting_from_place {
+                                if let Some(source_id) = first_step_source_id {
+                                    let source_guild_id = first_step_source_server_id.unwrap_or(guild_id);
+                                    if let Ok(mut channels) = http_clone.get_channels(GuildId::new(source_guild_id)).await {
+                                        channels.sort_by_key(|c| c.position);
+                                        let target_channel = channels.iter().find(|c| c.parent_id == Some(ChannelId::new(source_id)) && (c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage))
+                                            .or_else(|| channels.iter().find(|c| c.is_text_based() && c.kind != serenity::all::ChannelType::Voice && c.kind != serenity::all::ChannelType::Stage));
+
+                                        if let Some(target_channel) = target_channel {
+                                            let departure_msg = if is_secret {
+                                                tr_locale!("fr", "travel__taking_unknown_road", user: user_display_name.as_str())
+                                            } else {
+                                                tr_locale!("fr", "travel__moving_to_place_from_start", user: user_display_name.as_str(), destination: destination_name.as_str())
+                                            };
+                                            let _ = target_channel.id.send_message(&http_clone, CreateMessage::new().content(departure_msg)).await;
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
-                }
+                });
             }
-        });
-    }
+        }
 
     // Ajoute à la file active (et lance/met à jour le sleeper si nécessaire)
     add_move(first_step).await;
@@ -1105,7 +1136,14 @@ pub async fn stop_travel(user_id: u64) -> Result<TravelGroup, anyhow::Error> {
                         }
                     };
 
-                    let msg = tr_locale!("fr", "travel__interrupted", user: character_name);
+                    let mut destination_name = String::new();
+                    if let Some(did) = player_move.destination_id {
+                        if let Ok(Some(place)) = crate::database::places::get_place_by_category_id(universe_id, did).await {
+                            destination_name = place.name;
+                        }
+                    }
+
+                    let msg = tr_locale!("fr", "travel__interrupted_towards", user: character_name, destination: destination_name);
                     let _ = ChannelId::new(road_id).send_message(&http, CreateMessage::new().content(msg)).await;
                 }
             });

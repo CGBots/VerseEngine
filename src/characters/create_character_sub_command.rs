@@ -10,7 +10,7 @@ use crate::utility::reply::reply;
 use serenity::client::Context as SerenityContext;
 use serenity::http::CacheHttp;
 use crate::database::server::{get_server_by_id, Server};
-use crate::{tr, tr_locale};
+use crate::{tr_locale};
 use crate::translation::get_by_locale;
 use crate::database::characters::Character;
 use crate::database::db_namespace::{CHARACTERS_COLLECTION_NAME, VERSEENGINE_DB_NAME};
@@ -20,6 +20,8 @@ use crate::database::stats::{Stat, StatValue};
 use crate::database::travel::{TravelGroup};
 use crate::database::universe::get_universe_by_id;
 
+pub static ACCEPT_CHARACTER_MODAL_CUSTOM_ID: &str = "character_accept_modal";
+pub static CHARACTER_MODAL_CUSTOM_ID: &str = "character_creation_modal";
 pub static CHARACTER_MODAL_TITLE: &str = "character_modal_title";
 pub static MODIFY_CHARACTER_BUTTON_CUSTOM_ID: &str = "create_character__modify_character";
 pub static DELETE_CHARACTER_BUTTON_CUSTOM_ID: &str = "create_character__delete_character";
@@ -57,22 +59,16 @@ pub async fn execute_character_modal(
     let desc_label = get_by_locale(locale, CHARACTER_DESCRIPTION, None, None);
     let story_label = get_by_locale(locale, CHARACTER_STORY, None, None);
     let request_label = get_by_locale(locale, CHARACTER_SPECIAL_REQUEST, None, None);
-    let instruction = get_by_locale(locale, CHARACTER_INSTRUCTION, None, None);
+    let _instruction = get_by_locale(locale, CHARACTER_INSTRUCTION, None, None);
 
     let (def_name, def_desc, def_story, def_request) = default_values.unwrap_or(("", "", "", ""));
-
-    let custom_id = format!("{}-{}", id, "character_modal");
 
     let modal_json = json!({
         "type": 9,
         "data": {
-            "custom_id": custom_id,
+            "custom_id": CHARACTER_MODAL_CUSTOM_ID,
             "title": title,
             "components": [
-                {
-                    "type": 10,
-                    "content": instruction
-                },
                 {
                     "type": 1,
                     "components": [
@@ -135,48 +131,65 @@ pub async fn execute_character_modal(
 
     ctx.http.create_interaction_response(id, token, &modal_json, vec![]).await?;
 
-    let response = serenity::collector::ModalInteractionCollector::new(ctx)
-        .filter(move |m| m.data.custom_id == custom_id)
-        .timeout(std::time::Duration::from_secs(1800))
-        .await;
+    Ok(None)
+}
 
-    if let Some(m) = response {
-        let mut name = String::new();
-        let mut description = String::new();
-        let mut story = String::new();
-        let mut special_request = String::new();
+pub async fn handle_character_creation_modal(ctx: SerenityContext, m: ModalInteraction) -> Result<&'static str, Error> {
+    let mut name = String::new();
+    let mut description = String::new();
+    let mut story = String::new();
+    let mut special_request = String::new();
 
-        for row in &m.data.components {
-            for component in &row.components {
-                if let serenity::all::ActionRowComponent::InputText(it) = component {
-                    if it.custom_id == CHARACTER_NAME {
-                        name = it.value.clone().unwrap_or_default();
-                    } else if it.custom_id == CHARACTER_DESCRIPTION {
-                        description = it.value.clone().unwrap_or_default();
-                    } else if it.custom_id == CHARACTER_STORY {
-                        story = it.value.clone().unwrap_or_default();
-                    } else if it.custom_id == CHARACTER_SPECIAL_REQUEST {
-                        special_request = it.value.clone().unwrap_or_default();
-                    }
+    for row in &m.data.components {
+        for component in &row.components {
+            if let serenity::all::ActionRowComponent::InputText(it) = component {
+                if it.custom_id == CHARACTER_NAME {
+                    name = it.value.clone().unwrap_or_default();
+                } else if it.custom_id == CHARACTER_DESCRIPTION {
+                    description = it.value.clone().unwrap_or_default();
+                } else if it.custom_id == CHARACTER_STORY {
+                    story = it.value.clone().unwrap_or_default();
+                } else if it.custom_id == CHARACTER_SPECIAL_REQUEST {
+                    special_request = it.value.clone().unwrap_or_default();
                 }
             }
         }
+    }
 
-        m.create_response(ctx, CreateInteractionResponse::Acknowledge).await?;
+    m.create_response(&ctx, CreateInteractionResponse::Acknowledge).await?;
 
-        Ok(Some(CharacterModal {
-            name,
-            description,
-            story,
-            special_request,
-            interaction: m,
-        }))
-    } else {
-        Ok(None)
+    let locale = m.locale.as_str();
+
+    let buttons = vec![
+        CreateActionRow::Buttons(
+            vec![
+                CreateButton::new(SUBMIT_CHARACTER_BUTTON_CUSTOM_ID).label(get_by_locale(locale, SUBMIT_CHARACTER_BUTTON_CUSTOM_ID, None, None)).style(ButtonStyle::Success),
+                CreateButton::new(MODIFY_CHARACTER_BUTTON_CUSTOM_ID).label(get_by_locale(locale, MODIFY_CHARACTER_BUTTON_CUSTOM_ID, None, None)).style(ButtonStyle::Primary),
+                CreateButton::new(DELETE_CHARACTER_BUTTON_CUSTOM_ID).label(get_by_locale(locale, DELETE_CHARACTER_BUTTON_CUSTOM_ID, None, None)).style(ButtonStyle::Danger),
+            ]
+        )
+    ];
+
+    let result_message = m.channel_id.send_message(&ctx, CreateMessage::new().embed(
+        CreateEmbed::new()
+            .footer(CreateEmbedFooter::new(m.user.id.get().to_string()))
+            .title(name)
+            .field(get_by_locale(locale, CHARACTER_DESCRIPTION, None, None), description, true)
+            .field(get_by_locale(locale, CHARACTER_STORY, None, None), story, true)
+            .field(get_by_locale(locale, CHARACTER_SPECIAL_REQUEST, None, None), special_request, false)
+            .author(CreateEmbedAuthor::new(m.user.name.as_str()))
+            .color(Color::from_rgb(112, 190, 255))
+    )
+        .components(buttons)
+    ).await;
+
+    match result_message {
+        Ok(_) => {
+            Ok("create_character__submitted")
+        }
+        Err(_) => { Err("create_place__character_too_long".into()) }
     }
 }
-
-/// Verifies that the interaction user owns the character in the message
 /// Verifies that the interaction user is the owner of the character described in the message.
 ///
 /// This is determined by comparing the interaction user's ID with the ID stored in the
@@ -307,51 +320,11 @@ pub async fn _create_character(ctx: Context<'_>) -> Result<&'static str, Error>{
     let locale = ctx.locale().unwrap_or("fr");
     let interaction_id = app_ctx.interaction.id;
     let interaction_token = &app_ctx.interaction.token;
-    let modal_result = execute_character_modal(ctx.serenity_context(), interaction_id, interaction_token, locale, None).await?;
+    let _ = execute_character_modal(ctx.serenity_context(), interaction_id, interaction_token, locale, None).await?;
     
     app_ctx.has_sent_initial_response.store(true, Ordering::SeqCst);
     
-    let character_modal = match modal_result {
-        Some(m) => m,
-        None => return Err("create_character__timed_out".into()),
-    };
-
-    let inputs = vec![
-        character_modal.name,
-        character_modal.description,
-        character_modal.story,
-        character_modal.special_request,
-    ];
-
-    let buttons = vec![
-        CreateActionRow::Buttons(
-            vec![
-                CreateButton::new(SUBMIT_CHARACTER_BUTTON_CUSTOM_ID).label(tr!(ctx, SUBMIT_CHARACTER_BUTTON_CUSTOM_ID)).style(ButtonStyle::Success),
-                CreateButton::new(MODIFY_CHARACTER_BUTTON_CUSTOM_ID).label(tr!(ctx, MODIFY_CHARACTER_BUTTON_CUSTOM_ID)).style(ButtonStyle::Primary),
-                CreateButton::new(DELETE_CHARACTER_BUTTON_CUSTOM_ID).label(tr!(ctx, DELETE_CHARACTER_BUTTON_CUSTOM_ID)).style(ButtonStyle::Danger),
-            ]
-        )
-    ];
-
-    let result_message = app_ctx.channel_id().send_message(ctx, CreateMessage::new().embed(
-        CreateEmbed::new()
-            .footer(CreateEmbedFooter::new(ctx.author().id.get().to_string()))
-            .title(inputs[0].clone())
-            .field(tr!(ctx, CHARACTER_DESCRIPTION), inputs[1].clone(), true)
-            .field(tr!(ctx, CHARACTER_STORY), inputs[2].clone(), true)
-            .field(tr!(ctx, CHARACTER_SPECIAL_REQUEST), inputs[3].clone(), false)
-            .author(CreateEmbedAuthor::new(ctx.author().name.as_str()))
-            .color(Color::from_rgb(112, 190, 255))
-    )
-        .components(buttons)
-    ).await;
-
-    match result_message {
-        Ok(_) => {
-            Ok("create_character__submitted")
-        }
-        Err(_) => { Err("create_place__character_too_long".into()) }
-    }
+    Ok("create_character__modal_opened")
 }
 
 /// Deletes a character sheet draft from the channel.
@@ -625,16 +598,9 @@ fn parse_stat_value(value_str: &str, base_value: &StatValue) -> Option<StatValue
 
 /// Creates a new `Stat` instance with a new value while preserving other attributes.
 fn create_stat_with_value(stat: &Stat, value: StatValue) -> Stat {
-    Stat {
-        _id: Default::default(),
-        universe_id: Default::default(),
-        name: stat.name.clone(),
-        base_value: value,
-        formula: stat.formula.clone(),
-        min: stat.min.clone(),
-        max: stat.max.clone(),
-        modifiers: vec![],
-    }
+    let mut new_stat = stat.clone();
+    new_stat.base_value = value;
+    new_stat
 }
 
 
@@ -686,12 +652,10 @@ pub async fn accept_character(ctx: SerenityContext, component_interaction: Compo
         text.push_str(&format!("{}: [{:?}]\n", stat.name, stat.base_value));
     };
 
-    let custom_id = format!("{}-{}", component_interaction.id, "accept_modal");
-
     let modal_json = json!({
         "type": 9,
         "data": {
-            "custom_id": custom_id,
+            "custom_id": ACCEPT_CHARACTER_MODAL_CUSTOM_ID,
             "title": title,
             "components": [
                 {
@@ -713,15 +677,18 @@ pub async fn accept_character(ctx: SerenityContext, component_interaction: Compo
 
     ctx.http.create_interaction_response(component_interaction.id, &component_interaction.token, &modal_json, vec![]).await?;
 
-    let response = serenity::collector::ModalInteractionCollector::new(&ctx)
-        .filter(move |m| m.data.custom_id == custom_id)
-        .timeout(std::time::Duration::from_secs(1800))
-        .await;
+    Ok("accept_character")
+}
 
-    let m = match response {
-        Some(m) => m,
-        None => return Err("create_character__timed_out".into()),
-    };
+pub async fn handle_accept_character_modal(ctx: SerenityContext, m: ModalInteraction) -> Result<&'static str, Error> {
+    let guild_id = m.guild_id.ok_or("create_character__guild_only")?;
+    let server = get_server_by_id(guild_id.get()).await?;
+    let server = server.ok_or("create_character__no_universe_found")?;
+
+    let Ok(universe) = get_universe_by_id(ObjectId::from_str(server.universe_id.to_string().as_str())?).await else { return Err("create_character__database_error".into()) };
+    let Ok(universe) = universe.ok_or("create_character__no_universe_found") else { return Err("create_character__no_universe_found".into()) };
+    let Ok(stats_cursor) = universe.clone().get_stats().await else { return Err("create_character__database_error".into()) };
+    let Ok(stats) = stats_cursor.try_collect::<Vec<Stat>>().await else { return Err("create_character__database_error".into()) };
 
     let input = m.data.components.iter()
         .flat_map(|row| row.components.iter())
@@ -762,46 +729,29 @@ pub async fn accept_character(ctx: SerenityContext, component_interaction: Compo
     }
 
     // For any stats not found in the input, use their default values
-    for stat in stats.iter() {
+    for stat in stats {
         if !line_matched.contains(&stat.name) {
             extracted_stats.push(stat.clone());
         }
     }
 
-    m.create_response(ctx.clone(), CreateInteractionResponse::Acknowledge).await?;
+    // Get character info from the embed
+    let message = m.message.as_ref().ok_or("create_character__message_not_found")?;
+    let embed = message.embeds.get(0).ok_or("create_character__embed_not_found")?;
 
-    let character_user_id = match component_interaction.message.embeds[0]
-        .footer.as_ref()
+    let character_user_id = match embed.footer.as_ref()
         .and_then(|f| f.text.parse::<u64>().ok()) {
             Some(id) => id,
             None => return Err("create_character__invalid_footer".into()),
         };
 
-    let character_name = match component_interaction.message.embeds[0].title.as_ref() {
+    let character_name = match embed.title.as_ref() {
         Some(title) => title.clone(),
         None => return Err("create_character__invalid_embed_title".into()),
     };
 
-    let embed_fields = &component_interaction.message.embeds[0].fields;
-    let _description = embed_fields.iter()
-        .find(|f| f.name == tr_locale!(component_interaction.locale.as_str(), CHARACTER_DESCRIPTION))
-        .map(|f| f.value.clone())
-        .unwrap_or_default();
-
-    let _story = embed_fields.iter()
-        .find(|f| f.name == tr_locale!(component_interaction.locale.as_str(), CHARACTER_STORY))
-        .map(|f| f.value.clone())
-        .unwrap_or_default();
-
-    let _special_request = embed_fields.iter()
-        .find(|f| f.name == tr_locale!(component_interaction.locale.as_str(), CHARACTER_SPECIAL_REQUEST))
-        .map(|f| f.value.clone())
-        .unwrap_or_default();
-
-
-
     let character = Character {
-        _id: Default::default(), 
+        _id: Default::default(),
         user_id: character_user_id,
         universe_id: server.universe_id,
         name: character_name,
@@ -840,15 +790,24 @@ pub async fn accept_character(ctx: SerenityContext, component_interaction: Compo
         return Err("accept_character__member_not_found".into());
     };
 
-    if nick_result.is_err() {
-        session.abort_transaction().await?;
-        return Err("accept_character__nickname_error".into());
+    if let Err(e) = nick_result {
+        tracing::warn!("Failed to edit nickname for user {}: {:?}", character_user_id, e);
+        if let Some(log_channel) = server.log_channel_id {
+            let log_msg = tr_locale!(
+                m.locale.as_str(),
+                "accept_character__nickname_skipped_log",
+                user: format!("<@{}>", character_user_id),
+                character: character.name.clone()
+            );
+            let _ = serenity::all::ChannelId::new(log_channel.id).send_message(&ctx.http, serenity::all::CreateMessage::new().content(log_msg)).await;
+        }
     }
 
     session.commit_transaction().await?;
 
-    let message = component_interaction.message.clone();
-    let original_embed: CreateEmbed = message.embeds[0].clone().into();
+    m.create_response(&ctx, CreateInteractionResponse::Acknowledge).await?;
+
+    let original_embed: CreateEmbed = embed.clone().into();
 
     let select_menu = serenity::all::CreateSelectMenu::new(
         ACCEPT_CHARACTER_CHOOSE_PLACE,
@@ -860,8 +819,8 @@ pub async fn accept_character(ctx: SerenityContext, component_interaction: Compo
 
     let components = vec![CreateActionRow::SelectMenu(select_menu)];
 
-    let _ = component_interaction.channel_id.edit_message(
-        ctx,
+    let _ = m.channel_id.edit_message(
+        &ctx,
         message.id,
         EditMessage::new().components(components).embed(
             original_embed.color(Color::from_rgb(255, 255, 0)) // Yellow while choosing place

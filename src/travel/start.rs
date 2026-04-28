@@ -1,4 +1,5 @@
 use crate::discord::poise_structs::{Context, Error};
+use crate::database::characters::{get_character_by_user_id};
 use crate::database::server::{get_server_by_id, Server};
 use crate::database::travel::{TravelGroup, SpaceType};
 use crate::database::craft::PlayerCraft;
@@ -9,8 +10,9 @@ use crate::travel::utils::validate_channel;
 use poise::CreateReply;
 use crate::utility::reply::reply;
 use serenity::all as serenity;
-use serenity::all::{CreateActionRow, CreateSelectMenuOption, ComponentInteraction};
+use serenity::all::{CreateActionRow, CreateSelectMenuOption, ComponentInteraction, CreateMessage};
 use futures::TryStreamExt;
+use crate::{tr, tr_locale};
 
 /// Tente d'extraire un identifiant numérique d'une chaîne (ex: mention de salon ou ID brut).
 pub fn parse_channel_id(input: &str) -> Option<u64> {
@@ -88,7 +90,12 @@ pub async fn travel_with_destination(ctx: Context<'_>, destination_input: String
             move_from_road(ctx.serenity_context(), destination_place.category_id, server, player_move.clone()).await?;
         }
         SpaceType::Place => {
-            move_from_place(ctx.serenity_context(), ctx.channel_id().get(), destination_place.category_id, server, player_move.clone()).await?;
+            move_from_place(ctx.serenity_context(), ctx.channel_id().get(), destination_place.category_id, server.clone(), player_move.clone()).await?;
+            let user_display_name = match get_character_by_user_id(server.universe_id, ctx.author().id.get()).await {
+                Ok(Some(c)) => c.name,
+                _ => ctx.author().name.clone(),
+            };
+            ctx.http().send_message(ctx.channel_id(), vec![], &CreateMessage::new().content(tr!(ctx, "travel__moving_to_place", user: user_display_name, destination: destination_place.name))).await?;
         }
     }
 
@@ -128,6 +135,7 @@ async fn move_from_road(_ctx: &serenity::Context, destination_id: u64, server: S
     } else {
         return Err("travel__invalid_road_destination".into());
     }
+    
     Ok("travel__started")
 }
 
@@ -146,10 +154,20 @@ async fn travel_without_destination(ctx: Context<'_>) -> Result<(), Error>{
             
             let mut dests = Vec::new();
             if let Some(p1) = get_place_by_category_id(server.universe_id, road.place_one_id).await? {
-                dests.push(p1);
+                let dist = if road.place_one_id == player_move.destination_id.unwrap_or(0) {
+                    (road.distance as f64) - player_move.distance_traveled
+                } else {
+                    player_move.distance_traveled
+                };
+                dests.push((p1, dist));
             }
             if let Some(p2) = get_place_by_category_id(server.universe_id, road.place_two_id).await? {
-                dests.push(p2);
+                let dist = if road.place_two_id == player_move.destination_id.unwrap_or(0) {
+                    (road.distance as f64) - player_move.distance_traveled
+                } else {
+                    player_move.distance_traveled
+                };
+                dests.push((p2, dist));
             }
             dests
         }
@@ -159,7 +177,7 @@ async fn travel_without_destination(ctx: Context<'_>) -> Result<(), Error>{
             while let Some(road) = cursor.try_next().await? {
                 let dest_id = if road.place_one_id == player_move.actual_space_id { road.place_two_id } else { road.place_one_id };
                 if let Some(p) = get_place_by_category_id(server.universe_id, dest_id).await? {
-                    dests.push(p);
+                    dests.push((p, road.distance as f64));
                 }
             }
             dests
@@ -171,8 +189,9 @@ async fn travel_without_destination(ctx: Context<'_>) -> Result<(), Error>{
     }
 
     let mut options = Vec::new();
-    for dest in destinations {
-        options.push(CreateSelectMenuOption::new(dest.name.clone(), dest.category_id.to_string()));
+    for (dest, dist) in destinations {
+        let label = format!("{} - {:.2}km", dest.name, dist);
+        options.push(CreateSelectMenuOption::new(label, dest.category_id.to_string()));
     }
 
     let select_menu = serenity::CreateSelectMenu::new("travel_destination_select", serenity::CreateSelectMenuKind::String { options });
@@ -201,16 +220,43 @@ pub async fn travel_from_handler(ctx: serenity::Context, interaction: ComponentI
         return Err("travel__invalid_interaction".into());
     };
 
-    match player_move.actual_space_type {
+    let locale = interaction.locale.as_str();
+    let result = match player_move.actual_space_type {
         SpaceType::Road => {
-            move_from_road(&ctx, dest_id, server, player_move).await?;
+            move_from_road(&ctx, dest_id, server, player_move).await
         }
         SpaceType::Place => {
-            move_from_place(&ctx, interaction.channel_id.get(), dest_id, server, player_move).await?;
+            let destination_place = get_place_by_category_id(server.universe_id, dest_id).await?
+                .ok_or("travel__place_not_found")?;
+            let user_display_name = match get_character_by_user_id(server.universe_id, interaction.user.id.get()).await {
+                Ok(Some(c)) => c.name,
+                _ => interaction.user.name.clone(),
+            };
+            ctx.http.send_message(interaction.channel_id, vec![], &CreateMessage::new().content(tr_locale!(locale, "travel__moving_to_place", user: user_display_name, destination: destination_place.name))).await?;
+            move_from_place(&ctx, interaction.channel_id.get(), dest_id, server, player_move).await
+        }
+    };
+
+    match result {
+        Ok(key) => {
+            let content = crate::tr_locale!(locale, key);
+            interaction.create_response(&ctx, serenity::CreateInteractionResponse::Message(
+                serenity::CreateInteractionResponseMessage::new()
+                    .content(content)
+                    .ephemeral(true)
+            )).await?;
+            Ok(key)
+        }
+        Err(e) => {
+            let content = crate::tr_locale!(locale, &e.to_string());
+            interaction.create_response(&ctx, serenity::CreateInteractionResponse::Message(
+                serenity::CreateInteractionResponseMessage::new()
+                    .content(content)
+                    .ephemeral(true)
+            )).await?;
+            Err(e)
         }
     }
-
-    Ok("travel__started")
 }
 
 /// Gère le mouvement d'un groupe quittant un lieu (Place) pour s'engager sur une route (Road).
@@ -220,6 +266,14 @@ async fn move_from_place(_ctx: &serenity::Context, _source_id: u64, destination_
 
     let source_place_id = if road.place_one_id == destination_id { road.place_two_id } else { road.place_one_id };
     
+    // Récupération du lieu de départ pour obtenir son rôle
+    let source_place = get_place_by_category_id(server.universe_id, source_place_id).await?
+        .ok_or("travel__source_place_not_found")?;
+
+    // Récupération du lieu de destination pour obtenir son rôle
+    let destination_place = get_place_by_category_id(server.universe_id, destination_id).await?
+        .ok_or("travel__place_not_found")?;
+
     player_move.actual_space_id = road.channel_id;
     player_move.actual_space_type = SpaceType::Road;
     player_move.is_in_move = true;
@@ -227,7 +281,11 @@ async fn move_from_place(_ctx: &serenity::Context, _source_id: u64, destination_
     player_move.road_role_id = Some(road.role_id);
     player_move.road_server_id = Some(road.server_id);
     player_move.source_id = Some(source_place_id);
+    player_move.source_role_id = Some(source_place.role);
+    player_move.source_server_id = Some(source_place.server_id);
     player_move.destination_id = Some(destination_id);
+    player_move.destination_role_id = Some(destination_place.role);
+    player_move.destination_server_id = Some(destination_place.server_id);
     player_move.distance_traveled = 0.0;
     
     let now = chrono::Utc::now().timestamp() as u64;

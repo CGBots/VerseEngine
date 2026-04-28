@@ -10,7 +10,7 @@ use poise::serenity_prelude::{EventHandler};
 #[allow(unused_imports)]
 #[cfg(not(test))] use serenity::all::ActivityData;
 use serenity::all::{CreateInteractionResponse, CreateInteractionResponseMessage, Interaction, Member};
-use crate::characters::create_character_sub_command::{accept_character, choose_character_place, delete_character, modify_character, refuse_character, submit_character};
+use crate::characters::create_character_sub_command::{accept_character, choose_character_place, delete_character, handle_accept_character_modal, handle_character_creation_modal, modify_character, refuse_character, submit_character};
 use crate::loot::logic::handle_loot_carousel_interaction;
 use crate::characters::inventory_subcommand::handle_inventory_interaction;
 use crate::recipe::create_subcommand::{approve_recipe, reject_recipe, modify_recipe_interaction};
@@ -95,6 +95,28 @@ impl EventHandler for Handler {
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
+        if let Some(modal) = interaction.as_modal_submit() {
+            let modal_data = modal.data.custom_id.as_str();
+            let result = if modal_data == crate::characters::create_character_sub_command::ACCEPT_CHARACTER_MODAL_CUSTOM_ID {
+                handle_accept_character_modal(ctx.clone(), modal.clone()).await
+            } else if modal_data == crate::characters::create_character_sub_command::CHARACTER_MODAL_CUSTOM_ID {
+                handle_character_creation_modal(ctx.clone(), modal.clone()).await
+            } else {
+                return;
+            };
+
+            if let Err(e) = result {
+                let locale = modal.locale.as_str();
+                let content = tr_locale!(locale, &e.to_string());
+                let _ = modal.create_response(ctx, CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .content(content)
+                        .ephemeral(true)
+                )).await;
+            }
+            return;
+        }
+
         match interaction.message_component(){
             None => {}
             Some(modal) => {
@@ -109,7 +131,7 @@ impl EventHandler for Handler {
                     "recipe__approve" => approve_recipe(ctx.clone(), modal.clone()).await,
                     "recipe__reject" => reject_recipe(ctx.clone(), modal.clone()).await,
                     "recipe__modify" => modify_recipe_interaction(ctx.clone(), modal.clone()).await,
-                    "select__menu__chose_destination" => travel_from_handler(ctx.clone(), modal.clone()).await,
+                    "travel_destination_select" => travel_from_handler(ctx.clone(), modal.clone()).await,
                     _ => {
                         if modal_data.starts_with("item:") {
                             let parts: Vec<&str> = modal_data.split(':').collect();

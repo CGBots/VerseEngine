@@ -260,7 +260,10 @@ impl Stat {
         };
         match result {
             Ok(_) => Ok(self.clone()),
-            Err(_) => Err("stat_insert__failed".into()),
+            Err(e) => {
+                println!("Database error in insert_stat_with_optional_session: {:?}", e);
+                Err("stat_insert__failed".into())
+            },
         }
     }
 

@@ -5,7 +5,6 @@ use crate::database::road::get_road_by_channel_id;
 use crate::database::characters::get_character_by_user_id;
 use crate::travel::logic::{calculate_current_distance, get_travel_threshold, add_travel};
 use crate::travel::utils::validate_channel;
-use crate::utility::reply::reply_with_args_and_ephemeral;
 use serenity::all as serenity;
 use fluent::FluentArgs;
 
@@ -64,7 +63,7 @@ pub async fn join(
     let mut session = db_client.start_session().await?;
     session.start_transaction().await?;
 
-    if my_move.is_in_move || target_move.is_in_move {
+    if my_move.actual_space_type == crate::database::travel::SpaceType::Road {
         let road = get_road_by_channel_id(server.universe_id, my_move.actual_space_id).await?
             .ok_or("travel__road_not_found")?;
 
@@ -81,19 +80,22 @@ pub async fn join(
         let diff_m = (my_pos - target_pos).abs() * 1000.0;
 
         if diff_m > threshold {
+            session.abort_transaction().await?;
             return Err("travel__too_far_to_join".into());
         }
 
-        if target_move.source_id == Some(road.place_one_id) {
-            target_move.distance_traveled = target_pos;
-        } else {
-            target_move.distance_traveled = (road.distance as f64) - target_pos;
+        if target_move.is_in_move {
+            if target_move.source_id == Some(road.place_one_id) {
+                target_move.distance_traveled = target_pos;
+            } else {
+                target_move.distance_traveled = (road.distance as f64) - target_pos;
+            }
+            
+            let now = chrono::Utc::now().timestamp() as u64;
+            target_move.step_start_timestamp = Some(now);
+            target_move.step_end_timestamp = Some(now);
+            target_move.modified_speed = 0.0;
         }
-        
-        let now = chrono::Utc::now().timestamp() as u64;
-        target_move.step_start_timestamp = Some(now);
-        target_move.step_end_timestamp = Some(now);
-        target_move.modified_speed = 0.0;
     }
 
     for member in my_move.members.clone() {
@@ -118,7 +120,8 @@ pub async fn join(
     args.set("user", char_author);
     args.set("target", char_target);
 
-    reply_with_args_and_ephemeral(ctx, Ok("travel__public_joined"), Some(args), false).await?;
+    let content = crate::translation::get(ctx, "travel__public_joined", None, Some(&args));
+    ctx.channel_id().say(&ctx.serenity_context().http, content).await?;
     
     Ok(())
 }

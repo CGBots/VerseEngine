@@ -81,20 +81,23 @@ pub async fn estimate(
     let speed_kmh = my_move.modified_speed.max(1.0);
     let total_seconds = (real_diff_m / (speed_kmh / 3.6)) as u64;
     let minutes = total_seconds / 60;
-    let seconds = total_seconds % 60;
-    let time_str = format!("{} min {} s", minutes, seconds.max(if real_diff_m > 0.0 { 1 } else { 0 }));
+    let seconds = (total_seconds % 60).max(if real_diff_m > 0.0 { 1 } else { 0 });
 
     if real_diff_m <= threshold {
+        let rounded_dist = ((real_diff_m / 10.0).round() * 10.0) as u64;
         let mut args = FluentArgs::new();
         args.set("target", char_target);
-        args.set("time", time_str);
+        args.set("distance", rounded_dist.to_string());
+        args.set("minutes", minutes);
+        args.set("seconds", seconds);
         reply_with_args_and_ephemeral(ctx, Ok("travel__estimate_can_join"), Some(args), true).await?;
     } else {
         let rounded_dist = ((real_diff_m / 10.0).round() * 10.0) as u64;
         let mut args = FluentArgs::new();
         args.set("target", char_target);
         args.set("distance", rounded_dist.to_string());
-        args.set("time", time_str);
+        args.set("minutes", minutes);
+        args.set("seconds", seconds);
         reply_with_args_and_ephemeral(ctx, Ok("travel__estimate_result"), Some(args), true).await?;
     }
 

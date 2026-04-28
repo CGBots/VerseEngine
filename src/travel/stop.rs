@@ -3,7 +3,7 @@ use crate::database::server::get_server_by_id;
 use crate::database::travel::SpaceType;
 use crate::travel::logic::stop_travel;
 use crate::travel::utils::validate_channel;
-use crate::utility::reply::reply;
+use crate::utility::reply::{reply, reply_with_args_and_ephemeral};
 
 /// Arrête le mouvement actuel du groupe du joueur.
 /// 
@@ -33,7 +33,7 @@ pub async fn stop(ctx: Context<'_>) -> Result<(), Error> {
 
         match stop_travel(author_id).await {
             Ok(_) => {
-                let _ = reply(ctx, Ok("travel__stopped")).await;
+                let _ = reply_with_args_and_ephemeral(ctx, Ok("travel__stopped"), None, true).await;
             },
             Err(_) => {
                 let _ = reply(ctx, Ok("travel__not_in_move")).await;

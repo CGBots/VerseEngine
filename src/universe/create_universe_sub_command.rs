@@ -140,22 +140,18 @@ pub async fn _create_universe(
     let mut session = crate::database::db_client::get_db_client().await.start_session().await?;
     session.start_transaction().await?;
 
-    let insert_universe_res = universe.insert_universe_with_session(&mut session).await;
-    if insert_universe_res.is_err() {
+    if let Err(e) = universe.insert_universe_with_session(&mut session).await {
+        println!("Error inserting universe: {:?}", e);
         session.abort_transaction().await?;
         return Err("create_universe__universe_insert_failed".into());
-    }
-
-    if universe.setup_constraints().await.is_err() {
-        session.abort_transaction().await?;
-        return Err("create_universe__setup_constraints_failed".into());
     }
 
     let server = Server::default()
         .universe_id(universe.universe_id)
         .server_id(ctx.guild_id().unwrap().get()).clone();
 
-    if server.insert_server_with_session(&mut session).await.is_err() {
+    if let Err(e) = server.insert_server_with_session(&mut session).await {
+        println!("Error inserting server: {:?}", e);
         session.abort_transaction().await?;
         return Err("create_universe__server_insert_failed".into());
     }
@@ -171,12 +167,19 @@ pub async fn _create_universe(
         modifiers: vec![],
     };
 
-    if speed_stat.insert_stat_with_session(&mut session).await.is_err() {
+    if let Err(e) = speed_stat.insert_stat_with_session(&mut session).await {
+        println!("Error inserting speed stat: {:?}", e);
         session.abort_transaction().await?;
         return Err("create_universe__speed_stat_insert_failed".into());
     }
 
     session.commit_transaction().await?;
+
+    if let Err(e) = universe.setup_constraints().await {
+        println!("Error setting up constraints: {:?}", e);
+        // On ne retourne pas d'erreur car l'univers est déjà créé et commité.
+        // Les index sont un bonus de performance/intégrité mais pas bloquants ici.
+    }
 
     let Ok(_) = _setup(ctx, setup_type).await else { return Err("setup_server__failed".into()) };
 
