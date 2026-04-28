@@ -440,22 +440,22 @@ pub async fn handle_tool_selection_interaction(
                     
                     let tool = match Tool::get_by_id(tool_id).await? {
                         Some(t) => t,
-                        None => return Err("error:use__tool_not_found".into()),
+                        None => return Err("use__tool_not_found".into()),
                     };
 
                     if tool.inventory_size == 0 {
-                        return Err("error:use__no_inventory".into());
+                        return Err("use__no_inventory".into());
                     }
 
                     // On récupère l'univers et le personnage pour le modal
-                    let guild_id = component.guild_id.ok_or("error:item__guild_only")?;
+                    let guild_id = component.guild_id.ok_or("item__guild_only")?;
                     let user_id = component.user.id;
                     
                     let universe = get_universe_by_server_id(guild_id.get()).await?
-                        .ok_or("error:use__universe_not_found")?;
+                        .ok_or("use__universe_not_found")?;
                     
                     let character = crate::database::characters::get_character_by_user_id(universe.universe_id, user_id.get()).await?
-                        .ok_or("error:use__character_not_found")?;
+                        .ok_or("use__character_not_found")?;
 
                     // On envoie le modal
                     // Attention: on doit utiliser l'interaction originale pour envoyer le modal

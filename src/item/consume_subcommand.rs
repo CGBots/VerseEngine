@@ -207,16 +207,16 @@ async fn apply_consumption(
 
     if let Ok(Some(player_move)) = character_info.clone().get_player_move().await {
         if player_move.is_in_move {
-            return Err("error:consume__busy".into());
+            return Err("consume__busy".into());
         }
     }
 
     if let Ok(Some(_)) = PlayerCraft::get_by_user_id(univ_id, character_info.user_id).await {
-        return Err("error:consume__busy".into());
+        return Err("consume__busy".into());
     }
 
     if let Ok(Some(_)) = PlayerLoot::get_by_user_id(univ_id, character_info.user_id).await {
-        return Err("error:consume__busy".into());
+        return Err("consume__busy".into());
     }
 
     if !matches!(item.item_usage, ItemUsage::Consumable) {

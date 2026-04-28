@@ -30,18 +30,18 @@ pub async fn validate_channel(ctx: &Context<'_>, author_id: u64) -> Result<(), E
         SpaceType::Place => {
             let parent_id = current_channel.parent_id.map(|id| id.get()).unwrap_or(0);
             if parent_id != player_move.actual_space_id {
-                let place = get_place_by_category_id(server.universe_id, player_move.actual_space_id).await?
+                let _place = get_place_by_category_id(server.universe_id, player_move.actual_space_id).await?
                     .ok_or("travel__place_not_found")?;
                 
-                return Err(format!("error:travel__wrong_channel:category={},channel={}", place.name, current_channel.name).into());
+                return Err("travel__wrong_channel".into());
             }
         }
         SpaceType::Road => {
             if current_channel.id.get() != player_move.actual_space_id {
-                let road = get_road_by_channel_id(server.universe_id, player_move.actual_space_id).await?
+                let _road = get_road_by_channel_id(server.universe_id, player_move.actual_space_id).await?
                     .ok_or("travel__road_not_found")?;
                 
-                return Err(format!("error:travel__wrong_channel:category=Route,channel={}", road.road_name).into());
+                return Err("travel__wrong_channel".into());
             }
         }
     }

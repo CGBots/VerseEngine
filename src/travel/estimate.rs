@@ -74,7 +74,10 @@ pub async fn estimate(
     let char_target = get_character_by_user_id(universe.universe_id, target_id).await?.map(|c| c.name).unwrap_or(target.name.clone());
 
     if real_diff_m > 2.0 * threshold {
-        return Err(format!("error:travel__estimate_too_far:target={}", char_target).into());
+        let mut args = FluentArgs::new();
+        args.set("target", char_target);
+        reply_with_args_and_ephemeral(ctx, Err("travel__estimate_too_far".into()), Some(args), true).await?;
+        return Ok(());
     }
 
     // Calcul du temps RP : temps = distance_m / (vitesse_kmh / 3.6)

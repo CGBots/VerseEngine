@@ -68,7 +68,7 @@ pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
         Ok(None) => return Err("loot_table__universe_not_found".into()),
         Err(e) => {
             eprintln!("Error fetching universe for guild {}: {:?}", guild_id, e);
-            return Err(format!("error:loot_table__error_fetching_universe:{}", e).into());
+            return Err("loot_table__error_fetching_universe".into());
         }
     };
 
@@ -95,7 +95,7 @@ pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
         Ok(None) => return Err("loot_table__character_not_found".into()),
         Err(e) => {
             eprintln!("Error fetching character for user {}: {:?}", user_id, e);
-            return Err(format!("error:loot_table__error_fetching_character:{}", e).into());
+            return Err("loot_table__error_fetching_character".into());
         }
     };
 
@@ -104,7 +104,7 @@ pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
         Ok(t) => t,
         Err(e) => {
             eprintln!("Error fetching channel loot table for universe {} and channel {}: {:?}", universe.universe_id, channel.id, e);
-            return Err(format!("error:loot_table__error_fetching_channel_table:{}", e).into());
+            return Err("loot_table__error_fetching_channel_table".into());
         }
     };
 
@@ -120,7 +120,7 @@ pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
                 Ok(t) => t,
                 Err(e) => {
                     eprintln!("Error fetching category loot table for universe {} and category {}: {:?}", universe.universe_id, category_id, e);
-                    return Err(format!("error:loot_table__error_fetching_category_table:{}", e).into());
+                    return Err("loot_table__error_fetching_category_table".into());
                 }
             }
         }
@@ -136,7 +136,10 @@ pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
                     let now = chrono::Utc::now();
                     let elapsed = now.signed_duration_since(*last_loot_time).num_seconds() as u64;
                     if elapsed < limit {
-                        return Err(format!("error:loot_table__rate_limited:{}", limit - elapsed).into());
+                        let mut args = FluentArgs::new();
+                        args.set("time", limit - elapsed);
+                        let _ = crate::utility::reply::reply_with_args(ctx.clone(), Err("loot_table__rate_limited".into()), Some(args)).await;
+                        return Ok(None);
                     }
                 }
             }
@@ -183,7 +186,10 @@ pub async fn _loot(ctx: Context<'_>) -> Result<Option<FluentArgs<'_>>, Error> {
                     let elapsed = now.signed_duration_since(*last_loot_time).num_seconds() as u64;
                     if elapsed < limit {
                         if all_looted_items.is_empty() {
-                            return Err(format!("error:loot_table__rate_limited:{}", limit - elapsed).into());
+                            let mut args = FluentArgs::new();
+                            args.set("time", limit - elapsed);
+                            let _ = crate::utility::reply::reply_with_args(ctx.clone(), Err("loot_table__rate_limited".into()), Some(args)).await;
+                            return Ok(None);
                         }
                     }
                 }
