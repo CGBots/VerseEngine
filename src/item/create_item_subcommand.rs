@@ -113,9 +113,30 @@ pub async fn create(
             for server in servers{
                 if let Some(wiki_channel_id) = server.rp_wiki_channel_id{
                     let Ok(wiki_channel) = ctx.http().get_channel(wiki_channel_id.id.into()).await else {continue};
-                    let channel = wiki_channel.guild().unwrap().clone();
-                    let Some(item_tag) = channel.available_tags.iter().find(|tag| tag.name == ITEM_TAG) else {continue};
-                    let _ = channel.create_forum_post(ctx, CreateForumPost::new(name.clone(), CreateMessage::new().embed(embed.clone())).add_applied_tag(item_tag.id)).await?;
+                    let mut channel = wiki_channel.guild().unwrap().clone();
+                    let mut item_tag = channel.available_tags.iter().find(|tag| {
+                        tag.name.to_lowercase() == ITEM_TAG.to_lowercase() || tag.name == "Objet"
+                    }).map(|t| t.id);
+
+                    if item_tag.is_none() {
+                        let mut tags: Vec<serenity::all::CreateForumTag> = channel.available_tags.iter().map(|tag| {
+                            let mut t = serenity::all::CreateForumTag::new(tag.name.clone());
+                            t = t.moderated(tag.moderated);
+                            t
+                        }).collect();
+                        tags.push(serenity::all::CreateForumTag::new("Objet"));
+                        let edit = serenity::all::EditChannel::new().available_tags(tags);
+                        if let Ok(updated_channel) = channel.id.edit(ctx, edit).await {
+                            channel = updated_channel;
+                            item_tag = channel.available_tags.iter().find(|tag| tag.name == "Objet").map(|t| t.id);
+                        }
+                    }
+
+                    let mut post = CreateForumPost::new(name.clone(), CreateMessage::new().embed(embed.clone()));
+                    if let Some(tag_id) = item_tag {
+                        post = post.add_applied_tag(tag_id);
+                    }
+                    let _ = channel.create_forum_post(ctx, post).await?;
                 }
             }
         };
@@ -286,11 +307,28 @@ pub async fn approve_item(ctx: SerenityContext, component_interaction: Component
         for s in servers {
             if let Some(wiki_channel_id) = s.rp_wiki_channel_id {
                 if let Ok(wiki_channel) = ctx.http.get_channel(wiki_channel_id.id.into()).await {
-                    if let Some(channel) = wiki_channel.guild() {
-                        let item_tag = channel.available_tags.iter().find(|tag| tag.name == ITEM_TAG);
+                    if let Some(mut channel) = wiki_channel.guild() {
+                        let mut item_tag = channel.available_tags.iter().find(|tag| {
+                            tag.name.to_lowercase() == ITEM_TAG.to_lowercase() || tag.name == "Objet"
+                        }).map(|t| t.id);
+
+                        if item_tag.is_none() {
+                            let mut tags: Vec<serenity::all::CreateForumTag> = channel.available_tags.iter().map(|tag| {
+                                let mut t = serenity::all::CreateForumTag::new(tag.name.clone());
+                                t = t.moderated(tag.moderated);
+                                t
+                            }).collect();
+                            tags.push(serenity::all::CreateForumTag::new("Objet"));
+                            let edit = serenity::all::EditChannel::new().available_tags(tags);
+                            if let Ok(updated_channel) = channel.id.edit(&ctx, edit).await {
+                                channel = updated_channel;
+                                item_tag = channel.available_tags.iter().find(|tag| tag.name == "Objet").map(|t| t.id);
+                            }
+                        }
+
                         let mut post = CreateForumPost::new(name.clone(), CreateMessage::new().embed(wiki_embed.clone()));
-                        if let Some(tag) = item_tag {
-                            post = post.add_applied_tag(tag.id);
+                        if let Some(tag_id) = item_tag {
+                            post = post.add_applied_tag(tag_id);
                         }
                         let _ = channel.create_forum_post(&ctx, post).await;
                     }

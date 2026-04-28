@@ -23,18 +23,18 @@ pub async fn item_use(
 
     let universe = match get_universe_by_server_id(guild_id.get()).await {
         Ok(Some(u)) => u,
-        _ => return Err("error:use__universe_not_found".into()),
+        _ => return Err("use__universe_not_found".into()),
     };
 
     let character = match get_character_by_user_id(universe.universe_id, user_id.get()).await {
         Ok(Some(c)) => c,
-        _ => return Err("error:use__character_not_found".into()),
+        _ => return Err("use__character_not_found".into()),
     };
 
     let tool_id = match tool_id {
         Some(id) => match ObjectId::from_str(&id) {
             Ok(oid) => Some(oid),
-            Err(_) => return Err("error:use__invalid_tool_id".into()),
+            Err(_) => return Err("use__invalid_tool_id".into()),
         },
         None => None,
     };
@@ -59,18 +59,18 @@ pub async fn item_use(
         Some(id) => {
             let tool = match Tool::get_by_id(id).await? {
                 Some(t) => t,
-                None => return Err("error:use__tool_not_found".into()),
+                None => return Err("use__tool_not_found".into()),
             };
 
             if tool.inventory_size == 0 {
-                return Err("error:use__no_inventory".into());
+                return Err("use__no_inventory".into());
             }
 
             // Open Modal
             if let poise::Context::Application(app_ctx) = ctx {
                 execute_use_modal(app_ctx, tool, character._id).await?;
             } else {
-                return Err("error:use__only_slash_command".into());
+                return Err("use__only_slash_command".into());
             }
         }
     }
