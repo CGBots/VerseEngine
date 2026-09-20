@@ -1,10 +1,12 @@
-use crate::database::characters::get_character_by_user_id;
+use crate::database::characters::{get_character_by_user_id};
 use crate::database::inventory::{Inventory, HolderType};
 use crate::database::universe::get_universe_by_server_id;
 use crate::database::items::{get_item_by_id};
 use crate::database::modifiers::{ModifierLevel};
 use crate::database::places::get_place_by_category_id;
 use crate::database::road::get_road_by_channel_id;
+use crate::database::craft::PlayerCraft;
+use crate::database::loot::PlayerLoot;
 use crate::discord::poise_structs::{Context, Error};
 use crate::utility::carousel::{CarouselConfig, CarouselPage, create_carousel_embed, create_carousel_components};
 use crate::translation::get_by_locale;
@@ -28,11 +30,26 @@ pub async fn consume(ctx: Context<'_>) -> Result<(), Error> {
         _ => return Err("consume__character_not_found".into()),
     };
 
+    // Vérification des processus longs en cours
+    if let Ok(Some(player_move)) = character.clone().get_player_move().await {
+        if player_move.is_in_move {
+            return Err("consume__busy".into());
+        }
+    }
+
+    if let Ok(Some(_)) = PlayerCraft::get_by_user_id(universe.universe_id, user_id.get()).await {
+        return Err("consume__busy".into());
+    }
+
+    if let Ok(Some(_)) = PlayerLoot::get_by_user_id(universe.universe_id, user_id.get()).await {
+        return Err("consume__busy".into());
+    }
+
     let (embed, components) = create_consume_carousel_page(
         0,
         universe.universe_id,
         character._id,
-        ctx.locale().unwrap_or("fr")
+        ctx.locale().unwrap_or("en-US")
     ).await?;
 
     ctx.send(poise::CreateReply::default()
@@ -173,10 +190,7 @@ pub async fn handle_consume_interaction(
     Ok(())
 }
 
-use crate::database::characters::Character;
-use mongodb::bson::doc;
 use crate::database::db_client::get_db_client;
-use crate::database::db_namespace::{VERSEENGINE_DB_NAME, CHARACTERS_COLLECTION_NAME, ROADS_COLLECTION_NAME, PLACES_COLLECTION_NAME, AREAS_COLLECTION_NAME};
 
 async fn apply_consumption(
     ctx: &serenity::all::Context,
@@ -187,6 +201,24 @@ async fn apply_consumption(
 ) -> Result<String, Error> {
     let item = get_item_by_id(item_id).await?.ok_or("Item not found")?;
     
+    // Vérification des processus longs en cours
+    let character_info = crate::database::characters::get_character_by_id(char_id).await?
+        .ok_or("Character not found")?;
+
+    if let Ok(Some(player_move)) = character_info.clone().get_player_move().await {
+        if player_move.is_in_move {
+            return Err("consume__busy".into());
+        }
+    }
+
+    if let Ok(Some(_)) = PlayerCraft::get_by_user_id(univ_id, character_info.user_id).await {
+        return Err("consume__busy".into());
+    }
+
+    if let Ok(Some(_)) = PlayerLoot::get_by_user_id(univ_id, character_info.user_id).await {
+        return Err("consume__busy".into());
+    }
+
     if !matches!(item.item_usage, ItemUsage::Consumable) {
         return Err("Item is not consumable".into());
     }
@@ -271,27 +303,19 @@ async fn apply_consumption(
     }
 
     // 5. Sauvegarde des objets modifiés dans la session
-    let db = client.database(VERSEENGINE_DB_NAME);
-    
     let result = async {
-        db.collection::<Character>(CHARACTERS_COLLECTION_NAME)
-            .replace_one(doc! {"_id": character._id}, &character).session(&mut session).await?;
+        character.update_with_session(&mut session).await?;
 
-        if let Some(r) = &road {
-            db.collection::<crate::database::road::Road>(ROADS_COLLECTION_NAME)
-                .replace_one(doc! {"_id": r._id}, r).session(&mut session).await?;
+        if let Some(r) = road {
+            r.update_with_optional_session(Some(&mut session)).await?;
         }
         
-        if let Some(p) = &place {
-            db.collection::<crate::database::places::Place>(PLACES_COLLECTION_NAME)
-                .replace_one(doc! {"_id": p._id}, p).session(&mut session).await?;
+        if let Some(p) = place {
+            p.update_with_optional_session(Some(&mut session)).await?;
         }
 
-        if let Some(a) = &area {
-            db.collection::<crate::database::areas::Area>(AREAS_COLLECTION_NAME)
-                .replace_one(doc! {"_id": a._id}, a)
-                .upsert(true)
-                .session(&mut session).await?;
+        if let Some(a) = area {
+            a.update_with_session(&mut session).await?;
         }
         Ok::<(), Error>(())
     }.await;

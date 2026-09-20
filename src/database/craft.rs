@@ -40,6 +40,16 @@ impl PlayerCraft {
             .await
     }
 
+    pub async fn remove_with_session(&self, session: &mut mongodb::ClientSession) -> Result<DeleteResult, mongodb::error::Error> {
+        let db_client = get_db_client().await;
+        let db = db_client.database(VERSEENGINE_DB_NAME);
+        let filter = doc! {"user_id": self.user_id.to_string(), "universe_id": self.universe_id};
+        db.collection::<PlayerCraft>(CRAFTS_COLLECTION_NAME)
+            .delete_one(filter)
+            .session(session)
+            .await
+    }
+
     pub async fn upsert(&self) -> mongodb::error::Result<UpdateResult> {
         let mut doc = to_document(self).unwrap();
         doc.remove("_id");
@@ -52,6 +62,22 @@ impl PlayerCraft {
         db.collection::<PlayerCraft>(CRAFTS_COLLECTION_NAME)
             .update_one(filter, update)
             .with_options(options)
+            .await
+    }
+
+    pub async fn upsert_with_session(&self, session: &mut mongodb::ClientSession) -> mongodb::error::Result<UpdateResult> {
+        let mut doc = to_document(self).unwrap();
+        doc.remove("_id");
+        let filter = doc! {"user_id": self.user_id.to_string(), "universe_id": self.universe_id};
+        let update = doc! {"$set": doc};
+        let options = mongodb::options::UpdateOptions::builder().upsert(true).build();
+
+        let db_client = get_db_client().await;
+        let db = db_client.database(VERSEENGINE_DB_NAME);
+        db.collection::<PlayerCraft>(CRAFTS_COLLECTION_NAME)
+            .update_one(filter, update)
+            .with_options(options)
+            .session(session)
             .await
     }
 
@@ -78,6 +104,16 @@ impl PlayerCraft {
         db_client.database(VERSEENGINE_DB_NAME)
             .collection::<PlayerCraft>(CRAFTS_COLLECTION_NAME)
             .find_one(filter)
+            .await
+    }
+
+    pub async fn get_by_user_id_with_session(session: &mut mongodb::ClientSession, universe_id: ObjectId, user_id: u64) -> mongodb::error::Result<Option<PlayerCraft>> {
+        let db_client = get_db_client().await;
+        let filter = doc! {"user_id": user_id.to_string(), "universe_id": universe_id, "is_finished": false};
+        db_client.database(VERSEENGINE_DB_NAME)
+            .collection::<PlayerCraft>(CRAFTS_COLLECTION_NAME)
+            .find_one(filter)
+            .session(session)
             .await
     }
 }

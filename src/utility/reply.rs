@@ -80,20 +80,7 @@ pub async fn reply_with_args_and_ephemeral<'a>(
         Err(error) => (Color::from_rgb(255, 0, 0), error.to_string()),
     };
 
-    let (id, final_args) = if string.starts_with("error:") {
-        let parts: Vec<&str> = string.splitn(3, ':').collect();
-        if parts.len() == 3 {
-            let key = parts[1].to_string();
-            let err_msg = parts[2].to_string();
-            let mut new_args = args.unwrap_or_else(|| FluentArgs::new());
-            new_args.set("error", err_msg);
-            (key, Some(new_args))
-        } else {
-            (string.clone(), args)
-        }
-    } else {
-        (string.clone(), args)
-    };
+    let (id, final_args) = (string.clone(), args);
 
     match ctx.send(CreateReply::default().embed(
             CreateEmbed::new()

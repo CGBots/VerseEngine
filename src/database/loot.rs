@@ -32,12 +32,23 @@ impl PlayerLoot {
     }
 
     pub async fn remove(&self) -> Result<DeleteResult, mongodb::error::Error> {
+        self.remove_with_optional_session(None).await
+    }
+
+    pub async fn remove_with_session(&self, session: &mut mongodb::ClientSession) -> Result<DeleteResult, mongodb::error::Error> {
+        self.remove_with_optional_session(Some(session)).await
+    }
+
+    async fn remove_with_optional_session(&self, session: Option<&mut mongodb::ClientSession>) -> Result<DeleteResult, mongodb::error::Error> {
         let db_client = get_db_client().await;
         let db = db_client.database(VERSEENGINE_DB_NAME);
         let filter = doc! {"user_id": self.user_id.to_string(), "universe_id": self.universe_id};
-        db.collection::<PlayerLoot>(LOOTS_COLLECTION_NAME)
-            .delete_one(filter)
-            .await
+        let collection = db.collection::<PlayerLoot>(LOOTS_COLLECTION_NAME);
+        if let Some(s) = session {
+            collection.delete_one(filter).session(s).await
+        } else {
+            collection.delete_one(filter).await
+        }
     }
 
     pub async fn upsert(&self) -> mongodb::error::Result<UpdateResult> {

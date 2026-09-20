@@ -46,22 +46,42 @@ pub async fn get_item_by_id(item_id: ObjectId) -> mongodb::error::Result<Option<
 
 impl Item {
     pub async fn save(self) -> mongodb::error::Result<InsertOneResult> {
+        self.save_with_optional_session(None).await
+    }
+
+    pub async fn save_with_session(self, session: &mut mongodb::ClientSession) -> mongodb::error::Result<InsertOneResult> {
+        self.save_with_optional_session(Some(session)).await
+    }
+
+    pub async fn save_with_optional_session(self, session: Option<&mut mongodb::ClientSession>) -> mongodb::error::Result<InsertOneResult> {
         let db_client = get_db_client().await;
-        db_client
+        let coll = db_client
             .database(VERSEENGINE_DB_NAME)
-            .collection::<Item>(ITEM_COLLECTION_NAME)
-            .insert_one(self)
-            .await
+            .collection::<Item>(ITEM_COLLECTION_NAME);
+        match session {
+            Some(s) => coll.insert_one(self).session(s).await,
+            None => coll.insert_one(self).await,
+        }
     }
 
     pub async fn delete(universe_id: ObjectId, item_name: &str) -> mongodb::error::Result<bool> {
+        Self::delete_with_optional_session(universe_id, item_name, None).await
+    }
+
+    pub async fn delete_with_session(universe_id: ObjectId, item_name: &str, session: &mut mongodb::ClientSession) -> mongodb::error::Result<bool> {
+        Self::delete_with_optional_session(universe_id, item_name, Some(session)).await
+    }
+
+    pub async fn delete_with_optional_session(universe_id: ObjectId, item_name: &str, session: Option<&mut mongodb::ClientSession>) -> mongodb::error::Result<bool> {
         let db_client = get_db_client().await;
         let filter = doc! {"universe_id": universe_id, "item_name": item_name};
-        let result = db_client
+        let coll = db_client
             .database(VERSEENGINE_DB_NAME)
-            .collection::<Item>(ITEM_COLLECTION_NAME)
-            .delete_one(filter)
-            .await?;
+            .collection::<Item>(ITEM_COLLECTION_NAME);
+        let result = match session {
+            Some(s) => coll.delete_one(filter).session(s).await?,
+            None => coll.delete_one(filter).await?,
+        };
         Ok(result.deleted_count > 0)
     }
 }

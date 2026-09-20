@@ -60,6 +60,47 @@ impl Recipe {
             .await
     }
 
+    pub async fn get_by_name_with_session(session: &mut mongodb::ClientSession, universe_id: ObjectId, name: &str) -> mongodb::error::Result<Option<Recipe>> {
+        let db_client = get_db_client().await;
+        let filter = doc! {
+            "universe_id": universe_id,
+            "recipe_name": name,
+        };
+        db_client
+            .database(VERSEENGINE_DB_NAME)
+            .collection::<Recipe>(RECIPE_COLLECTION_NAME)
+            .find_one(filter)
+            .session(session)
+            .await
+    }
+
+    pub async fn get_by_id(universe_id: ObjectId, id: ObjectId) -> mongodb::error::Result<Option<Recipe>> {
+        let db_client = get_db_client().await;
+        let filter = doc! {
+            "universe_id": universe_id,
+            "_id": id,
+        };
+        db_client
+            .database(VERSEENGINE_DB_NAME)
+            .collection::<Recipe>(RECIPE_COLLECTION_NAME)
+            .find_one(filter)
+            .await
+    }
+
+    pub async fn get_by_id_with_session(session: &mut mongodb::ClientSession, universe_id: ObjectId, id: ObjectId) -> mongodb::error::Result<Option<Recipe>> {
+        let db_client = get_db_client().await;
+        let filter = doc! {
+            "universe_id": universe_id,
+            "_id": id,
+        };
+        db_client
+            .database(VERSEENGINE_DB_NAME)
+            .collection::<Recipe>(RECIPE_COLLECTION_NAME)
+            .find_one(filter)
+            .session(session)
+            .await
+    }
+
     pub async fn get_by_universe(universe_id: ObjectId) -> mongodb::error::Result<Vec<Recipe>> {
         let db_client = get_db_client().await;
         let filter = doc! {"universe_id": universe_id};

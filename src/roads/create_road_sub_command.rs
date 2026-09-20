@@ -201,9 +201,16 @@ pub async fn _create_road(ctx: &Context<'_>, place_one_str : String, place_two_s
         modifiers: vec![]
     };
 
-    match road.insert().await {
-        Ok(_) => { Ok("create_road__success") }
+    let mut session = crate::database::db_client::get_db_client().await.start_session().await?;
+    session.start_transaction().await?;
+
+    match road.insert_with_session(&mut session).await {
+        Ok(_) => {
+            session.commit_transaction().await?;
+            Ok("create_road__success")
+        }
         Err(_) => {
+            session.abort_transaction().await?;
             match new_role.delete(ctx).await {
                 Ok(_) => {}
                 Err(_) => { return Err("create_road__insert_road_failed_rollback_role_failed".into()) }

@@ -7,6 +7,7 @@ use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use fluent::FluentArgs;
 use crate::database::loot::PlayerLoot;
+use crate::database::db_client::get_db_client;
 use crate::database::inventory::{Inventory, HolderType};
 use crate::database::items::get_item_by_name;
 use crate::database::universe::get_universe_by_id;
@@ -67,30 +68,51 @@ async fn finalize_loot(mut loot: PlayerLoot, is_late: bool) -> Result<(), crate:
     let character = crate::database::characters::get_character_by_user_id(loot.universe_id, loot.user_id).await?
         .ok_or("loot_table__character_not_found")?;
 
-    let mut item_counts = std::collections::HashMap::new();
-    for item_name in &loot.items {
-        *item_counts.entry(item_name).or_insert(0) += 1;
-    }
+    let item_counts: std::collections::HashMap<String, u64> = {
+        let mut counts = std::collections::HashMap::new();
+        for item_name in &loot.items {
+            *counts.entry(item_name.clone()).or_insert(0) += 1;
+        }
+        counts
+    };
 
     let mut inventory_ids = Vec::new();
 
-    // Production des items
-    for (item_name, &quantity) in &item_counts {
-        if let Ok(Some(item)) = get_item_by_name(loot.universe_id, item_name).await {
-            let inv_id = Inventory::add_item_to_inventory(
-                loot.universe_id,
-                character._id,
-                HolderType::Character,
-                item._id,
-                quantity
-            ).await?;
-            inventory_ids.push(format!("{}:{}:{}", inv_id.to_hex(), item_name, quantity));
+    let client = get_db_client().await;
+    let mut session = client.start_session().await?;
+    session.start_transaction().await?;
+
+    let result: Result<(), crate::discord::poise_structs::Error> = async {
+        // Production des items
+        for (item_name, &quantity) in &item_counts {
+            if let Ok(Some(item)) = get_item_by_name(loot.universe_id, item_name).await {
+                let inv_id = Inventory::add_item_to_inventory_with_session(
+                    &mut session,
+                    loot.universe_id,
+                    character._id,
+                    HolderType::Character,
+                    item._id,
+                    quantity
+                ).await?;
+                inventory_ids.push(format!("{}:{}:{}", inv_id.to_hex(), item_name, quantity));
+            }
+        }
+
+        // Marquer comme fini et supprimer de la DB
+        loot.is_finished = true;
+        loot.remove_with_session(&mut session).await?;
+        Ok(())
+    }.await;
+
+    match result {
+        Ok(_) => {
+            session.commit_transaction().await?;
+        }
+        Err(e) => {
+            session.abort_transaction().await?;
+            return Err(e);
         }
     }
-
-    // Marquer comme fini et supprimer de la DB
-    loot.is_finished = true;
-    let _ = loot.remove().await;
 
     // Notifier l'utilisateur
     if let Some(http) = HTTP_CLIENT.lock().await.as_ref() {

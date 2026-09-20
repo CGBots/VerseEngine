@@ -11,7 +11,7 @@ use crate::database::db_client::{get_db_client};
 use crate::database::db_namespace::{VERSEENGINE_DB_NAME, SERVERS_COLLECTION_NAME, ROADS_COLLECTION_NAME, TRAVELS_COLLECTION_NAME};
 use crate::database::characters::{get_character_by_user_id, Character};
 use crate::database::road::{get_road, Road};
-use crate::database::travel::PlayerMove;
+use crate::database::travel::TravelGroup;
 use crate::database::universe::get_servers_from_universe;
 use crate::discord::poise_structs::{Context, Error};
 
@@ -219,12 +219,22 @@ impl Server {
     ///
     /// Returns a MongoDB error if the insert operation fails.
     pub async fn insert_server(&self) -> mongodb::error::Result<InsertOneResult> {
+        self.insert_server_with_optional_session(None).await
+    }
+
+    pub async fn insert_server_with_session(&self, session: &mut mongodb::ClientSession) -> mongodb::error::Result<InsertOneResult> {
+        self.insert_server_with_optional_session(Some(session)).await
+    }
+
+    pub async fn insert_server_with_optional_session(&self, session: Option<&mut mongodb::ClientSession>) -> mongodb::error::Result<InsertOneResult> {
         let db_client = get_db_client().await;
-        db_client
+        let coll = db_client
             .database(VERSEENGINE_DB_NAME)
-            .collection::<Server>(SERVERS_COLLECTION_NAME)
-            .insert_one(self)
-            .await
+            .collection::<Server>(SERVERS_COLLECTION_NAME);
+        match session {
+            Some(s) => coll.insert_one(self).session(s).await,
+            None => coll.insert_one(self).await,
+        }
     }
 
     /// Updates this server configuration in the database.
@@ -522,12 +532,12 @@ impl Server {
         }
     }
 
-    pub async fn get_player_move(self, user_id: u64) -> mongodb::error::Result<Option<PlayerMove>> {
+    pub async fn get_player_move(self, user_id: u64) -> mongodb::error::Result<Option<TravelGroup>> {
         let db_client = get_db_client().await;
-        let filter = doc!{"user_id": user_id.to_string().as_str(), "universe_id": self.universe_id};
+        let filter = doc!{"members": user_id.to_string(), "universe_id": self.universe_id};
         db_client
             .database(VERSEENGINE_DB_NAME)
-            .collection::<PlayerMove>(TRAVELS_COLLECTION_NAME)
+            .collection::<TravelGroup>(TRAVELS_COLLECTION_NAME)
             .find_one(filter)
             .await
     }

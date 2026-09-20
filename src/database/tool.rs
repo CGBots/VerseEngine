@@ -33,6 +33,16 @@ impl Tool {
             .await
     }
 
+    pub async fn save_with_session(self, session: &mut mongodb::ClientSession) -> mongodb::error::Result<InsertOneResult> {
+        let db_client = get_db_client().await;
+        db_client
+            .database(VERSEENGINE_DB_NAME)
+            .collection::<Tool>(PLACED_ITEMS_COLLECTION_NAME)
+            .insert_one(self)
+            .session(&mut *session)
+            .await
+    }
+
     pub async fn get_by_channel_id(universe_id: ObjectId, channel_id: u64) -> mongodb::error::Result<Vec<Tool>> {
         let db_client = get_db_client().await;
         let collection = db_client

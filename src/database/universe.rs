@@ -18,7 +18,7 @@ use crate::database::places::Place;
 use crate::database::road::Road;
 use crate::database::server::{Server};
 use crate::database::stats::Stat;
-use crate::database::travel::PlayerMove;
+use crate::database::travel::TravelGroup;
 use crate::discord::poise_structs::Error;
 
 pub static FREE_LIMIT_UNIVERSE: usize = 2;
@@ -108,12 +108,22 @@ impl Universe {
     ///   configured before invoking this function.
     /// - The database and collection names are derived from constants `RPBOT_DB_NAME` and `UNIVERSE_COLLECTION_NAME`.
     pub async fn insert_universe(&self) -> mongodb::error::Result<InsertOneResult> {
+        self.insert_universe_with_optional_session(None).await
+    }
+
+    pub async fn insert_universe_with_session(&self, session: &mut mongodb::ClientSession) -> mongodb::error::Result<InsertOneResult> {
+        self.insert_universe_with_optional_session(Some(session)).await
+    }
+
+    pub async fn insert_universe_with_optional_session(&self, session: Option<&mut mongodb::ClientSession>) -> mongodb::error::Result<InsertOneResult> {
         let db_client = get_db_client().await;
-        db_client
+        let coll = db_client
             .database(VERSEENGINE_DB_NAME)
-            .collection::<Universe>(UNIVERSES_COLLECTION_NAME)
-            .insert_one(self)
-            .await
+            .collection::<Universe>(UNIVERSES_COLLECTION_NAME);
+        match session {
+            Some(s) => coll.insert_one(self).session(s).await,
+            None => coll.insert_one(self).await,
+        }
     }
 
     /// Asynchronously retrieves a list of universes created by a specific user.
@@ -415,7 +425,7 @@ impl Universe {
         let stats = db.collection::<Stat>(STATS_COLLECTION_NAME);
         let roads = db.collection::<Road>(ROADS_COLLECTION_NAME);
         let characters = db.collection::<Character>(CHARACTERS_COLLECTION_NAME);
-        let travels = db.collection::<PlayerMove>(TRAVELS_COLLECTION_NAME);
+        let travels = db.collection::<TravelGroup>(TRAVELS_COLLECTION_NAME);
 
         let universe_delete = universes.delete_one(doc! {"_id": self.universe_id});
         let servers_delete = servers.delete_many(filter.clone());

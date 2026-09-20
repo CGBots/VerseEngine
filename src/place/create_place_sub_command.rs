@@ -137,9 +137,16 @@ pub async fn _create_place(ctx: &Context<'_>, name: String) -> Result<&'static s
         modifiers: vec![],
     };
 
-    match place.insert().await{
-        Ok(_) => {Ok("create_place__success")}
+    let mut session = crate::database::db_client::get_db_client().await.start_session().await?;
+    session.start_transaction().await?;
+
+    match place.insert_with_session(&mut session).await {
+        Ok(_) => {
+            session.commit_transaction().await?;
+            Ok("create_place__success")
+        }
         Err(_) => {
+            session.abort_transaction().await?;
             match role.delete(ctx).await {
                 Ok(_) => {}
                 Err(_) => {return Err("create_role__rollback_failed".into())}

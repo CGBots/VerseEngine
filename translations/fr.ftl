@@ -263,7 +263,16 @@ travel_start = départ
     .destination-description = Le lieu où vous souhaitez vous rendre (ID ou mention).
 travel_stop = stop
     .description = Arrêter votre voyage actuel sur la route où vous vous trouvez.
-
+travel_join = rejoindre
+    .description = Rejoindre le groupe de voyage d'un autre joueur.
+    .target = joueur
+    .target-description = Le joueur dont vous souhaitez rejoindre le groupe.
+travel_leave = quitter
+    .description = Quitter votre groupe de voyage actuel.
+travel_estimate = estimer
+    .description = Estimer la distance et le temps pour rejoindre un autre joueur sur la route.
+    .target = joueur
+    .target-description = Le joueur cible.
 ping = ping
     .description = Mesure la latence du bot.
 support = supporter
@@ -419,9 +428,45 @@ setup__error_during_role_creation = Erreur lors de la création des rôles
     .message = Une erreur s'est produite lors de la création des rôles
             Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 setup__reorder_went_wrong = Erreur lors du réordonnancement
-    .title = Erreur de réordonnancement
-    .message = Une erreur s'est produite lors du réordonnancement des rôles
+    .title = Erreur
+    .message = Le réordonnancement des salons ou rôles a échoué.
             Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
+
+create_universe__check_universe_limit_failed = Échec de la vérification de la limite
+    .title = Erreur
+    .message = Impossible de vérifier votre limite d'univers.
+
+create_universe__universe_limit_reached = Limite d'univers atteinte
+    .title = Limite atteinte
+    .message = Vous avez atteint le nombre maximum d'univers autorisés pour votre compte.
+
+create_universe__get_server_failed = Échec de récupération du serveur
+    .title = Erreur
+    .message = Impossible de récupérer les informations du serveur Discord.
+
+create_universe__already_exist_for_this_server = Univers déjà existant
+    .title = Erreur
+    .message = Un univers est déjà associé à ce serveur Discord.
+
+create_universe__universe_insert_failed = Échec de création de l'univers
+    .title = Erreur
+    .message = L'enregistrement de l'univers en base de données a échoué.
+
+create_universe__setup_constraints_failed = Échec de configuration des contraintes
+    .title = Erreur
+    .message = La configuration des contraintes d'unicité pour l'univers a échoué.
+
+create_universe__server_insert_failed = Échec d'enregistrement du serveur
+    .title = Erreur
+    .message = L'association du serveur à l'univers a échoué.
+
+create_universe__speed_stat_insert_failed = Échec d'initialisation des statistiques
+    .title = Erreur
+    .message = L'initialisation de la statistique de vitesse a échoué.
+
+create_universe__universe_successfully_created = Univers créé avec succès
+    .title = Succès
+    .message = Votre univers a été créé et configuré avec succès !
 road_channel_name = Routes
 setup__road_category_not_created = Catégorie Routes non créée
     .title = Erreur de création
@@ -556,6 +601,9 @@ CharacterModal = character_modal
     .character_story = Histoire du personnage
     .value = Il était une fois...
     .character_special_request = Requêtes spéciales
+create_character__modal_opened = Formulaire ouvert
+    .title = Création de personnage
+    .message = Le formulaire de création de personnage a été ouvert.
 create_character__submitted = Personnage envoyé
     .title = Personnage envoyé
     .message = Votre fiche de personnage a été envoyée pour vérification. Veuillez attendre la décision d'un modérateur.
@@ -611,6 +659,10 @@ create_character__choose_place = Choisir un lieu
     .title = Choisir un lieu
     .message = Veuillez sélectionner la catégorie où le personnage sera situé.
 character_stat_input = Statistiques du personnage
+accept_character__nickname_error = Erreur de changement de pseudo
+    .title = Erreur de pseudo
+    .message = Le bot n'a pas pu modifier votre pseudo. Cela arrive souvent pour les administrateurs. Un modérateur devra le faire manuellement.
+accept_character__nickname_skipped_log = ⚠️ Le pseudo de {$user} ({$character}) n'a pas pu être modifié automatiquement (probablement un administrateur).
 accept_character__no_player_role_id = Serveur non setup
     .title = Serveur non setup
     .message = Le role {player_role_name} n'as pas été trouvé.
@@ -626,6 +678,9 @@ travel__server_not_found = Serveur introuvable
 travel__place_not_found = Lieu introuvable
     .title = Lieu introuvable
     .message = Le lieu de destination spécifié n'existe pas dans cet univers.
+travel__road_not_found = Route introuvable
+    .title = Route introuvable
+    .message = Vous ne vous trouvez pas sur une route valide.
 travel__character_not_found = Personnage introuvable
     .title = Personnage introuvable
     .message = Vous n'avez pas de personnage dans cet univers.
@@ -643,11 +698,13 @@ travel__source_place_not_found = Lieu d'origine introuvable
     .message = Votre position actuelle n'est pas reconnue comme un lieu valide.
 travel__started = Voyage commencé
     .title = Voyage commencé
-    .message = Vous avez commencé votre voyage vers {$destination}.
+    .message = Votre groupe s'est mis en route.
 travel__stopped = Voyage arrêté
     .title = Voyage arrêté
     .message = Votre voyage a été arrêté. Vous pouvez maintenant choisir une destination ou rester ici.
-travel__interrupted = `{$user} interrompt son voyage.`
+travel__interrupted = Voyage interrompu
+    .title = Voyage interrompu
+    .message = Vous avez arrêté votre voyage.
 travel__not_in_move = Pas de voyage en cours
     .title = Pas de voyage en cours
     .message = Vous n'êtes pas en train de voyager.
@@ -661,10 +718,13 @@ move_from_place__road_not_found = Aucune route trouvée
     .title = Aucune route trouvée
     .message = Il n'y a pas de route directe entre votre position actuelle et {$destination}.
 
-travel__moving_to_place = `{$user} se déplace vers {$destination}.`
-travel__reached_destination = `{$user} est arrivé à {$destination}.`
-travel__arrived_at_destination = `{$user} vient d'arriver.`
-travel__taking_unknown_road = `{$user} emprunte une route inconnue.`
+travel__rejoining_route = _**{$user}** se dirige vers **{$destination}**._
+travel__moving_to_place = _**{$user}** se déplace vers **{$destination}**._
+travel__reached_destination = _**{$user}** arrive à **{$destination}**._
+travel__arrived_at_destination = _**{$user}** vient d'arriver._
+travel__interrupted_towards = _**{$user}** interrompt son trajet._
+travel__moving_to_place_from_start = _**{$user}** prend la route vers **{$destination}**._
+travel__taking_unknown_road = _**{$user}** emprunte une route inconnue._
 travel__invitation = Frontière atteinte
     .title = Frontière atteinte
     .message = **_{$user}, tu arrive à la frontière d'une région de l'univers {$universe} ! Voici l'invitation pour continuer ton voyage : {$link} _**
@@ -784,6 +844,84 @@ recipe__craft_already_in_progress = Craft déjà en cours
 travel__cannot_move_while_crafting = Craft en cours
     .title = Erreur
     .message = Vous ne pouvez pas vous déplacer pendant que vous craftez. Utilisez `/recipe stop` pour annuler le craft.
+
+travel__cannot_join_self = Action impossible
+    .title = Action impossible
+    .message = Vous ne pouvez pas rejoindre votre propre groupe.
+
+travel__universe_not_found = Univers introuvable
+    .title = Univers introuvable
+    .message = L'univers associé à ce serveur n'a pas été trouvé.
+
+travel__target_not_found = Joueur introuvable
+    .title = Joueur introuvable
+    .message = Le joueur cible n'a pas été trouvé ou ne possède pas de personnage.
+
+travel__already_in_same_group = Déjà dans le groupe
+    .title = Déjà dans le groupe
+    .message = Vous faites déjà partie du groupe de ce joueur.
+
+travel__too_far_different_place = Trop loin
+    .title = Trop loin
+    .message = Vous n'êtes pas au même endroit que ce joueur.
+
+travel__too_far_to_join = Trop loin
+    .title = Trop loin
+    .message = Vous êtes trop loin de ce joueur pour rejoindre son groupe en mouvement.
+
+travel__joined_group = Groupe rejoint
+    .title = Groupe rejoint
+    .message = Vous avez rejoint le groupe.
+
+travel__wrong_channel =
+    .title = Mauvais salon
+    .message = Vous n'êtes pas au bon endroit pour faire cela. Votre personnage se trouve actuellement dans la catégorie **{$category}**, salon **{$channel}**.
+
+travel__already_alone = Déjà seul
+    .title = Déjà seul
+    .message = Vous êtes déjà seul dans votre groupe.
+
+travel__left_group = Groupe quitté
+    .title = Groupe quitté
+    .message = Vous avez quitté le groupe.
+
+travel__only_leader_can_stop = Chef de groupe uniquement
+    .title = Chef de groupe uniquement
+    .message = Seul le chef du groupe peut arrêter le voyage. Vous pouvez quitter le groupe avec la commande `/voyage quitter`.
+
+travel__public_joined = `{$user} a rejoint le groupe de {$target}.`
+travel__public_left = `{$user} a quitté le groupe de {$leader}.`
+
+travel__cannot_estimate_self = Action impossible
+    .title = Action impossible
+    .message = Vous ne pouvez pas estimer la distance vers vous-même.
+
+travel__not_on_same_road = Pas sur la même route
+    .title = Pas sur la même route
+    .message = Vous et le joueur cible devez être sur la même route pour faire une estimation.
+
+travel__speed_stat_not_found = Statistique manquante
+    .title = Erreur
+    .message = La statistique de vitesse n'a pas été trouvée dans cet univers.
+
+travel__speed_resolve_failed = Erreur de calcul
+    .title = Erreur
+    .message = Impossible de calculer votre vitesse actuelle.
+
+travel__no_speed = Vitesse nulle
+    .title = Action impossible
+    .message = Votre vitesse est nulle, vous ne pouvez pas estimer de temps de trajet.
+
+travel__estimate_result = Estimation de distance
+    .title = Estimation
+    .message = Vous estimez que {$target} se trouve à environ **{$distance} mètres** de vous. En jeu, il vous faudrait environ **{$minutes} min {$seconds} s** pour le rejoindre.
+travel__estimate_can_join = Proche
+    .title = Proche
+    .message = {$target} est à portée de ralliement (environ **{$distance} mètres**). En jeu, il vous faudrait environ **{$minutes} min {$seconds} s** pour le rejoindre exactement.
+
+travel__estimate_too_far = Trop loin
+    .title = Trop loin
+    .message = Vous êtes trop loin de {$target} pour pouvoir estimer sa distance avec précision.
 recipe__empty_recipe = Recette vide
     .title = Erreur
     .message = La recette doit contenir au moins un ingrédient ou un résultat.
@@ -1057,6 +1195,9 @@ consume__success = Vous avez consommé **{ $item_name }** ! Les effets ont été
 consume__error = Erreur lors de la consommation : { $error }
 consume__universe_not_found = Univers non trouvé.
 consume__character_not_found = Personnage non trouvé.
+consume__busy = Action impossible
+    .title = Personnage occupé
+    .message = Vous ne pouvez pas consommer d'objet car vous êtes déjà engagé dans une autre activité (voyage, artisanat ou fouille).
 
 item_place__title = Placer un objet
 item_place__select_placeholder = Sélectionnez un objet à placer

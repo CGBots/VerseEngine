@@ -261,7 +261,16 @@ travel_start = start
     .destination-description = The place where you want to go (ID or mention).
 travel_stop = stop
     .description = Stops your current journey on the road you are currently on.
-
+travel_join = join
+    .description = Join another player's travel group.
+    .target = player
+    .target-description = The player whose group you wish to join.
+travel_leave = leave
+    .description = Leave your current travel group.
+travel_estimate = estimate
+    .description = Estimate distance and time to join another player on the road.
+    .target = player
+    .target-description = The target player.
 #Misc
 ping = ping
     .description = Measures the bot's latency.
@@ -419,9 +428,45 @@ setup__error_during_role_creation = Error during role creation
     .message = An error occurred during role creation
             Please try again or contact support if the problem persists: {support_link}
 setup__reorder_went_wrong = Error during reordering
-    .title = Reordering error
-    .message = An error occurred during role reordering
+    .title = Error
+    .message = Reordering of channels or roles failed.
             Please try again or contact support if the problem persists: {support_link}
+
+create_universe__check_universe_limit_failed = Failed to check limit
+    .title = Error
+    .message = Unable to check your universe limit.
+
+create_universe__universe_limit_reached = Universe limit reached
+    .title = Limit reached
+    .message = You have reached the maximum number of universes allowed for your account.
+
+create_universe__get_server_failed = Failed to retrieve server
+    .title = Error
+    .message = Unable to retrieve Discord server information.
+
+create_universe__already_exist_for_this_server = Universe already exists
+    .title = Error
+    .message = A universe is already associated with this Discord server.
+
+create_universe__universe_insert_failed = Failed to create universe
+    .title = Error
+    .message = Saving the universe in the database failed.
+
+create_universe__setup_constraints_failed = Failed to configure constraints
+    .title = Error
+    .message = Configuring uniqueness constraints for the universe failed.
+
+create_universe__server_insert_failed = Failed to register server
+    .title = Error
+    .message = Associating the server with the universe failed.
+
+create_universe__speed_stat_insert_failed = Failed to initialize statistics
+    .title = Error
+    .message = Initializing the speed statistic failed.
+
+create_universe__universe_successfully_created = Universe created successfully
+    .title = Success
+    .message = Your universe has been successfully created and configured!
 road_channel_name = Roads
 setup__road_category_not_created = Roads category not created
     .title = Creation error
@@ -556,6 +601,9 @@ CharacterModal = character_modal
     .character_story = Character's story
     .value = Once upon a time...
     .character_special_request = Special requests
+create_character__modal_opened = Form opened
+    .title = Character Creation
+    .message = The character creation form has been opened.
 create_character__submitted = Character sent
     .title = Character sent
     .message = Your character sheet has been sent for verification. Please wait for a moderator's decision.
@@ -611,6 +659,10 @@ create_character__choose_place = Choose a place
     .title = Choose a place
     .message = Please select the category where the character will be located.
 character_stat_input = Character's statistics
+accept_character__nickname_error = Nickname update error
+    .title = Nickname Error
+    .message = The bot could not update your nickname. This often happens for server administrators. A moderator will need to do it manually.
+accept_character__nickname_skipped_log = ⚠️ Could not automatically update nickname for {$user} ({$character}) (likely an administrator).
 accept_character__no_player_role_id = Server not configured
     .title = Server not configured
     .message = The {player_role_name} role hasn't been found.
@@ -624,6 +676,9 @@ travel__server_not_found = Server not found
 travel__place_not_found = Place not found
     .title = Place not found
     .message = The specified destination does not exist in this universe.
+travel__road_not_found = Road not found
+    .title = Road not found
+    .message = You are not currently on a valid road.
 travel__character_not_found = Character not found
     .title = Character not found
     .message = You do not have a character in this universe.
@@ -641,7 +696,7 @@ travel__source_place_not_found = Source place not found
     .message = Your current position is not recognized as a valid place.
 travel__started = Journey started
     .title = Journey started
-    .message = You have started your journey to {$destination}.
+    .message = {$pseudo} sets out to {$destination}.
 travel__stopped = Journey stopped
     .title = Journey stopped
     .message = Your journey has been stopped. You can now choose a destination or stay here.
@@ -662,10 +717,13 @@ travel__no_road_available = No available roads
     .title = No available road
     .message = No available road seems to be accessible from here. Maybe a secret road exists ?
 
-travel__moving_to_place = `{$user} is moving toward {$destination}.`
-travel__reached_destination = `{$user} has reached {$destination}.`
-travel__arrived_at_destination = `{$user} has just arrived.`
-travel__taking_unknown_road = `{$user} is taking an unknown road.`
+travel__rejoining_route = _**{$user}** is heading toward **{$destination}**._
+travel__moving_to_place = _**{$user}** is moving toward **{$destination}**._
+travel__reached_destination = _**{$user}** arrives at **{$destination}**._
+travel__arrived_at_destination = _**{$user}** has just arrived._
+travel__interrupted_towards = _**{$user}** interrupts their journey._
+travel__moving_to_place_from_start = _**{$user}** takes the road to **{$destination}**._
+travel__taking_unknown_road = _**{$user}** is taking an unknown road._
 travel__invitation = Border reached
     .title = Border reached
     .message = **_{$user}, you have reached the border of a region in the universe {$universe}! Here is the invitation to continue your journey: {$link} _**
@@ -782,6 +840,84 @@ recipe__craft_already_in_progress = Craft already in progress
 travel__cannot_move_while_crafting = Crafting in progress
     .title = Error
     .message = You cannot move while crafting. Use `/recipe stop` to cancel the craft.
+
+travel__cannot_join_self = Impossible action
+    .title = Impossible action
+    .message = You cannot join your own group.
+
+travel__universe_not_found = Universe not found
+    .title = Universe not found
+    .message = The universe associated with this server was not found.
+
+travel__target_not_found = Player not found
+    .title = Player not found
+    .message = The target player was not found or has no character.
+
+travel__already_in_same_group = Already in group
+    .title = Already in group
+    .message = You are already part of this player's group.
+
+travel__too_far_different_place = Too far
+    .title = Too far
+    .message = You are not in the same place as this player.
+
+travel__too_far_to_join = Too far
+    .title = Too far
+    .message = You are too far from this player to join their group while moving.
+
+travel__joined_group = Group joined
+    .title = Group joined
+    .message = You have joined the group.
+
+travel__wrong_channel =
+    .title = Wrong channel
+    .message = You are not in the right place to do this. Your character is currently in the **{$category}** category, **{$channel}** channel.
+
+travel__already_alone = Already alone
+    .title = Already alone
+    .message = You are already alone in your group.
+
+travel__left_group = Group left
+    .title = Group left
+    .message = You have left the group.
+
+travel__only_leader_can_stop = Leader only
+    .title = Leader only
+    .message = Only the group leader can stop the journey. You can leave the group with the command `/travel leave`.
+
+travel__public_joined = `{$user} joined {$target}'s group.`
+travel__public_left = `{$user} left {$leader}'s group.`
+
+travel__cannot_estimate_self = Impossible action
+    .title = Impossible action
+    .message = You cannot estimate the distance to yourself.
+
+travel__not_on_same_road = Not on the same road
+    .title = Not on the same road
+    .message = You and the target player must be on the same road to make an estimation.
+
+travel__speed_stat_not_found = Missing statistic
+    .title = Error
+    .message = The speed statistic was not found in this universe.
+
+travel__speed_resolve_failed = Calculation error
+    .title = Error
+    .message = Impossible to calculate your current speed.
+
+travel__no_speed = No speed
+    .title = Impossible action
+    .message = Your speed is zero, you cannot estimate travel time.
+
+travel__estimate_result = Distance estimation
+    .title = Estimation
+    .message = You estimate that {$target} is about **{$distance} meters** away from you. In-game, it would take you about **{$minutes} min {$seconds} s** to reach them.
+travel__estimate_can_join = Close by
+    .title = Close by
+    .message = {$target} is within joining range (about **{$distance} meters**). In-game, it would take you about **{$minutes} min {$seconds} s** to reach their exact position.
+
+travel__estimate_too_far = Too far
+    .title = Too far
+    .message = You are too far from {$target} to estimate the distance accurately.
 recipe__empty_recipe = Empty recipe
     .title = Error
     .message = The recipe must contain at least one ingredient or one result.
@@ -1048,6 +1184,9 @@ consume__success = You have consumed **{ $item_name }**! Effects have been appli
 consume__error = Error during consumption: { $error }
 consume__universe_not_found = Universe not found.
 consume__character_not_found = Character not found.
+consume__busy = Action impossible
+    .title = Character busy
+    .message = You cannot consume an item because you are already engaged in another activity (traveling, crafting, or looting).
 
 item_place__title = Place an Item
 item_place__select_placeholder = Select an item to place
