@@ -192,6 +192,7 @@ mod test {
     use crate::discord::connect_bot::{connect_bot, TEST_PASSED};
 
     #[tokio::test]
+    #[ignore = "integration test: needs DISCORD_TOKEN and MongoDB; run with --ignored"]
     async fn test_discord_bot_connection(){
         let _ = connect_bot().await;
         assert_eq!(TEST_PASSED.try_lock().unwrap().pop_front().unwrap(), true);

@@ -1,0 +1,16 @@
+# Ne jamais envoyer de secrets ni de caches dans le contexte de build
+.env
+.env.*
+!.env.example
+
+.git
+.github
+.idea
+target
+
+# Fichiers inutiles à l'image
+Dockerfile
+.dockerignore
+docker-compose*.yml
+*.md
+setup.sh

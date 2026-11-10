@@ -803,6 +803,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
     async fn test_create_universe() {
         let insertion_result = insert_universe().await;
         match insertion_result {
@@ -818,6 +819,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
     async fn test_delete_previously_setup() {
         let _ = insert_universe().await;
         let result = delete_previously_setup().await;
@@ -825,6 +827,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
     async fn test_recover_universe_data() {
         let _ = insert_universe().await;
         let result = get_universe_by_server_id(1).await;
@@ -844,6 +847,7 @@ mod test {
 
     /// Tests that universes can be retrieved by their creator ID.
     #[tokio::test]
+    #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
     async fn test_recover_universe_by_creator_id() {
         let _ = insert_universe().await;
         let result = Universe::get_creator_universes(0).await;
@@ -857,6 +861,7 @@ mod test {
 
     /// Tests that a universe can be retrieved by its ObjectId.
     #[tokio::test]
+    #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
     async fn test_recover_universe_by_id() {
         let universe = insert_universe().await;
         let id = universe
@@ -879,6 +884,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
     async fn test_recover_unexisting_universe_by_id() {
         let _ = insert_universe().await;
         let result = Universe::get_creator_universes(1).await;

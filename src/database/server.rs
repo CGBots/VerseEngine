@@ -651,6 +651,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
     async fn test_insert_server() {
         insert_universe().await.unwrap();
         let result = Server::default()
