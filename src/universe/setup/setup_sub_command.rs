@@ -108,7 +108,7 @@ pub async fn setup(
 /// }
 /// ```
 pub async fn _setup(ctx: &Context<'_>, setup_type: SetupType) -> Result<&'static str, Error> {
-    let guild_id = ctx.guild_id().unwrap();
+    let Some(guild_id) = ctx.guild_id() else { return Err("guild_only".into()) };
 
     let Ok(server_opt) = get_server_by_id(guild_id.get()).await else { return Err("setup__server_not_found".into()) };
     let Some(mut server) = server_opt else { return Err("setup__server_not_found".into()) };
@@ -145,7 +145,7 @@ pub async fn _setup(ctx: &Context<'_>, setup_type: SetupType) -> Result<&'static
                 .components(components)
         };
 
-        let message = ctx.send(reply.clone()).await.unwrap();
+        let Ok(message) = ctx.send(reply.clone()).await else { return Err("setup_server__failed".into()) };
 
         let serenity_context = ctx.serenity_context();
 
