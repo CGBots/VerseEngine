@@ -51,7 +51,7 @@ impl PlayerCraft {
     }
 
     pub async fn upsert(&self) -> mongodb::error::Result<UpdateResult> {
-        let mut doc = to_document(self).unwrap();
+        let mut doc = to_document(self)?;
         doc.remove("_id");
         let filter = doc! {"user_id": self.user_id.to_string(), "universe_id": self.universe_id};
         let update = doc! {"$set": doc};
@@ -66,7 +66,7 @@ impl PlayerCraft {
     }
 
     pub async fn upsert_with_session(&self, session: &mut mongodb::ClientSession) -> mongodb::error::Result<UpdateResult> {
-        let mut doc = to_document(self).unwrap();
+        let mut doc = to_document(self)?;
         doc.remove("_id");
         let filter = doc! {"user_id": self.user_id.to_string(), "universe_id": self.universe_id};
         let update = doc! {"$set": doc};
