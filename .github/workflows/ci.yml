@@ -31,6 +31,33 @@ jobs:
       - name: Tests
         run: cargo test --locked
 
+  mongodb-integration:
+    name: Tests d'intégration MongoDB
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:8
+        env:
+          MONGO_INITDB_ROOT_USERNAME: ci
+          MONGO_INITDB_ROOT_PASSWORD: ci-password
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1})'"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      MONGODB_USER: ci
+      MONGODB_PASSWORD: ci-password
+      MONGODB_HOST: 127.0.0.1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Les tests qui parlent à Discord (`discord` dans leur nom) demandent un jeton : ils
+      # restent à lancer à la main (voir README).
+      - name: Tests d'intégration (sans Discord)
+        run: cargo test --locked -- --ignored --skip discord
+
   docker:
     name: Docker image build
     runs-on: ubuntu-latest

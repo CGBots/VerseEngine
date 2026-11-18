@@ -333,7 +333,10 @@ async fn announce_phase(
             Ok(_) => return,
             Err(e) => {
                 eprintln!("[time] server {server_id}: cannot edit the stored message {id} in channel {channel}: {e:?}");
-                stale.push(id);
+                // Un message déjà supprimé (404) n'a pas besoin d'être nettoyé.
+                if !is_unknown_message(&e) {
+                    stale.push(id);
+                }
             }
         }
     }
@@ -367,6 +370,18 @@ async fn announce_phase(
         }
         Err(e) => eprintln!("[time] server {server_id}: cannot send the announcement in channel {channel}: {e:?}"),
     }
+}
+
+/// Code d'erreur JSON de Discord pour « Unknown Message ».
+const DISCORD_UNKNOWN_MESSAGE: isize = 10008;
+
+/// Vrai si l'erreur est un « Unknown Message » de Discord (message supprimé ou inexistant).
+fn is_unknown_message(error: &serenity::Error) -> bool {
+    matches!(
+        error,
+        serenity::Error::Http(serenity::http::HttpError::UnsuccessfulRequest(response))
+            if response.error.code == DISCORD_UNKNOWN_MESSAGE
+    )
 }
 
 /// Mémorise l'identifiant du message d'annonce s'il a changé.
@@ -566,5 +581,127 @@ mod tests {
         let bot = UserId::new(7);
         assert_eq!(pick_bot_message_id(&[msg(10, 1), msg(20, 2)], bot, None), None);
         assert_eq!(pick_bot_message_id(&[], bot, None), None);
+    }
+}
+
+/// Tests d'intégration du cycle d'annonce contre la vraie API REST Discord et un vrai MongoDB.
+///
+/// Variables : `MONGODB_*`, `DISCORD_TOKEN` (n'importe quelle valeur derrière le proxy
+/// d'identifiants), `VERSEENGINE_TEST_GUILD_ID` (serveur où le bot peut gérer les salons et les
+/// webhooks). Le test crée son propre salon et le supprime à la fin.
+#[cfg(test)]
+mod discord_integration {
+    use super::*;
+    use crate::database::db_namespace::{SERVERS_COLLECTION_NAME, VERSEENGINE_DB_NAME};
+    use crate::database::server::{get_server_by_id, Server};
+    use crate::test_support::{block_on, discord_http, random_id, TempChannel};
+    use mongodb::bson::doc;
+    use serenity::all::{CreateWebhook, ExecuteWebhook, Message};
+
+    async fn history(http: &Http, channel: ChannelId) -> Vec<Message> {
+        channel.messages(http, GetMessages::new().limit(100)).await.expect("cannot read the history")
+    }
+
+    async fn stored_id(server_id: u64) -> Option<u64> {
+        get_server_by_id(server_id).await.unwrap().expect("server document").universal_time_message_id
+    }
+
+    /// Message posté par un webhook : le bot ne peut pas le modifier (403, code 50005).
+    async fn foreign_message(http: &Http, webhook: &serenity::all::Webhook, content: &str) -> MessageId {
+        webhook
+            .execute(http, true, ExecuteWebhook::new().content(content))
+            .await
+            .expect("cannot execute the webhook")
+            .expect("wait=true returns the message")
+            .id
+    }
+
+    #[test]
+    #[ignore = "integration test: needs MongoDB, DISCORD_TOKEN and VERSEENGINE_TEST_GUILD_ID; run with --ignored"]
+    fn announcement_cycle_against_discord() {
+        block_on(async {
+            let http = discord_http();
+            let bot = http.get_current_user().await.expect("REST access to Discord").id;
+            let channel = TempChannel::create(&http, "verseengine-it-time").await;
+            let server_id = random_id();
+            let mut server = Server::default();
+            server.server_id(server_id).universal_time_channel_id(channel.id.get());
+            server.insert_server().await.expect("insert the test server");
+
+            let result = std::panic::AssertUnwindSafe(scenario(&http, bot, server_id, channel.id));
+            let outcome = futures::FutureExt::catch_unwind(result).await;
+
+            crate::database::db_client::get_db_client()
+                .await
+                .database(VERSEENGINE_DB_NAME)
+                .collection::<Server>(SERVERS_COLLECTION_NAME)
+                .delete_one(doc! {"server_id": server_id.to_string()})
+                .await
+                .ok();
+            channel.delete(&http).await;
+            if let Err(panic) = outcome {
+                std::panic::resume_unwind(panic);
+            }
+        });
+    }
+
+    async fn scenario(http: &Http, bot: UserId, server_id: u64, channel: ChannelId) {
+        // 1) Premier passage : salon vide, rien de mémorisé -> un message est posté et mémorisé.
+        announce_phase(http, bot, server_id, channel, None, "phase 1".into()).await;
+        let messages = history(http, channel).await;
+        assert_eq!(messages.len(), 1, "a single announcement is posted");
+        let first = messages[0].id;
+        assert_eq!(messages[0].author.id, bot);
+        assert_eq!(messages[0].content, "phase 1");
+        assert_eq!(stored_id(server_id).await, Some(first.get()), "the posted message is remembered");
+
+        // 2) Message mémorisé -> il est modifié, aucun nouveau message.
+        announce_phase(http, bot, server_id, channel, Some(first.get()), "phase 2".into()).await;
+        let messages = history(http, channel).await;
+        assert_eq!(messages.len(), 1);
+        assert_eq!((messages[0].id, messages[0].content.as_str()), (first, "phase 2"));
+
+        // 3) Identifiant perdu (serveur antérieur au champ) -> le message est retrouvé dans
+        //    l'historique, modifié et de nouveau mémorisé.
+        crate::database::server::set_universal_time_message_id(server_id, None).await.unwrap();
+        announce_phase(http, bot, server_id, channel, None, "phase 3".into()).await;
+        let messages = history(http, channel).await;
+        assert_eq!(messages.len(), 1);
+        assert_eq!((messages[0].id, messages[0].content.as_str()), (first, "phase 3"));
+        assert_eq!(stored_id(server_id).await, Some(first.get()), "the message found again is remembered");
+
+        // 4) Message mémorisé supprimé à la main (404) -> nouveau message, mémorisé.
+        channel.delete_message(http, first).await.unwrap();
+        announce_phase(http, bot, server_id, channel, Some(first.get()), "phase 4".into()).await;
+        let messages = history(http, channel).await;
+        assert_eq!(messages.len(), 1);
+        let second = messages[0].id;
+        assert_ne!(second, first);
+        assert_eq!(messages[0].content, "phase 4");
+        assert_eq!(stored_id(server_id).await, Some(second.get()));
+
+        // 5) L'identifiant mémorisé désigne un message non modifiable (403) et un message du bot
+        //    existe -> le message du bot est modifié, l'identifiant corrigé, l'autre supprimé.
+        let webhook = channel.create_webhook(http, CreateWebhook::new("verseengine-it")).await.expect("create a webhook");
+        let foreign = foreign_message(http, &webhook, "not editable by the bot").await;
+        announce_phase(http, bot, server_id, channel, Some(foreign.get()), "phase 5".into()).await;
+        let messages = history(http, channel).await;
+        assert_eq!(messages.len(), 1, "the non-editable message is removed");
+        assert_eq!((messages[0].id, messages[0].content.as_str()), (second, "phase 5"));
+        assert_eq!(stored_id(server_id).await, Some(second.get()));
+
+        // 6) Message non modifiable mémorisé et plus aucun message du bot -> remplacement par un
+        //    nouveau message, mémorisé, et l'ancien est supprimé.
+        channel.delete_message(http, second).await.unwrap();
+        let foreign = foreign_message(http, &webhook, "still not editable").await;
+        announce_phase(http, bot, server_id, channel, Some(foreign.get()), "phase 6".into()).await;
+        let messages = history(http, channel).await;
+        assert_eq!(messages.len(), 1);
+        let third = messages[0].id;
+        assert_eq!(messages[0].author.id, bot);
+        assert_eq!(messages[0].content, "phase 6");
+        assert_eq!(stored_id(server_id).await, Some(third.get()));
+
+        webhook.delete(http).await.ok();
     }
 }

@@ -128,14 +128,13 @@ mod test {
 
     /// Ensures that the database connection initializes correctly.
     /// (Needs a reachable MongoDB configured through the `MONGODB_*` variables.)
-    #[tokio::test]
+    #[test]
     #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
-    async fn test_connect_db() {
-        let client = DB_CLIENT.get_or_init(|| async { connect_db().await.unwrap() }).await;
-        match client.database(VERSEENGINE_DB_NAME).list_collection_names().await {
-            Ok(_) => {assert!(true)}
-            Err(_) => {assert!(false)}
-        };
+    fn test_connect_db() {
+        crate::test_support::block_on(async {
+            let client = DB_CLIENT.get_or_init(|| async { connect_db().await.unwrap() }).await;
+            client.database(VERSEENGINE_DB_NAME).list_collection_names().await.expect("list collections");
+        });
     }
 
     #[test]

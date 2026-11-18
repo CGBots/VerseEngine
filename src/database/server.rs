@@ -647,12 +647,7 @@ pub async fn set_universal_time_message_id(
 
 #[cfg(test)]
 mod test {
-    use crate::database::universe::Universe;
-    use std::time::SystemTime;
-    use lazy_static::lazy_static;
     use super::*;
-
-    static _SERVER_ID: u64 = 1;
 
     #[test]
     fn time_message_id_is_optional_in_existing_documents() {
@@ -673,43 +668,32 @@ mod test {
         assert_eq!(read_back.universal_time_message_id, Some(1_234_567_890_123_456_789));
     }
 
-    lazy_static! {
-        pub static ref UNIVERSE_ID: ObjectId = ObjectId::new();
-    }
-
-    async fn insert_universe() -> Result<InsertOneResult, String> {
-        let _ = get_db_client().await;
-        let universe = Universe {
-            universe_id: *UNIVERSE_ID,
-            name: "test".to_string(),
-            creator_id: 0,
-            global_time_modifier: 100,
-            time_origin_timestamp: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
-            creation_timestamp: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
-        };
-        match universe.insert_universe().await {
-            Ok(universe) => Ok(universe),
-            Err(e) => {
-                println!("{}", e);
-                Err(e.to_string())
-            }
-        }
-    }
-
-    #[tokio::test]
+    #[test]
     #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
-    async fn test_insert_server() {
-        insert_universe().await.unwrap();
-        let result = Server::default()
-            .insert_server()
-            .await;
+    fn the_time_message_id_is_saved_without_touching_the_rest() {
+        use crate::test_support::{block_on, random_id};
+        block_on(async {
+            let server_id = random_id();
+            let mut server = Server::default();
+            server.server_id(server_id).universal_time_channel_id(42u64);
+            server.insert_server().await.expect("insert the test server");
 
-        assert!(result.is_ok());
+            set_universal_time_message_id(server_id, Some(7)).await.unwrap();
+            let saved = get_server_by_id(server_id).await.unwrap().unwrap();
+            set_universal_time_message_id(server_id, None).await.unwrap();
+            let cleared = get_server_by_id(server_id).await.unwrap().unwrap();
+
+            get_db_client()
+                .await
+                .database(VERSEENGINE_DB_NAME)
+                .collection::<Server>(SERVERS_COLLECTION_NAME)
+                .delete_one(doc! {"server_id": server_id.to_string()})
+                .await
+                .unwrap();
+
+            assert_eq!(saved.universal_time_message_id, Some(7));
+            assert_eq!(saved.universal_time_channel_id.map(|c| c.id), Some(42));
+            assert_eq!(cleared.universal_time_message_id, None);
+        });
     }
 }
