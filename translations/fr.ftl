@@ -1208,6 +1208,7 @@ activity__unauthorized = Session invalide ou expirée. Relancez l'activité.
 activity__invalid_request = Requête invalide.
 activity__payload_too_large = Requête trop volumineuse.
 activity__rate_limited = Trop de requêtes, patientez un instant.
+activity__action_in_progress = Une action est déjà en cours, patientez.
 activity__internal_error = Erreur interne du serveur.
 activity__discord_unavailable = Discord ne répond pas, réessayez plus tard.
 activity__missing_scope = Autorisation Discord insuffisante.

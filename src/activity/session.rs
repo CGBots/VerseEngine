@@ -20,6 +20,8 @@ pub struct Session {
     pub guild_id: u64,
     pub universe_id: ObjectId,
     pub instance_id: String,
+    /// Langue du client Discord du joueur (D12), normalisée : `fr` ou `en-US`.
+    pub locale: &'static str,
     /// Niveau calculé à l'authentification ; les routes admin le revérifient.
     pub access: AccessLevel,
     pub expires_at: Instant,
@@ -89,6 +91,7 @@ pub(crate) fn test_session(user_id: u64) -> Session {
         guild_id: 1,
         universe_id: ObjectId::new(),
         instance_id: "i-1".into(),
+        locale: "fr",
         access: AccessLevel::Player,
         expires_at: Instant::now(),
     }

@@ -519,7 +519,7 @@ mod integration {
 }
 
 #[cfg(test)]
-fn tests_support_road(universe_id: mongodb::bson::oid::ObjectId, channel_id: u64, place_one_id: u64, place_two_id: u64, secret: bool) -> Road {
+pub(crate) fn tests_support_road(universe_id: mongodb::bson::oid::ObjectId, channel_id: u64, place_one_id: u64, place_two_id: u64, secret: bool) -> Road {
     Road {
         _id: mongodb::bson::oid::ObjectId::new(),
         universe_id,

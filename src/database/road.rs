@@ -99,6 +99,15 @@ pub async fn get_road_by_source(universe_id: ObjectId, destination_id: u64) -> m
         .await
 }
 
+/// Toutes les routes d'un univers, **secrètes comprises** (carte, côté serveur uniquement).
+pub async fn get_roads_by_universe(universe_id: ObjectId) -> mongodb::error::Result<Cursor<Road>> {
+    get_db_client().await
+        .database(VERSEENGINE_DB_NAME)
+        .collection::<Road>(ROADS_COLLECTION_NAME)
+        .find(doc! {"universe_id": universe_id})
+        .await
+}
+
 /// Toutes les routes d'un lieu, **secrètes comprises** : à filtrer avec
 /// `travel::service::road_is_visible` avant de les montrer à un joueur.
 pub async fn get_roads_of_place(universe_id: ObjectId, place_id: u64) -> mongodb::error::Result<Cursor<Road>> {

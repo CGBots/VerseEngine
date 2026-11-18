@@ -9,11 +9,12 @@ pub mod discord_api;
 pub mod dto;
 pub mod error;
 pub mod http;
-#[allow(dead_code)] // utilisé à partir de la phase b (API carte, import Azgaar)
+#[allow(dead_code)] // azgaar/network : utilisés par l'import admin (phase d)
 pub mod map;
 pub mod permissions;
 pub mod ratelimit;
 pub mod session;
+pub mod map_view;
 pub mod travel_view;
 
 use std::sync::Arc;
@@ -41,8 +42,8 @@ pub fn spawn(bot_http: Arc<Http>) {
         }
     };
     tokio::spawn(async move {
-        let discord = Arc::new(discord_api::LiveDiscord::new(&cfg, bot_http));
-        let state = http::AppState::new(discord, cfg.session_ttl);
+        let discord = Arc::new(discord_api::LiveDiscord::new(&cfg, bot_http.clone()));
+        let state = http::AppState::new(discord, cfg.session_ttl).with_bot_http(bot_http);
         let mut app = http::router(state);
         if let Some(dir) = cfg.static_dir.as_ref().filter(|d| d.is_dir()) {
             let index = dir.join("index.html");

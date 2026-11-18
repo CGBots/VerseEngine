@@ -17,3 +17,4 @@ pub mod recipe;
 pub mod tool;
 pub mod areas;
 pub mod known_roads;
+pub mod universe_maps;

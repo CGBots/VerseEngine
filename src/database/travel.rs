@@ -50,6 +50,15 @@ pub struct TravelGroup {
     pub server_id: u64,
 }
 
+/// Groupe de voyage d'un joueur dans un univers.
+pub async fn get_group_of_user(universe_id: ObjectId, user_id: u64) -> mongodb::error::Result<Option<TravelGroup>> {
+    get_db_client().await
+        .database(VERSEENGINE_DB_NAME)
+        .collection::<TravelGroup>(TRAVELS_COLLECTION_NAME)
+        .find_one(doc! {"members": user_id.to_string(), "universe_id": universe_id})
+        .await
+}
+
 impl TravelGroup {
     pub async fn insert(self) -> mongodb::error::Result<InsertOneResult> {
         let db_client = get_db_client().await;
