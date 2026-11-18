@@ -758,7 +758,7 @@ pub async fn handle_accept_character_modal(ctx: SerenityContext, m: ModalInterac
         stats: extracted_stats,
         // Le premier champ de l'embed est la description (cf. handle_character_creation_modal).
         description: embed.fields.first().map(|f| f.value.clone()).filter(|d| !d.trim().is_empty()),
-        image_url: None,
+        image: None,
     };
 
     let mut session = get_db_client().await.start_session().await?;

@@ -289,7 +289,8 @@ async fn me_character(Authed(s): Authed) -> ApiResult<Json<CharacterDto>> {
         id: character._id.to_hex(),
         name: character.name,
         description: character.description,
-        image_url: character.image_url,
+        // Résolution de la référence d'image en URL : phase b (via le client HTTP du bot).
+        image_url: None,
         speed,
         stats,
         statuses,

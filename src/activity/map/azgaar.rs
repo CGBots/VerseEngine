@@ -23,10 +23,21 @@ pub struct Burg {
     pub capital: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RoutePoint {
+    pub x: f64,
+    pub y: f64,
+    /// Cellule Azgaar du point : sert à détecter les bifurcations (points partagés).
+    pub cell: Option<usize>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Route {
+    pub id: Option<u64>,
     pub group: Option<String>,
-    pub points: Vec<(f64, f64)>,
+    /// Longueur annoncée par Azgaar (dans `distance_unit`), si présente.
+    pub length: Option<f64>,
+    pub points: Vec<RoutePoint>,
 }
 
 #[derive(Debug, Clone)]
@@ -174,9 +185,23 @@ fn parse_cells(v: &Value) -> Vec<(f64, f64, u8)> {
 }
 
 fn parse_route(v: &Value) -> Option<Route> {
-    let points: Vec<(f64, f64)> = v.get("points")?.as_array()?.iter().filter_map(parse_point).collect();
+    let points: Vec<RoutePoint> = v
+        .get("points")?
+        .as_array()?
+        .iter()
+        .filter_map(|p| {
+            let (x, y) = parse_point(p)?;
+            let cell = p.as_array().and_then(|a| a.get(2)).and_then(Value::as_u64).map(|c| c as usize);
+            Some(RoutePoint { x, y, cell })
+        })
+        .collect();
     if points.len() < 2 { return None; }
-    Some(Route { group: v.get("group").and_then(Value::as_str).map(str::to_owned), points })
+    Some(Route {
+        id: v.get("i").and_then(Value::as_u64),
+        group: v.get("group").and_then(Value::as_str).map(str::to_owned),
+        length: num(v.get("length")).filter(|l| *l > 0.0),
+        points,
+    })
 }
 
 /// Hauteur (0–100) de la cellule d'un burg, si connue.

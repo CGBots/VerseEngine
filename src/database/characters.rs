@@ -22,9 +22,22 @@ pub struct Character {
     /// Absente des documents antérieurs (lecture compatible grâce à `default`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// Image du personnage (URL), cf. docs/activity/ARCHITECTURE.md ❓Q5.
+    /// Image du personnage : référence vers la pièce jointe d'un message Discord
+    /// (fiche ou fil de la fiche). Les URL du CDN Discord expirent : on stocke la
+    /// référence et on régénère l'URL à la demande ; supprimer le message retire l'image.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image_url: Option<String>,
+    pub image: Option<CharacterImage>,
+}
+
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct CharacterImage {
+    #[serde_as(as = "DisplayFromStr")]
+    pub channel_id: u64,
+    #[serde_as(as = "DisplayFromStr")]
+    pub message_id: u64,
+    #[serde_as(as = "DisplayFromStr")]
+    pub attachment_id: u64,
 }
 
 impl Character {

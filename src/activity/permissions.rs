@@ -15,9 +15,10 @@ pub enum AccessLevel {
 }
 
 impl AccessLevel {
-    /// Accès au mode administrateur de l'activité (❓Q3 : modérateurs inclus pour l'instant,
-    /// les actions destructives exigeront `Admin`).
+    /// Accès au mode administrateur de l'activité. Décision D3 : les modérateurs gèrent
+    /// les joueurs et valident les propositions, sans éditer l'univers.
     pub fn can_use_admin_mode(self) -> bool { self >= AccessLevel::Moderator }
+    /// Créer/modifier/supprimer lieux, routes, objets, loot tables, recettes, import de carte.
     #[allow(dead_code)] // routes admin (phase d)
     pub fn can_edit_world(self) -> bool { self == AccessLevel::Admin }
 }
