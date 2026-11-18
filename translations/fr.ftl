@@ -1238,3 +1238,20 @@ activity_ui__admin_mode = Mode administrateur
 activity_ui__map = Carte
 activity_ui__retry = Réessayer
 activity_ui__expires = expire dans {$time}
+
+# Clés de voyage utilisées par le code mais absentes jusqu'ici
+travel__invalid_channel = Salon invalide
+    .title = Salon invalide
+    .message = Cette commande doit être utilisée dans un salon du serveur.
+travel__invalid_destination = Destination invalide
+    .title = Destination invalide
+    .message = La destination choisie n'est pas valide.
+travel__invalid_interaction = Interaction invalide
+    .title = Interaction invalide
+    .message = Cette interaction n'est pas reconnue.
+travel__no_destination_found = Aucune destination
+    .title = Aucune destination
+    .message = Aucune route ne part de votre position actuelle.
+travel__no_road_found = Aucune route
+    .title = Aucune route
+    .message = Aucune route ne relie votre position à cette destination.

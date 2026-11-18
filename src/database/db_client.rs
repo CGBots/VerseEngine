@@ -5,7 +5,7 @@ use mongodb::IndexModel;
 use mongodb::options::IndexOptions;
 use tokio::sync::OnceCell;
 use urlencoding::encode;
-use crate::database::db_namespace::{VERSEENGINE_DB_NAME, SERVERS_COLLECTION_NAME, ITEM_COLLECTION_NAME, STATS_COLLECTION_NAME, CHARACTERS_COLLECTION_NAME};
+use crate::database::db_namespace::{KNOWN_ROADS_COLLECTION_NAME, VERSEENGINE_DB_NAME, SERVERS_COLLECTION_NAME, ITEM_COLLECTION_NAME, STATS_COLLECTION_NAME, CHARACTERS_COLLECTION_NAME};
 use crate::database::recipe::RECIPE_COLLECTION_NAME;
 
 /// Reads a mandatory environment variable and turns its absence into a readable error
@@ -79,12 +79,13 @@ pub async fn constraint() -> anyhow::Result<()> {
     let db = db_client.database(VERSEENGINE_DB_NAME);
     let unique = IndexOptions::builder().unique(true).build();
 
-    let unique_indexes: [(&str, Document); 5] = [
+    let unique_indexes: [(&str, Document); 6] = [
         (SERVERS_COLLECTION_NAME, doc! {"server_id": 1}),
         (ITEM_COLLECTION_NAME, doc! {"universe_id": 1, "item_name": 1}),
         (STATS_COLLECTION_NAME, doc! {"universe_id": 1, "name": 1}),
         (CHARACTERS_COLLECTION_NAME, doc! {"universe_id": 1, "user_id": 1}),
         (RECIPE_COLLECTION_NAME, doc! {"universe_id": 1, "recipe_name": 1}),
+        (KNOWN_ROADS_COLLECTION_NAME, doc! {"universe_id": 1, "user_id": 1}),
     ];
 
     for (collection, keys) in unique_indexes {

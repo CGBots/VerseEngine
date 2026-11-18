@@ -16,3 +16,4 @@ pub mod inventory;
 pub mod recipe;
 pub mod tool;
 pub mod areas;
+pub mod known_roads;

@@ -1227,3 +1227,20 @@ activity_ui__admin_mode = Admin mode
 activity_ui__map = Map
 activity_ui__retry = Retry
 activity_ui__expires = expires in {$time}
+
+# Travel keys used by the code but missing until now
+travel__invalid_channel = Invalid channel
+    .title = Invalid channel
+    .message = This command must be used in a server channel.
+travel__invalid_destination = Invalid destination
+    .title = Invalid destination
+    .message = The selected destination is not valid.
+travel__invalid_interaction = Invalid interaction
+    .title = Invalid interaction
+    .message = This interaction is not recognised.
+travel__no_destination_found = No destination
+    .title = No destination
+    .message = No road leaves from your current position.
+travel__no_road_found = No road
+    .title = No road
+    .message = No road connects your position to this destination.
