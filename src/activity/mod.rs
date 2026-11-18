@@ -8,7 +8,9 @@ pub mod config;
 pub mod discord_api;
 pub mod dto;
 pub mod error;
+pub mod events;
 pub mod http;
+pub mod images;
 #[allow(dead_code)] // azgaar/network : utilisés par l'import admin (phase d)
 pub mod map;
 pub mod permissions;
@@ -44,6 +46,7 @@ pub fn spawn(bot_http: Arc<Http>) {
     tokio::spawn(async move {
         let discord = Arc::new(discord_api::LiveDiscord::new(&cfg, bot_http.clone()));
         let state = http::AppState::new(discord, cfg.session_ttl).with_bot_http(bot_http);
+        state.hub.start_watchers();
         let mut app = http::router(state);
         if let Some(dir) = cfg.static_dir.as_ref().filter(|d| d.is_dir()) {
             let index = dir.join("index.html");

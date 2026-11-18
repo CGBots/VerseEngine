@@ -23,6 +23,7 @@ use crate::activity::error::{ApiError, ApiResult};
 use crate::activity::permissions::{compute_access, AccessInput};
 use crate::activity::ratelimit::RateLimiter;
 use crate::activity::session::{Session, SessionStore};
+use crate::activity::events::EventKind;
 use crate::activity::map_view::{build_map_dto, computed_map, graph_hash, needs_layout, MapDto};
 use crate::activity::travel_view::{travel_view, TravelView};
 use crate::database::travel::{get_group_of_user, TravelGroup};
@@ -51,6 +52,10 @@ pub struct AppState {
     pub actions_in_flight: Arc<std::sync::Mutex<std::collections::HashSet<u64>>>,
     /// Client HTTP du bot, pour les actions de jeu (messages publics, rôles). `None` en test.
     pub bot_http: Option<Arc<serenity::all::Http>>,
+    /// Évènements temps réel (change streams).
+    pub hub: crate::activity::events::Hub,
+    /// URL des images de personnage (références de pièces jointes).
+    pub images: Arc<crate::activity::images::ImageCache>,
 }
 
 impl AppState {
@@ -64,6 +69,8 @@ impl AppState {
             write_limiter: Arc::new(RateLimiter::new(3, 1.0)),
             actions_in_flight: Arc::default(),
             bot_http: None,
+            hub: crate::activity::events::Hub::new(),
+            images: Arc::default(),
         }
     }
 
@@ -257,7 +264,7 @@ async fn me(Authed(s): Authed) -> Json<serde_json::Value> {
 // GET /api/me/character
 // ---------------------------------------------------------------------------
 
-async fn me_character(Authed(s): Authed) -> ApiResult<Json<CharacterDto>> {
+async fn me_character(State(state): State<AppState>, Authed(s): Authed) -> ApiResult<Json<CharacterDto>> {
     use crate::database::characters::get_character_by_user_id;
     let character = get_character_by_user_id(s.universe_id, s.user_id).await?.ok_or_else(|| ApiError::not_found("activity__no_character"))?;
     let universe = crate::database::universe::get_universe_by_id(s.universe_id).await?.ok_or_else(|| ApiError::not_found("activity__universe_not_found"))?;
@@ -292,13 +299,16 @@ async fn me_character(Authed(s): Authed) -> ApiResult<Json<CharacterDto>> {
 
     let now = now_secs();
     let (location, travel, group_members) = group_state(s.universe_id, group.as_ref(), now).await?;
+    let image_url = match (&character.image, &state.bot_http) {
+        (Some(image), Some(http)) => state.images.resolve(http, image).await,
+        _ => None,
+    };
 
     Ok(Json(CharacterDto {
         id: character._id.to_hex(),
         name: character.name,
         description: character.description,
-        // Résolution de la référence d'image en URL : phase b (via le client HTTP du bot).
-        image_url: None,
+        image_url,
         speed,
         stats,
         statuses,
@@ -614,6 +624,7 @@ async fn ws_session(state: AppState, mut socket: WebSocket) {
     if socket.send(Message::Text(json!({"type": "hello", "server_time": now_secs()}).to_string().into())).await.is_err() {
         return;
     }
+    let mut events = state.hub.subscribe();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(25));
     heartbeat.tick().await;
     loop {
@@ -621,6 +632,16 @@ async fn ws_session(state: AppState, mut socket: WebSocket) {
             _ = heartbeat.tick() => {
                 if session.expires_at <= std::time::Instant::now() { break; }
                 if socket.send(Message::Text(json!({"type": "heartbeat", "server_time": now_secs()}).to_string().into())).await.is_err() { break; }
+            }
+            event = events.recv() => {
+                let kind = match event {
+                    Ok(e) if e.is_visible_to(&session) => e.kind,
+                    Ok(_) => continue,
+                    // Ce client n'a pas suivi : il relit tout plutôt que de rater un changement.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => EventKind::Resync,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                };
+                if socket.send(Message::Text(json!({"type": kind, "server_time": now_secs()}).to_string().into())).await.is_err() { break; }
             }
             msg = socket.recv() => match msg {
                 Some(Ok(Message::Text(t))) => {
