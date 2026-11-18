@@ -7,6 +7,9 @@
 .github
 .idea
 target
+web/activity/node_modules
+web/activity/dist
+web/activity/*.tsbuildinfo
 
 # Fichiers inutiles à l'image
 Dockerfile

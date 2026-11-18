@@ -34,3 +34,16 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .side-panel { border-right: 0; border-bottom: 1px solid var(--border); max-height: 45vh; }
 }
+.map-view { position: relative; flex: 1; min-height: 0; }
+.map-view canvas, .map-2d { position: absolute; inset: 0; width: 100%; height: 100%; }
+.travel-panel { position: absolute; right: 12px; bottom: 12px; width: min(340px, calc(100% - 24px)); max-height: 60%; overflow-y: auto;
+  background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--border); border-radius: 8px; padding: 12px; display: grid; gap: 8px; }
+.destinations { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.destinations li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.destinations li.selected { outline: 1px solid var(--accent); border-radius: 6px; padding: 2px 4px; }
+.travel-panel .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.travel-message { margin: 0; }
+@media (max-width: 640px) {
+  .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .side-panel { max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--border); }
+}

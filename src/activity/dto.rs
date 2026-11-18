@@ -76,6 +76,8 @@ pub struct LocationDto {
     /// `category_id` du lieu ou `channel_id` de la route.
     pub id: String,
     pub name: Option<String>,
+    /// Lieu de départ (sur une route), pour placer le groupe sur la carte.
+    pub source_id: Option<String>,
     pub destination_id: Option<String>,
     pub destination_name: Option<String>,
 }

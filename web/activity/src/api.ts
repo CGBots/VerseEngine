@@ -31,6 +31,7 @@ export interface CharacterView {
     kind: 'place' | 'road';
     id: string;
     name: string | null;
+    source_id: string | null;
     destination_id: string | null;
     destination_name: string | null;
   } | null;
@@ -51,6 +52,37 @@ export interface SessionInfo {
   server_time: number;
 }
 
+export interface MapView {
+  source: 'Azgaar' | 'Computed' | 'Manual';
+  width: number;
+  height: number;
+  places: { id: string; name: string; x: number; y: number; z: number }[];
+  roads: { id: string; name: string; from: string; to: string; distance_km: number; secret: boolean }[];
+  terrain: { cols: number; rows: number; heights: number[] } | null;
+  zone: { polygon: [number, number][]; outside: 'crop' | 'grey' | 'remove' } | null;
+  server_time: number;
+}
+
+export interface TravelState {
+  location: CharacterView['location'];
+  travel: TravelView | null;
+  group_members: string[];
+  destinations: { id: string; name: string; distance_km: number }[];
+  result?: string;
+  server_time: number;
+}
+
+/** Actions de voyage : mêmes services que les commandes slash. */
+export const travelApi = {
+  state: () => api<TravelState>('/me/travel'),
+  start: (destinationId: string) =>
+    api<TravelState>('/me/travel/start', { method: 'POST', body: JSON.stringify({ destination_id: destinationId }) }),
+  stop: () => api<TravelState>('/me/travel/stop', { method: 'POST' }),
+  join: (targetUserId: string) =>
+    api<TravelState>('/me/travel/join', { method: 'POST', body: JSON.stringify({ target_user_id: targetUserId }) }),
+  leave: () => api<TravelState>('/me/travel/leave', { method: 'POST' }),
+};
+
 /** Erreur portant une clé Fluent renvoyée par le serveur. */
 export class ApiError extends Error {
   constructor(public status: number, public key: string) {
@@ -64,6 +96,10 @@ let sessionToken: string | null = null; // en mémoire uniquement (jamais de sto
 
 export function setSessionToken(token: string | null): void {
   sessionToken = token;
+}
+
+export function getSessionToken(): string | null {
+  return sessionToken;
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {

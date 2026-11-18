@@ -66,6 +66,24 @@ jobs:
       - name: Tests d'intégration (sans Discord)
         run: cargo test --locked -- --ignored --skip discord
 
+  activity-web:
+    name: Front de l'activité
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/activity
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/activity/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
   docker:
     name: Docker image build
     runs-on: ubuntu-latest

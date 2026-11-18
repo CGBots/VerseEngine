@@ -125,7 +125,8 @@ pub async fn connect_bot() -> Result<Client, ()>{
         })
         .setup(|ctx, _ready, framework| {
             Box::pin(async move {
-                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                // Conserve la commande « Launch » de l'activité (voir commands_registration).
+                crate::discord::commands_registration::register_globally(&ctx.http, &framework.options().commands).await?;
                 Ok(Data {translations})
             })
         })

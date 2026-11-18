@@ -325,7 +325,7 @@ async fn group_state(universe_id: mongodb::bson::oid::ObjectId, group: Option<&T
     let (location, road_distance) = match g.actual_space_type {
         SpaceType::Place => {
             let place = crate::database::places::get_place_by_category_id(universe_id, g.actual_space_id).await?;
-            (LocationDto { kind: "place", id: g.actual_space_id.to_string(), name: place.map(|p| p.name), destination_id: None, destination_name: None }, None)
+            (LocationDto { kind: "place", id: g.actual_space_id.to_string(), name: place.map(|p| p.name), source_id: None, destination_id: None, destination_name: None }, None)
         }
         SpaceType::Road => {
             let road = crate::database::road::get_road_by_channel_id(universe_id, g.actual_space_id).await?;
@@ -339,6 +339,7 @@ async fn group_state(universe_id: mongodb::bson::oid::ObjectId, group: Option<&T
                     kind: "road",
                     id: g.actual_space_id.to_string(),
                     name: road.map(|r| r.road_name),
+                    source_id: g.source_id.map(|d| d.to_string()),
                     destination_id: g.destination_id.map(|d| d.to_string()),
                     destination_name: dest_name,
                 },
@@ -731,6 +732,20 @@ mod tests {
             if path.extension().is_some_and(|e| e == "rs") {
                 let src = std::fs::read_to_string(&path).unwrap();
                 keys.extend(re.captures_iter(&src).map(|c| c[1].to_string()));
+            }
+        }
+        // Clés d'interface du front (`web/activity/src`), servies par `/api/i18n`.
+        let ui = regex::Regex::new(r"(activity_ui__[a-z_]+)").unwrap();
+        let mut stack = vec![std::path::PathBuf::from("web/activity/src")];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "ts" || e == "tsx") {
+                    let src = std::fs::read_to_string(&path).unwrap();
+                    keys.extend(ui.captures_iter(&src).map(|c| c[1].to_string()));
+                }
             }
         }
         assert!(keys.len() > 10);

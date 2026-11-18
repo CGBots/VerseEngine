@@ -1239,6 +1239,11 @@ activity_ui__admin_mode = Mode administrateur
 activity_ui__map = Carte
 activity_ui__retry = Réessayer
 activity_ui__expires = expire dans {$time}
+activity_ui__arrival_in = Arrivée dans
+activity_ui__go = Partir
+activity_ui__stop_travel = Arrêter le voyage
+activity_ui__leave_group = Quitter le groupe
+activity_ui__group_size = Groupe de {$count} voyageurs
 
 # Clés de voyage utilisées par le code mais absentes jusqu'ici
 travel__invalid_channel = Salon invalide

@@ -10,6 +10,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Identifiant public de l'application, intégré au front de l'activité.
+        VITE_DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN:?Renseignez DISCORD_TOKEN dans .env}
       MONGODB_USER: ${MONGODB_USER:?Renseignez MONGODB_USER dans .env}
@@ -17,6 +20,17 @@ services:
       MONGODB_AUTH_SOURCE: ${MONGODB_AUTH_SOURCE:-admin}
       MONGODB_HOST: ${MONGODB_HOST:-mongo}
       MONGODB_PORT: ${MONGODB_PORT:-27017}
+      # Activité Discord (désactivée par défaut). Voir docs/activity/DEPLOY.md.
+      ACTIVITY_ENABLED: ${ACTIVITY_ENABLED:-false}
+      # Dans le conteneur, on écoute sur toutes les interfaces : c'est la publication du port
+      # ci-dessous qui le limite à la machine hôte (reverse proxy TLS).
+      ACTIVITY_BIND: 0.0.0.0:8787
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      ACTIVITY_SESSION_TTL_SECS: ${ACTIVITY_SESSION_TTL_SECS:-3600}
+    # Joignable uniquement depuis la machine hôte (Caddy) : jamais exposé directement.
+    ports:
+      - "127.0.0.1:8787:8787"
     depends_on:
       mongo:
         condition: service_healthy

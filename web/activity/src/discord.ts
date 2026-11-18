@@ -24,7 +24,8 @@ export async function connect(): Promise<{ sdk: DiscordSDK; session: SessionInfo
 
   const session = await api<SessionInfo>('/auth/token', {
     method: 'POST',
-    body: JSON.stringify({ code, instance_id: instanceId }),
+    // Langue des messages publics produits par les actions du joueur (D12).
+    body: JSON.stringify({ code, instance_id: instanceId, locale: navigator.language }),
   });
   setSessionToken(session.session_token);
   await sdk.commands.authenticate({ access_token: session.access_token });

@@ -1228,6 +1228,11 @@ activity_ui__admin_mode = Admin mode
 activity_ui__map = Map
 activity_ui__retry = Retry
 activity_ui__expires = expires in {$time}
+activity_ui__arrival_in = Arrival in
+activity_ui__go = Go
+activity_ui__stop_travel = Stop travelling
+activity_ui__leave_group = Leave the group
+activity_ui__group_size = Group of {$count} travellers
 
 # Travel keys used by the code but missing until now
 travel__invalid_channel = Invalid channel

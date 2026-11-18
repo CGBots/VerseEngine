@@ -13,5 +13,6 @@ export default defineConfig({
       '/api': { target: 'http://127.0.0.1:8787', changeOrigin: true, ws: true },
     },
   },
-  build: { target: 'es2022', sourcemap: false, chunkSizeWarningLimit: 900 },
+  // La scène three.js (~950 Ko, 255 Ko gzip) est chargée à part (React.lazy).
+  build: { target: 'es2022', sourcemap: false, chunkSizeWarningLimit: 1000 },
 });
