@@ -1,10 +1,8 @@
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use serenity::all::{Http, UserId, CreateEmbed, Color, CreateMessage};
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
-use tokio::time::sleep;
 use fluent::FluentArgs;
 use crate::database::craft::PlayerCraft;
 use crate::database::recipe::Recipe;
@@ -12,9 +10,11 @@ use crate::database::inventory::{Inventory, HolderType};
 use crate::database::universe::get_universe_by_id;
 use crate::translation::get_by_locale;
 use mongodb::bson::oid::ObjectId;
+use crate::utility::timer::{self, Timer};
 
 pub static CRAFTS: Lazy<Arc<Mutex<Vec<PlayerCraft>>>> = Lazy::new(|| Arc::new(Mutex::new(vec![])));
-pub static CRAFT_SLEEPER: Lazy<Arc<Mutex<Option<JoinHandle<()>>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
+/// Minuteur unique de la file des crafts (voir [`crate::utility::timer`]).
+pub static CRAFT_TIMER: Lazy<Timer> = Lazy::new(|| Timer::new("craft"));
 pub static HTTP_CLIENT: Lazy<Arc<Mutex<Option<Arc<Http>>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
 
 /// Instant courant en secondes UNIX (0 si l'horloge système est avant 1970).
@@ -102,47 +102,27 @@ pub fn check_craft_requirements(
     Ok(())
 }
 
-fn craft_process(delay: u64) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        sleep(Duration::from_secs(delay)).await;
+fn craft_job() -> timer::Job {
+    timer::job(process_due_crafts)
+}
 
-        let next_delay: Option<u64>;
-        let _next_id: Option<String> = None;
+/// Finalise les crafts échus et retourne le délai avant le prochain.
+async fn process_due_crafts() -> Option<u64> {
+    let completed = {
+        let mut crafts = CRAFTS.lock().await;
+        let (finished, pending) = split_finished(std::mem::take(&mut *crafts), now_secs());
+        *crafts = pending;
+        finished
+    };
 
-        let completed_crafts: Vec<PlayerCraft>;
-
-        {
-            let mut crafts = CRAFTS.lock().await;
-            if crafts.is_empty() {
-                let mut sleeper = CRAFT_SLEEPER.lock().await;
-                *sleeper = None;
-                return;
-            }
-
-            let now = now_secs();
-
-            // On sépare les crafts terminés de ceux qui restent
-            let (finished, pending) = split_finished(crafts.clone(), now);
-            *crafts = pending;
-            completed_crafts = finished;
-
-            // Calculer le prochain réveil
-            next_delay = next_wakeup_delay(&crafts, now);
+    for craft in completed {
+        if let Err(e) = finalize_craft(craft, false).await {
+            eprintln!("[craft] cannot finalize a craft: {e:?}");
         }
+    }
 
-        // Traiter les crafts terminés
-        for craft in completed_crafts {
-            let _ = finalize_craft(craft, false).await;
-        }
-
-        if let Some(d) = next_delay {
-            let mut sleeper = CRAFT_SLEEPER.lock().await;
-            *sleeper = Some(craft_process(d));
-        } else {
-            let mut sleeper = CRAFT_SLEEPER.lock().await;
-            *sleeper = None;
-        }
-    })
+    let crafts = CRAFTS.lock().await;
+    next_wakeup_delay(&crafts, now_secs())
 }
 
 async fn finalize_craft(mut craft: PlayerCraft, is_late: bool) -> Result<(), crate::discord::poise_structs::Error> {
@@ -172,7 +152,8 @@ async fn finalize_craft(mut craft: PlayerCraft, is_late: bool) -> Result<(), cra
 
         // Marquer comme fini et supprimer de la DB
         craft.is_finished = true;
-        craft.remove_with_session(&mut session).await?;
+        let removed = craft.remove_with_session(&mut session).await?;
+        timer::ensure_claimed(removed.deleted_count)?;
         Ok(())
     }.await;
 
@@ -222,18 +203,8 @@ pub async fn add_craft(http: Arc<Http>, player_craft: PlayerCraft) -> Result<(),
     let mut crafts = CRAFTS.lock().await;
     crafts.push(player_craft.clone());
 
-    let delay = remaining_delay_secs(player_craft.end_timestamp, now_secs());
-
-    let mut sleeper = CRAFT_SLEEPER.lock().await;
-    if let Some(handle) = sleeper.as_ref() {
-        // On ne redémarre le sleeper que si le nouveau craft finit plus tôt
-        // Pour simplifier, on redémarre si le nouveau délai est plus court que le prochain réveil attendu
-        // Mais ici on va juste redémarrer le sleeper pour qu'il prenne en compte le nouveau craft le plus proche
-        handle.abort();
-        *sleeper = Some(craft_process(delay));
-    } else {
-        *sleeper = Some(craft_process(delay));
-    }
+    // Ne repousse jamais un réveil plus proche déjà prévu pour un autre craft.
+    CRAFT_TIMER.schedule(remaining_delay_secs(player_craft.end_timestamp, now_secs()), craft_job());
 
     Ok(())
 }
@@ -261,64 +232,52 @@ pub async fn stop_craft(universe_id: mongodb::bson::oid::ObjectId, user_id: u64)
     Ok(removed_craft)
 }
 
-#[allow(dead_code)]
+/// Recharge la file des crafts depuis la base. Appelé à chaque `ready` Discord, donc aussi après
+/// une reconnexion : l'ancien minuteur est arrêté, le traitement éventuellement en cours se termine
+/// d'abord, et chaque craft n'est finalisé qu'une fois.
 pub async fn setup() {
+    // Plus aucun nouveau traitement ne démarre ; on attend celui qui serait en cours.
+    CRAFT_TIMER.stop();
+    let _exclusive = CRAFT_TIMER.exclusive().await;
+    // Gardé jusqu'au remplacement de la file : un craft lancé pendant la relecture n'est pas perdu.
+    let mut crafts = CRAFTS.lock().await;
+
     let universes = match crate::database::universe::Universe::get_all_universes().await {
         Ok(u) => u,
         Err(e) => {
             eprintln!("Impossible d'initialiser la file de craft : erreur lors de la récupération des univers : {:?}", e);
+            // On reprend la file en mémoire telle quelle plutôt que de tout arrêter.
+            CRAFT_TIMER.restart(next_wakeup_delay(&crafts, now_secs()), craft_job());
             return;
         }
     };
-    
+
     let mut all_active_crafts = Vec::new();
     for universe in universes {
         match PlayerCraft::get_active_crafts(universe.universe_id).await {
             Ok(active_crafts) => all_active_crafts.extend(active_crafts),
             Err(e) => {
                 eprintln!("Impossible d'initialiser la file de craft : erreur lors de la récupération des crafts pour l'univers {:?} : {:?}", universe.universe_id, e);
+                CRAFT_TIMER.restart(next_wakeup_delay(&crafts, now_secs()), craft_job());
                 return;
             }
         }
     }
 
-    if all_active_crafts.is_empty() {
-        println!("File de craft initialisée (0 craft en cours).");
-        return;
-    }
-
     let now = now_secs();
     let (finished, pending) = split_finished(all_active_crafts, now);
 
-    // Traiter les crafts qui se sont terminés pendant que le bot était éteint
+    // Crafts terminés pendant que le bot était éteint (ou déconnecté).
     for craft in finished {
-        let _ = finalize_craft(craft, true).await;
+        if let Err(e) = finalize_craft(craft, true).await {
+            eprintln!("[craft] cannot finalize a recovered craft: {e:?}");
+        }
     }
 
-    if pending.is_empty() {
-        println!("File de craft initialisée (0 craft en attente après traitement des crafts terminés).");
-        return;
-    }
-
-    let pending_count = pending.len();
-
-    {
-        let mut crafts_lock = CRAFTS.lock().await;
-        *crafts_lock = pending;
-    }
-
-    // Démarrer le sleeper pour le craft le plus proche
-    let next_delay = {
-        let crafts = CRAFTS.lock().await;
-        next_wakeup_delay(&crafts, now)
-    };
-
-    if let Some(min_delay) = next_delay {
-        let mut sleeper = CRAFT_SLEEPER.lock().await;
-        *sleeper = Some(craft_process(min_delay));
-    }
-
-    println!("File de craft initialisée ({} craft(s) en attente).", pending_count);
+    *crafts = pending;
+    let next_delay = next_wakeup_delay(&crafts, now_secs());
+    CRAFT_TIMER.restart(next_delay, craft_job());
+    println!("File de craft initialisée ({} craft(s) en attente).", crafts.len());
 }
 
 #[cfg(test)]
@@ -473,5 +432,90 @@ mod tests {
             check_craft_requirements(&[], &[], &ingredients, &[(wood, 2), (stone, 2)]),
             Ok(())
         );
+    }
+}
+
+/// Test d'intégration MongoDB : reconnexions répétées pendant qu'un craft est terminé.
+#[cfg(test)]
+mod reconnect_integration {
+    use super::*;
+    use crate::database::characters::Character;
+    use crate::database::db_client::get_db_client;
+    use crate::database::db_namespace::*;
+    use crate::database::recipe::RECIPE_COLLECTION_NAME;
+    use crate::database::universe::Universe;
+    use crate::test_support::{block_on, random_id};
+    use mongodb::bson::doc;
+
+    #[test]
+    #[ignore = "integration test: needs a running MongoDB replica set (MONGODB_* env vars); run with --ignored"]
+    fn concurrent_setups_finalize_a_finished_craft_once() {
+        block_on(async {
+            let db = get_db_client().await.database(VERSEENGINE_DB_NAME);
+            let universe_id = ObjectId::new();
+            let user_id = random_id();
+            let item_id = ObjectId::new();
+            let recipe_id = ObjectId::new();
+            let character_id = ObjectId::new();
+
+            let universe = Universe {
+                universe_id,
+                name: "reconnect test".into(),
+                creator_id: random_id(),
+                global_time_modifier: 100,
+                time_origin_timestamp: 0,
+                creation_timestamp: 0,
+            };
+            universe.insert_universe().await.unwrap();
+            Recipe {
+                _id: Some(recipe_id),
+                universe_id,
+                tool_id: None,
+                ingredients: vec![],
+                result: vec![(3, item_id)],
+                tools_needed: vec![],
+                delay: 10,
+                raw_text: String::new(),
+                recipe_name: "test".into(),
+                wiki_posts_id: None,
+            }
+            .save()
+            .await
+            .unwrap();
+            db.collection::<Character>(CHARACTERS_COLLECTION_NAME)
+                .insert_one(Character { _id: character_id, user_id, universe_id, name: "test".into(), stats: vec![], description: None, image: None })
+                .await
+                .unwrap();
+            // Craft terminé pendant que le bot était déconnecté.
+            new_player_craft(universe_id, user_id, 1, recipe_id, 10, now_secs() - 60).upsert().await.unwrap();
+
+            // Copie en mémoire de l'ancien minuteur, faite avant la reconnexion.
+            let stale_copy = PlayerCraft::get_active_crafts(universe_id).await.unwrap();
+            assert_eq!(stale_copy.len(), 1);
+
+            // Trois `ready` rapprochés (reconnexions) qui relancent chacun le setup.
+            tokio::join!(setup(), setup(), setup());
+
+            // L'ancien minuteur se réveille ensuite et finalise sa copie : rien ne doit être donné.
+            let late = finalize_craft(stale_copy.into_iter().next().unwrap(), false).await;
+            assert!(late.is_err(), "a craft already finalized is refused");
+
+            let inventory = Inventory::get_by_character_id(universe_id, character_id).await.unwrap();
+            let remaining = PlayerCraft::get_active_crafts(universe_id).await.unwrap();
+
+            for (collection, filter) in [
+                (UNIVERSES_COLLECTION_NAME, doc! {"_id": universe_id}),
+                (RECIPE_COLLECTION_NAME, doc! {"universe_id": universe_id}),
+                (CHARACTERS_COLLECTION_NAME, doc! {"universe_id": universe_id}),
+                (INVENTORY_COLLECTION_NAME, doc! {"universe_id": universe_id}),
+                (CRAFTS_COLLECTION_NAME, doc! {"universe_id": universe_id}),
+            ] {
+                db.collection::<mongodb::bson::Document>(collection).delete_many(filter).await.unwrap();
+            }
+
+            let given: u64 = inventory.iter().filter(|i| i.item_id == item_id).map(|i| i.quantity).sum();
+            assert_eq!(given, 3, "the recipe result is given exactly once");
+            assert!(remaining.is_empty(), "the craft is removed");
+        });
     }
 }

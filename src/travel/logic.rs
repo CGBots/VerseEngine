@@ -1,7 +1,7 @@
 /// # Moteur de Logique de Voyage
 /// 
 /// Ce module gère le déplacement asynchrone des personnages dans l'univers.
-/// Il utilise un système de file d'attente globale (`MOVES`) et une tâche de fond (`SLEEPER`)
+/// Il utilise un système de file d'attente globale (`MOVES`) et un minuteur unique (`MOVE_TIMER`)
 /// pour traiter les étapes de voyage de manière efficace sans bloquer le bot.
 ///
 /// **Concepts clés :**
@@ -11,17 +11,15 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use serenity::all::{Http, GuildId, UserId, RoleId, ChannelId, CreateMessage, CreateEmbed, Color};
 use anyhow::bail;
 use once_cell::sync::Lazy;
 use tokio::sync::{Mutex};
-use tokio::task::JoinHandle;
 use crate::database::travel::{TravelGroup, SpaceType};
 use crate::database::characters::get_character_by_user_id;
 use chrono::{Local, Timelike, Utc};
 use fluent::FluentArgs;
-use tokio::time::sleep;
 use crate::database::road::get_road_by_channel_id;
 use crate::database::stats::{get_stat_by_name, SPEED_STAT};
 use crate::tr_locale;
@@ -34,13 +32,9 @@ use crate::translation::{get_by_locale};
 /// Le premier élément de cette liste est toujours celui qui doit expirer le plus tôt.
 pub static MOVES: Lazy<Arc<Mutex<Vec<TravelGroup>>>> = Lazy::new(|| Arc::new(Mutex::new(vec![])));
 
-/// Handle de la tâche asynchrone (Tokio) actuellement en attente du prochain événement de mouvement.
-///
-/// Le `SLEEPER` contient la tâche `move_process` qui dort pendant la durée nécessaire jusqu'à
-/// l'expiration du premier voyage dans `MOVES`.
-/// Si un nouveau voyage est ajouté en tête de file, la tâche précédente est annulée (aborted)
-/// et un nouveau `SLEEPER` est créé pour refléter le nouveau délai plus court.
-pub static SLEEPER: Lazy<Arc<Mutex<Option<JoinHandle<()>>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
+/// Minuteur unique de la file `MOVES` (voir [`crate::utility::timer`]) : il se réveille à
+/// l'échéance du premier groupe. Un groupe ajouté en tête de file avance le réveil.
+pub static MOVE_TIMER: Lazy<crate::utility::timer::Timer> = Lazy::new(|| crate::utility::timer::Timer::new("travel"));
 
 /// Client HTTP partagé pour les notifications de voyage hors contexte de commande.
 pub static HTTP_CLIENT: Lazy<Arc<Mutex<Option<Arc<Http>>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
@@ -118,22 +112,25 @@ async fn send_travel_invitation(http: &Arc<Http>, user: &serenity::all::User, us
     let _ = user.direct_message(http, CreateMessage::new().content(url).embed(embed)).await;
 }
 
-/// Déclenche une tâche Tokio qui attend la fin de la prochaine étape de voyage.
-///
-/// **Fonctionnement :**
-/// 1. Dort pendant `delay` secondes.
-/// 2. À son réveil, elle extrait le premier groupe de `MOVES`.
-/// 3. Appelle `next_step_logic` pour calculer l'état suivant du voyage.
-/// 4. Si le voyage continue, elle le réinsère dans la file à la bonne position.
-/// 5. Si le voyage est terminé (`is_end`), elle gère l'arrivée (messages, rôles Discord).
-/// 6. Enfin, elle relance récursivement un nouveau `move_process` pour le prochain élément de la file.
-///
-/// Cette fonction assure la continuité du mouvement sans boucle `while` bloquante,
-/// permettant une gestion efficace des milliers de groupes potentiels.
-fn move_process(delay: u64) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        sleep(Duration::from_secs(delay)).await;
+/// Travail du minuteur `MOVE_TIMER`, exécuté à l'échéance du premier groupe :
+/// 1. si le premier groupe de `MOVES` n'est pas encore échu, se reprogramme et s'arrête ;
+/// 2. sinon l'extrait et appelle `next_step_logic` pour calculer l'état suivant du voyage ;
+/// 3. si le voyage continue, le réinsère dans la file à la bonne position ;
+/// 4. si le voyage est terminé (`is_end`), gère l'arrivée (messages, rôles Discord) ;
+/// 5. retourne le délai avant l'échéance du nouveau premier groupe.
+fn move_job() -> crate::utility::timer::Job {
+    crate::utility::timer::job(process_due_move)
+}
 
+/// Délai (secondes) avant la fin de l'étape du premier groupe de la file, 0 s'il est échu.
+/// `None` si la file est vide. Un groupe sans échéance est considéré comme échu.
+pub fn first_move_delay(moves: &[TravelGroup], now: u64) -> Option<u64> {
+    moves.first().map(|m| m.step_end_timestamp.unwrap_or(0).saturating_sub(now))
+}
+
+/// Fait avancer le premier groupe de la file s'il est échu et retourne le délai avant le prochain
+/// réveil.
+async fn process_due_move() -> Option<u64> {
         let mut next_delay: Option<u64> = None;
         let mut next_id: Option<String> = None;
 
@@ -141,10 +138,12 @@ fn move_process(delay: u64) -> JoinHandle<()> {
 
         {
             let mut moves = MOVES.lock().await;
-            if moves.is_empty() {
-                let mut sleeper = SLEEPER.lock().await;
-                *sleeper = None;
-                return;
+            // Ne traite jamais un groupe avant son échéance : un réveil en avance (groupe retiré,
+            // file rechargée) se contente de se reprogrammer.
+            match first_move_delay(&moves, Utc::now().timestamp() as u64) {
+                None => return None,
+                Some(0) => {}
+                Some(remaining) => return Some(remaining),
             }
 
             // Récupère le move qui vient de finir son attente (le premier)
@@ -264,18 +263,10 @@ fn move_process(delay: u64) -> JoinHandle<()> {
             }
         }
 
-        // Relance le processus pour le nouveau premier move (si applicable)
-        if let Some(delay) = next_delay {
-            let mut sleeper = SLEEPER.lock().await;
-            *sleeper = Some(move_process(delay));
+        if let (Some(delay), Some(id)) = (next_delay, &next_id) {
             let current = Local::now();
             let date = format!("{:02}:{:02}:{:02}", current.hour(), current.minute(), current.second());
-            if let Some(id) = next_id {
-                println!("[{date}] Next move process started for user {} with delay {}s", id, delay);
-            }
-        } else {
-            let mut sleeper = SLEEPER.lock().await;
-            *sleeper = None;
+            println!("[{date}] Next move process for group {id} in {delay}s");
         }
 
         // Exécute les changements de rôles si nécessaire
@@ -290,10 +281,11 @@ fn move_process(delay: u64) -> JoinHandle<()> {
                     manage_roles(http.clone(), guild_id, user_id, add, remove).await;
                 }
             } else {
-                eprintln!("HTTP client not initialized in move_process, cannot update roles");
+                eprintln!("HTTP client not initialized in the travel timer, cannot update roles");
             }
         }
-    })
+
+        next_delay
 }
 
 
@@ -310,35 +302,21 @@ pub async fn remove_move(user_id: u64){
         let date = format!("{:02}:{:02}:{:02}", current.hour(), current.minute(), current.second());
         println!("[{date}] Move for group {p_move_id} successfully removed");
 
-        if player_move_index == 0 {
-            let mut sleeper = SLEEPER.lock().await;
-            if let Some(handle) = sleeper.take() {
-                handle.abort();
-                println!("[{date}] Move for group {p_move_id} task aborted");
-            }
-
-            if let Some(next_move) = moves.first() {
-                if let Some(end_ts) = next_move.step_end_timestamp {
-                    let now = Utc::now().timestamp() as u64;
-                    let delay = end_ts.saturating_sub(now);
-                    *sleeper = Some(move_process(delay));
-                    println!("[{date}] Move for group {} started (new first)", next_move._id);
-                }
-            }
-        }
+        // Rien à faire sur le minuteur : s'il se réveille pour ce groupe, il ne trouve rien
+        // d'échu et se reprogramme sur le nouveau premier groupe.
     } else {
         println!("task not found for user {user_id}");
     }
 }
 
-/// Ajoute un nouveau groupe de voyage à la file d'attente globale et réinitialise le `SLEEPER` si nécessaire.
+/// Ajoute un nouveau groupe de voyage à la file d'attente globale et avance le réveil si nécessaire.
 ///
 /// **Actions :**
 /// 1. Verrouille la file `MOVES`.
 /// 2. Utilise `partition_point` pour trouver l'index d'insertion correct afin de maintenir le tri chronologique.
 /// 3. Insère le groupe dans la file.
-/// 4. Si l'élément est inséré à l'index 0 (il devient le plus proche), annule l'ancienne tâche `SLEEPER`
-///    et démarre un nouveau `move_process` avec le délai calculé.
+/// 4. Si l'élément devient le plus proche, avance le réveil de `MOVE_TIMER` (un réveil plus
+///    proche déjà prévu n'est jamais repoussé).
 pub async fn add_move(player_move: TravelGroup){
     let mut moves = MOVES.lock().await;
     // Récupération de la position où insérer l'étape de déplacement (trié par step_end_timestamp)
@@ -352,19 +330,9 @@ pub async fn add_move(player_move: TravelGroup){
     let date = format!("{:02}:{:02}:{:02}", current.hour(), current.minute(), current.second());
     println!("[{date}] Move for group {} successfully added at index {i}", player_move._id);
 
-    if i == 0 {
-        let mut sleeper = SLEEPER.lock().await;
-        if let Some(handle) = sleeper.take() {
-            handle.abort();
-            println!("[{date}] Previous first move task aborted.");
-        }
-
-        if let Some(end_ts) = player_move.step_end_timestamp {
-            let now = Utc::now().timestamp() as u64;
-            let delay = end_ts.saturating_sub(now);
-            *sleeper = Some(move_process(delay));
-            println!("[{date}] Move for group {} started (new first)", player_move._id);
-        }
+    // N'avance le réveil que si ce groupe devient le plus proche.
+    if let Some(delay) = first_move_delay(&moves, Utc::now().timestamp() as u64) {
+        MOVE_TIMER.schedule(delay, move_job());
     }
 }
 
@@ -399,7 +367,7 @@ pub async fn next_step_logic(actual_move: &TravelGroup) -> Result<TravelGroup, a
             new_move.upsert_with_session(&mut session).await
                 .map_err(|e| anyhow::anyhow!("Failed to update travel group {} in DB at arrival: {:?}", new_move._id, e))?;
 
-            // Nettoyage des informations de trajet APRES l'upsert pour que move_process puisse encore les lire
+            // Nettoyage des informations de trajet APRES l'upsert pour que le minuteur puisse encore les lire
             // mais l'objet retourné sera propre pour les prochaines étapes si besoin.
             clear_route(&mut new_move);
 
@@ -499,12 +467,20 @@ pub async fn next_step_logic(actual_move: &TravelGroup) -> Result<TravelGroup, a
 /// Initialise le système de voyage au démarrage du bot.
 /// 
 /// Recharge tous les voyages actifs depuis la base de données et relance les processus.
-#[allow(dead_code)]
+///
+/// Appelé à chaque `ready` Discord, donc aussi après une reconnexion : l'ancien minuteur est
+/// arrêté, un traitement en cours se termine d'abord, et la file est remplacée par la base.
 pub async fn setup(){
+    MOVE_TIMER.stop();
+    let _exclusive = MOVE_TIMER.exclusive().await;
+    // Gardé jusqu'au remplacement de la file : un départ pendant la relecture n'est pas perdu.
+    let mut moves = MOVES.lock().await;
+
     let universes = match crate::database::universe::Universe::get_all_universes().await {
         Ok(u) => u,
         Err(e) => {
             eprintln!("Failed to get universes for travel setup: {:?}", e);
+            MOVE_TIMER.restart(first_move_delay(&moves, Utc::now().timestamp() as u64), move_job());
             return;
         }
     };
@@ -516,11 +492,6 @@ pub async fn setup(){
             Ok(moves) => all_moves.extend(moves),
             Err(e) => eprintln!("Failed to get active moves for universe {}: {:?}", universe.universe_id, e),
         }
-    }
-
-    if all_moves.is_empty() {
-        println!("Travel system initialized: 0 active moves.");
-        return;
     }
 
     let now = Utc::now().timestamp() as u64;
@@ -639,28 +610,13 @@ pub async fn setup(){
         }
     }
 
-    if pending_moves.is_empty() {
-        println!("Travel system initialized: 0 pending moves (all recovered were processed).");
-        return;
-    }
-
     // Tri par step_end_timestamp croissant
     pending_moves.sort_by_key(|m| m.step_end_timestamp.unwrap_or(0));
+    *moves = pending_moves;
 
-    {
-        let mut moves = MOVES.lock().await;
-        *moves = pending_moves;
-
-        // On lance le sleeper pour le premier move
-        if let Some(first) = moves.first() {
-            if let Some(end_ts) = first.step_end_timestamp {
-                let delay = end_ts.saturating_sub(now);
-                let mut sleeper = SLEEPER.lock().await;
-                *sleeper = Some(move_process(delay));
-                println!("Travel system initialized: {} active moves, next in {}s", moves.len(), delay);
-            }
-        }
-    }
+    let delay = first_move_delay(&moves, Utc::now().timestamp() as u64);
+    MOVE_TIMER.restart(delay, move_job());
+    println!("Travel system initialized: {} active moves, next in {:?}s", moves.len(), delay);
 }
 
 /// Ajoute ou retire un rôle Discord à un utilisateur.
@@ -1222,6 +1178,32 @@ mod travel_pure_tests {
 
     fn group() -> TravelGroup {
         TravelGroup::default()
+    }
+
+    fn ending_at(end: Option<u64>) -> TravelGroup {
+        TravelGroup { step_end_timestamp: end, ..TravelGroup::default() }
+    }
+
+    #[test]
+    fn an_empty_queue_needs_no_wake_up() {
+        assert_eq!(first_move_delay(&[], 100), None);
+    }
+
+    #[test]
+    fn a_group_is_not_processed_before_its_step_ends() {
+        // Réveil en avance (ancien minuteur, groupe retiré) : on attend encore 50 s.
+        assert_eq!(first_move_delay(&[ending_at(Some(150)), ending_at(Some(10))], 100), Some(50));
+    }
+
+    #[test]
+    fn a_group_is_due_at_or_after_its_step_end() {
+        assert_eq!(first_move_delay(&[ending_at(Some(100))], 100), Some(0));
+        assert_eq!(first_move_delay(&[ending_at(Some(40))], 100), Some(0));
+    }
+
+    #[test]
+    fn a_group_without_step_end_is_due() {
+        assert_eq!(first_move_delay(&[ending_at(None)], 100), Some(0));
     }
 
     #[test]

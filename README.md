@@ -42,11 +42,17 @@ avec un message d'erreur explicite.
 ```bash
 cargo run                 # nécessite un .env (ou des variables d'environnement) et un MongoDB
 cargo test                # tests unitaires (sans base de données)
-cargo test -- --ignored   # tests d'intégration : exigent MongoDB (et DISCORD_TOKEN pour le test du bot)
+cargo test -- --ignored --skip discord   # tests d'intégration MongoDB (variables MONGODB_*)
+cargo test -- --ignored discord_integration   # tests REST Discord (voir ci-dessous)
 ```
+
+Tests d'intégration :
+- Ils utilisent la base `MONGODB_*` avec des identifiants aléatoires et nettoient ce qu'ils créent ; ils peuvent donc tourner en parallèle sur une base non vide.
+- Les tests REST Discord (`discord_integration`) exigent `DISCORD_TOKEN` et `VERSEENGINE_TEST_GUILD_ID`, un serveur de test où le bot peut gérer les salons et les webhooks. Ils créent un salon temporaire puis le suppriment. Si un proxy HTTPS ré-émet les certificats, `SSL_CERT_FILE` désigne son CA.
+- `discord::connect_bot::test_discord_bot_connection` ouvre une vraie connexion gateway avec `DISCORD_TOKEN`.
 
 `Cargo.lock` est versionné : les builds (et la CI, via `--locked`) sont reproductibles.
 
 ## Intégration continue
 
-`.github/workflows/ci.yml` exécute `cargo check`, `cargo test` et un build de l'image Docker à chaque push et pull request.
+`.github/workflows/ci.yml` exécute `cargo check`, `cargo test`, les tests d'intégration MongoDB (replica set `mongo:8`) et un build de l'image Docker à chaque push et pull request.

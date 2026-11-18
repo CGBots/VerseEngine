@@ -21,6 +21,7 @@ dependencies = [
  "poise",
  "rand 0.10.4",
  "regex",
+ "reqwest 0.12.28",
  "reqwest 0.13.5",
  "serde",
  "serde_json",

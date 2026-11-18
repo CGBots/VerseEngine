@@ -17,6 +17,8 @@ mod loot_table;
 mod loot;
 mod recipe;
 mod activity;
+#[cfg(test)]
+mod test_support;
 
 use discord::poise_structs::{Context, Data, Error};
 use crate::database::db_client::{constraint, init_db_client};

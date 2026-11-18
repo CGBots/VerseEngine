@@ -26,10 +26,45 @@ jobs:
       # --locked : la CI échoue si Cargo.lock n'est pas à jour avec Cargo.toml
       - name: Check
         run: cargo check --locked --all-targets
-      # Les tests d'intégration (MongoDB / Discord) sont marqués #[ignore] :
-      # lancez-les en local avec `cargo test -- --ignored`.
+      # Les tests d'intégration sont marqués #[ignore] : voir le job mongodb-integration
+      # ci-dessous et le README pour ceux qui demandent Discord.
       - name: Tests
         run: cargo test --locked
+
+  mongodb-integration:
+    name: Tests d'intégration MongoDB
+    runs-on: ubuntu-latest
+    env:
+      MONGODB_USER: ci
+      MONGODB_PASSWORD: ci-password
+      MONGODB_HOST: 127.0.0.1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Replica set à un nœud, comme en production : les transactions l'exigent. Un service
+      # GitHub ne permet pas de passer `--replSet`, d'où le `docker run`.
+      - name: MongoDB (replica set)
+        run: |
+          openssl rand -base64 756 > "$RUNNER_TEMP/mongo.key"
+          chmod 400 "$RUNNER_TEMP/mongo.key"
+          sudo chown 999:999 "$RUNNER_TEMP/mongo.key"
+          docker run -d --name mongo -p 27017:27017 \
+            -e MONGO_INITDB_ROOT_USERNAME="$MONGODB_USER" -e MONGO_INITDB_ROOT_PASSWORD="$MONGODB_PASSWORD" \
+            -v "$RUNNER_TEMP/mongo.key:/mongo.key:ro" \
+            mongo:8 --replSet rs0 --keyFile /mongo.key --bind_ip_all
+          for i in $(seq 1 30); do
+            if docker exec mongo mongosh --quiet -u "$MONGODB_USER" -p "$MONGODB_PASSWORD" --eval \
+              'try { rs.status().ok } catch (e) { rs.initiate({_id: "rs0", members: [{_id: 0, host: "127.0.0.1:27017"}]}).ok }' \
+              2>/dev/null | grep -q 1; then exit 0; fi
+            sleep 2
+          done
+          docker logs mongo
+          exit 1
+      # Les tests qui parlent à Discord (`discord` dans leur nom) demandent un jeton : ils
+      # restent à lancer à la main (voir README).
+      - name: Tests d'intégration (sans Discord)
+        run: cargo test --locked -- --ignored --skip discord
 
   docker:
     name: Docker image build
