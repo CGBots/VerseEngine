@@ -4,7 +4,7 @@
 use serde::Serialize;
 
 use crate::database::travel::{SpaceType, TravelGroup};
-use crate::travel::logic::calculate_current_distance_at;
+use crate::travel::logic::calculate_distance_at;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TravelView {
@@ -21,7 +21,7 @@ pub struct TravelView {
 
 /// `road_distance_km` : longueur de la route empruntée (si sur une route).
 pub fn travel_view(group: &TravelGroup, road_distance_km: Option<f64>, now: u64) -> TravelView {
-    let traveled = if group.actual_space_type == SpaceType::Road { calculate_current_distance_at(group, now) } else { 0.0 };
+    let traveled = if group.actual_space_type == SpaceType::Road { calculate_distance_at(group, now) } else { 0.0 };
     let remaining = road_distance_km.filter(|_| group.actual_space_type == SpaceType::Road).map(|d| (d - traveled).max(0.0));
     let eta = if !group.is_in_move {
         None

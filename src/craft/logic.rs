@@ -11,16 +11,102 @@ use crate::database::recipe::Recipe;
 use crate::database::inventory::{Inventory, HolderType};
 use crate::database::universe::get_universe_by_id;
 use crate::translation::get_by_locale;
+use mongodb::bson::oid::ObjectId;
 
 pub static CRAFTS: Lazy<Arc<Mutex<Vec<PlayerCraft>>>> = Lazy::new(|| Arc::new(Mutex::new(vec![])));
 pub static CRAFT_SLEEPER: Lazy<Arc<Mutex<Option<JoinHandle<()>>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
 pub static HTTP_CLIENT: Lazy<Arc<Mutex<Option<Arc<Http>>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
 
+/// Instant courant en secondes UNIX (0 si l'horloge système est avant 1970).
+pub fn now_secs() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+}
+
+/// Timestamp de fin d'un craft démarré à `now` avec un délai de `delay` secondes.
+///
+/// Sature au lieu de déborder si le délai de la recette est démesuré.
+pub fn craft_end_timestamp(now: u64, delay: u64) -> u64 {
+    now.saturating_add(delay)
+}
+
+/// Construit le craft en cours d'un joueur pour une recette à délai, démarré à `now`.
+pub fn new_player_craft(universe_id: ObjectId, user_id: u64, server_id: u64, recipe_id: ObjectId, delay: u64, now: u64) -> PlayerCraft {
+    PlayerCraft {
+        _id: ObjectId::new(),
+        universe_id,
+        user_id,
+        server_id,
+        recipe_id,
+        start_timestamp: now,
+        end_timestamp: craft_end_timestamp(now, delay),
+        is_finished: false,
+    }
+}
+
+/// Temps restant (en secondes) avant `end_timestamp`, 0 si déjà dépassé.
+pub fn remaining_delay_secs(end_timestamp: u64, now: u64) -> u64 {
+    end_timestamp.saturating_sub(now)
+}
+
+/// Sépare les crafts terminés (`end_timestamp <= now`) de ceux encore en cours.
+pub fn split_finished(crafts: Vec<PlayerCraft>, now: u64) -> (Vec<PlayerCraft>, Vec<PlayerCraft>) {
+    crafts.into_iter().partition(|c| c.end_timestamp <= now)
+}
+
+/// Délai avant le prochain réveil de l'ordonnanceur : celui du craft qui se termine le plus tôt.
+/// `None` s'il n'y a aucun craft en cours.
+pub fn next_wakeup_delay(crafts: &[PlayerCraft], now: u64) -> Option<u64> {
+    crafts
+        .iter()
+        .map(|c| remaining_delay_secs(c.end_timestamp, now))
+        .min()
+}
+
+/// Vérifie qu'un joueur peut lancer une recette.
+///
+/// - `tools_needed` : outils requis par la recette (non consommés) ;
+/// - `available_tools` : outils disponibles (inventaire du joueur + outils posés dans le salon) ;
+/// - `ingredients` : `(quantité, objet)` requis par la recette ;
+/// - `stock` : `(objet, quantité)` détenus par le joueur, une entrée par ligne d'inventaire.
+///
+/// Si un même objet apparaît sur plusieurs lignes d'ingrédients, les quantités sont additionnées :
+/// elles seront consommées l'une après l'autre sur la même ligne d'inventaire.
+///
+/// # Errors
+/// `"recipe__missing_tool"` ou `"recipe__missing_ingredient"` (clés de traduction).
+pub fn check_craft_requirements(
+    tools_needed: &[ObjectId],
+    available_tools: &[ObjectId],
+    ingredients: &[(u64, ObjectId)],
+    stock: &[(ObjectId, u64)],
+) -> Result<(), &'static str> {
+    if tools_needed.iter().any(|tool| !available_tools.contains(tool)) {
+        return Err("recipe__missing_tool");
+    }
+
+    let mut required: Vec<(ObjectId, u64)> = Vec::new();
+    for (qty, item_id) in ingredients {
+        match required.iter_mut().find(|(id, _)| id == item_id) {
+            Some((_, total)) => *total = total.saturating_add(*qty),
+            None => required.push((*item_id, *qty)),
+        }
+    }
+
+    let enough = required.iter().all(|(item_id, needed)| {
+        stock.iter().any(|(id, available)| id == item_id && available >= needed)
+    });
+    if !enough {
+        return Err("recipe__missing_ingredient");
+    }
+
+    Ok(())
+}
+
 fn craft_process(delay: u64) -> JoinHandle<()> {
     tokio::spawn(async move {
         sleep(Duration::from_secs(delay)).await;
 
-        let mut next_delay: Option<u64> = None;
+        let next_delay: Option<u64>;
         let _next_id: Option<String> = None;
 
         let completed_crafts: Vec<PlayerCraft>;
@@ -33,23 +119,15 @@ fn craft_process(delay: u64) -> JoinHandle<()> {
                 return;
             }
 
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-            
+            let now = now_secs();
+
             // On sépare les crafts terminés de ceux qui restent
-            let (finished, pending): (Vec<PlayerCraft>, Vec<PlayerCraft>) = crafts.clone().into_iter().partition(|c| c.end_timestamp <= now);
+            let (finished, pending) = split_finished(crafts.clone(), now);
             *crafts = pending;
             completed_crafts = finished;
 
             // Calculer le prochain réveil
-            if !crafts.is_empty() {
-                let mut min_end = u64::MAX;
-                for c in crafts.iter() {
-                    if c.end_timestamp < min_end {
-                        min_end = c.end_timestamp;
-                    }
-                }
-                next_delay = Some(if min_end > now { min_end - now } else { 0 });
-            }
+            next_delay = next_wakeup_delay(&crafts, now);
         }
 
         // Traiter les crafts terminés
@@ -144,8 +222,7 @@ pub async fn add_craft(http: Arc<Http>, player_craft: PlayerCraft) -> Result<(),
     let mut crafts = CRAFTS.lock().await;
     crafts.push(player_craft.clone());
 
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    let delay = if player_craft.end_timestamp > now { player_craft.end_timestamp - now } else { 0 };
+    let delay = remaining_delay_secs(player_craft.end_timestamp, now_secs());
 
     let mut sleeper = CRAFT_SLEEPER.lock().await;
     if let Some(handle) = sleeper.as_ref() {
@@ -188,14 +265,20 @@ pub async fn stop_craft(universe_id: mongodb::bson::oid::ObjectId, user_id: u64)
 pub async fn setup() {
     let universes = match crate::database::universe::Universe::get_all_universes().await {
         Ok(u) => u,
-        Err(e) => panic!("Impossible d'initialiser la file de craft : erreur lors de la récupération des univers : {:?}", e),
+        Err(e) => {
+            eprintln!("Impossible d'initialiser la file de craft : erreur lors de la récupération des univers : {:?}", e);
+            return;
+        }
     };
     
     let mut all_active_crafts = Vec::new();
     for universe in universes {
         match PlayerCraft::get_active_crafts(universe.universe_id).await {
             Ok(active_crafts) => all_active_crafts.extend(active_crafts),
-            Err(e) => panic!("Impossible d'initialiser la file de craft : erreur lors de la récupération des crafts pour l'univers {:?} : {:?}", universe.universe_id, e),
+            Err(e) => {
+                eprintln!("Impossible d'initialiser la file de craft : erreur lors de la récupération des crafts pour l'univers {:?} : {:?}", universe.universe_id, e);
+                return;
+            }
         }
     }
 
@@ -204,8 +287,8 @@ pub async fn setup() {
         return;
     }
 
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    let (finished, pending): (Vec<PlayerCraft>, Vec<PlayerCraft>) = all_active_crafts.into_iter().partition(|c| c.end_timestamp <= now);
+    let now = now_secs();
+    let (finished, pending) = split_finished(all_active_crafts, now);
 
     // Traiter les crafts qui se sont terminés pendant que le bot était éteint
     for craft in finished {
@@ -225,22 +308,170 @@ pub async fn setup() {
     }
 
     // Démarrer le sleeper pour le craft le plus proche
-    let mut min_delay = u64::MAX;
-    
-    {
+    let next_delay = {
         let crafts = CRAFTS.lock().await;
-        for c in crafts.iter() {
-            let delay = if c.end_timestamp > now { c.end_timestamp - now } else { 0 };
-            if delay < min_delay {
-                min_delay = delay;
-            }
-        }
-    }
+        next_wakeup_delay(&crafts, now)
+    };
 
-    if min_delay != u64::MAX {
+    if let Some(min_delay) = next_delay {
         let mut sleeper = CRAFT_SLEEPER.lock().await;
         *sleeper = Some(craft_process(min_delay));
     }
 
     println!("File de craft initialisée ({} craft(s) en attente).", pending_count);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn oid() -> ObjectId {
+        ObjectId::new()
+    }
+
+    fn craft_ending_at(end: u64) -> PlayerCraft {
+        PlayerCraft { end_timestamp: end, ..Default::default() }
+    }
+
+    // ---- délais ----
+
+    #[test]
+    fn end_timestamp_is_start_plus_delay() {
+        assert_eq!(craft_end_timestamp(1_000, 60), 1_060);
+        assert_eq!(craft_end_timestamp(1_000, 0), 1_000);
+    }
+
+    #[test]
+    fn end_timestamp_saturates_instead_of_overflowing() {
+        assert_eq!(craft_end_timestamp(u64::MAX - 1, 100), u64::MAX);
+    }
+
+    #[test]
+    fn new_player_craft_records_the_schedule() {
+        let (universe, recipe) = (oid(), oid());
+        let c = new_player_craft(universe, 42, 7, recipe, 300, 5_000);
+        assert_eq!(c.universe_id, universe);
+        assert_eq!(c.recipe_id, recipe);
+        assert_eq!((c.user_id, c.server_id), (42, 7));
+        assert_eq!((c.start_timestamp, c.end_timestamp), (5_000, 5_300));
+        assert!(!c.is_finished);
+    }
+
+    #[test]
+    fn remaining_delay_is_never_negative() {
+        assert_eq!(remaining_delay_secs(1_500, 1_000), 500);
+        assert_eq!(remaining_delay_secs(1_000, 1_000), 0);
+        assert_eq!(remaining_delay_secs(900, 1_000), 0);
+    }
+
+    #[test]
+    fn split_finished_separates_done_and_pending_crafts() {
+        let crafts = vec![craft_ending_at(900), craft_ending_at(1_000), craft_ending_at(1_001), craft_ending_at(5_000)];
+        let (finished, pending) = split_finished(crafts, 1_000);
+        let ends = |v: &[PlayerCraft]| v.iter().map(|c| c.end_timestamp).collect::<Vec<_>>();
+        // un craft qui finit pile à `now` est terminé
+        assert_eq!(ends(&finished), vec![900, 1_000]);
+        assert_eq!(ends(&pending), vec![1_001, 5_000]);
+    }
+
+    #[test]
+    fn split_finished_on_an_empty_queue() {
+        let (finished, pending) = split_finished(vec![], 1_000);
+        assert!(finished.is_empty() && pending.is_empty());
+    }
+
+    #[test]
+    fn next_wakeup_targets_the_earliest_craft() {
+        let crafts = vec![craft_ending_at(5_000), craft_ending_at(1_200), craft_ending_at(3_000)];
+        assert_eq!(next_wakeup_delay(&crafts, 1_000), Some(200));
+    }
+
+    #[test]
+    fn next_wakeup_is_immediate_when_a_craft_is_overdue() {
+        let crafts = vec![craft_ending_at(900), craft_ending_at(5_000)];
+        assert_eq!(next_wakeup_delay(&crafts, 1_000), Some(0));
+    }
+
+    #[test]
+    fn next_wakeup_is_none_without_crafts() {
+        assert_eq!(next_wakeup_delay(&[], 1_000), None);
+    }
+
+    // ---- prérequis ----
+
+    #[test]
+    fn requirements_are_met_with_enough_stock_and_tools() {
+        let (wood, hammer) = (oid(), oid());
+        assert_eq!(
+            check_craft_requirements(&[hammer], &[hammer, oid()], &[(3, wood)], &[(wood, 3)]),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_recipe_without_requirements_is_always_possible() {
+        assert_eq!(check_craft_requirements(&[], &[], &[], &[]), Ok(()));
+    }
+
+    #[test]
+    fn a_missing_tool_is_reported_first() {
+        let (wood, hammer) = (oid(), oid());
+        // ingrédient manquant ET outil manquant : l'outil est signalé en premier
+        assert_eq!(
+            check_craft_requirements(&[hammer], &[], &[(1, wood)], &[]),
+            Err("recipe__missing_tool")
+        );
+    }
+
+    #[test]
+    fn missing_ingredient_is_reported() {
+        let wood = oid();
+        assert_eq!(
+            check_craft_requirements(&[], &[], &[(1, wood)], &[]),
+            Err("recipe__missing_ingredient")
+        );
+    }
+
+    #[test]
+    fn insufficient_quantity_is_reported() {
+        let wood = oid();
+        assert_eq!(
+            check_craft_requirements(&[], &[], &[(5, wood)], &[(wood, 4)]),
+            Err("recipe__missing_ingredient")
+        );
+        assert_eq!(
+            check_craft_requirements(&[], &[], &[(5, wood)], &[(wood, 5)]),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn the_same_ingredient_listed_twice_is_summed() {
+        let wood = oid();
+        let ingredients = [(2, wood), (3, wood)];
+        // 4 < 2 + 3 : chaque ligne passerait seule, mais pas la recette
+        assert_eq!(
+            check_craft_requirements(&[], &[], &ingredients, &[(wood, 4)]),
+            Err("recipe__missing_ingredient")
+        );
+        assert_eq!(
+            check_craft_requirements(&[], &[], &ingredients, &[(wood, 5)]),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn each_ingredient_is_checked_against_its_own_stock() {
+        let (wood, stone) = (oid(), oid());
+        let ingredients = [(2, wood), (2, stone)];
+        // beaucoup de bois ne compense pas l'absence de pierre
+        assert_eq!(
+            check_craft_requirements(&[], &[], &ingredients, &[(wood, 100)]),
+            Err("recipe__missing_ingredient")
+        );
+        assert_eq!(
+            check_craft_requirements(&[], &[], &ingredients, &[(wood, 2), (stone, 2)]),
+            Ok(())
+        );
+    }
 }

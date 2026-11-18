@@ -66,7 +66,7 @@ pub async fn partial_setup<'a>(ctx: &Context<'_>, server: &mut Server, snapshot:
     let Ok(guild_id) = ctx.guild_id().ok_or("guild_only") else { return Err("guild_only".into()) };
     let everyone_role = guild_id.everyone_role();
     
-    let Ok(existing_roles) = ctx.http().get_guild_roles(ctx.guild_id().unwrap()).await else {return Err("partial_setup__get_guild_roles_error".into())};
+    let Ok(existing_roles) = ctx.http().get_guild_roles(guild_id).await else {return Err("partial_setup__get_guild_roles_error".into())};
 
     let mut roles_created: Vec<Role> = vec![];
     let mut errors: Vec<&str> = vec![];
@@ -165,12 +165,16 @@ pub async fn partial_setup<'a>(ctx: &Context<'_>, server: &mut Server, snapshot:
     let Ok(player_role) = player_role else { return Err("setup__player_role_not_created".into()) };
     let everyone_role = everyone_role;
 
-    let guild_id = ctx.guild_id().unwrap();
     let bot_id = ctx.cache().current_user().id;
-    let bot_member = guild_id
-        .member(ctx.http(), bot_id)
-        .await.unwrap();
-    let bot_role = bot_member.roles.clone()[0];
+    let bot_role = match guild_id.member(ctx.http(), bot_id).await {
+        Ok(bot_member) => bot_member.roles.first().copied(),
+        Err(_) => None,
+    };
+    let Some(bot_role) = bot_role else {
+        // Le bot n'a pas de rôle propre (ou son membre est introuvable) : impossible de réordonner les rôles.
+        server.rollback(ctx, snapshot).await;
+        return Err("setup__reorder_went_wrong".into());
+    };
 
     let mut roles_pos: Vec<(RoleId, Option<u64>)> = vec![(admin_role.id, Some(4)), (moderator_role.id, Some(3)), (spectator_role.id, Some(2)), (player_role.id, Some(1)), (bot_role, Some(5))];
 
@@ -180,7 +184,7 @@ pub async fn partial_setup<'a>(ctx: &Context<'_>, server: &mut Server, snapshot:
         }
     }
     
-    let res = edit_role_positions(ctx, ctx.guild_id().unwrap(), roles_pos).await;
+    let res = edit_role_positions(ctx, guild_id, roles_pos).await;
 
     match res {
         Ok(_) => {}
@@ -203,7 +207,15 @@ pub async fn partial_setup<'a>(ctx: &Context<'_>, server: &mut Server, snapshot:
     };
 
     let road_category = match result_road_category {
-        Ok(channel) => {channel.guild().unwrap()}
+        Ok(channel) => {
+            match channel.guild() {
+                Some(guild_channel) => guild_channel,
+                None => {
+                    server.rollback(ctx, snapshot).await;
+                    return Err("setup__road_category_not_created".into());
+                }
+            }
+        }
         Err(new_channel_result) => {
             match new_channel_result {
                 Ok(channel) => {channel}

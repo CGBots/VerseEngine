@@ -1,4 +1,5 @@
-use serenity::all::{ChannelType, CreateForumTag, EditChannel};
+use std::future::Future;
+use serenity::all::{ChannelId, ChannelType, CreateForumTag, EditChannel, GuildChannel, RoleId};
 use crate::database::server::{Id, IdType, Server};
 use crate::discord::channels::{create_channel, get_admin_category_permission_set, get_rp_character_permission_set, get_universal_time_permission_set, ITEM_TAG, PLACE_TAG, SPACE_TAG};
 use crate::discord::poise_structs::{Context, Error};
@@ -65,270 +66,119 @@ use crate::tr;
 /// Relies on asynchronous Discord API interactions through the `Context` object, as well as utilities
 /// for managing permissions, channel types, and localized translations.
 pub async fn complementary_setup<'a>(ctx: &Context<'_>, server : &'a mut Server, snapshot: Server) -> Result<&'a str, Error> {
-    let mut errors: Vec<&str> = vec![];
+    // Tout ce qui est indispensable est vérifié AVANT de créer quoi que ce soit sur Discord :
+    // un échec ici ne laisse donc aucun salon orphelin.
+    let everyone_role = required_role(server.everyone_role_id)?;
+    let spectator_role = required_role(server.spectator_role_id)?;
+    let player_role = required_role(server.player_role_id)?;
+    let moderator_role = required_role(server.moderator_role_id)?;
+    let road_category_id = required_channel_id(server.road_category_id)?;
+    let guild_id = ctx.guild_id().ok_or("setup__channel_setup_failed")?;
 
-    let admin_category_permissions = get_admin_category_permission_set(
-        server.everyone_role_id.clone().unwrap().id.into(),
-        server.spectator_role_id.clone().unwrap().id.into(),
-        server.player_role_id.clone().unwrap().id.into(),
-        server.moderator_role_id.clone().unwrap().id.into());
+    let mut errors: Vec<&'static str> = vec![];
 
-    let admin_category_result = match server.admin_category_id{
-        None => {
-            match create_channel(ctx, tr!(*ctx, "admin_category_name"), ChannelType::Category, 0, admin_category_permissions, None).await {
-                Ok(category) => { Ok(category)}
-                Err(e) => {errors.push("setup__admin_category_not_created"); Err(e)}
-            }
-        }
-        Some(channel_id) => {
-            match ctx.http().get_channel(channel_id.id.into()).await{
-                Ok(channel) => {Ok(channel.guild().unwrap())}
-                Err(_) => {
-                    match create_channel(ctx, tr!(*ctx, "admin_category_name"), ChannelType::Category, 0, admin_category_permissions, None).await {
-                        Ok(category) => {
-                            server.admin_category_id((category.id.get(), IdType::Category));
-                            Ok(category)}
-                        Err(e) => {errors.push("setup__admin_category_not_created"); Err(e)}
-                    }
-                }
-            }
-        }
-    };
+    let admin_category_permissions = get_admin_category_permission_set(everyone_role, spectator_role, player_role, moderator_role);
 
-    let nrp_category_result = match server.nrp_category_id{
-        None => {
-            match create_channel(ctx, tr!(*ctx, "nrp_category_name"), ChannelType::Category, 1, vec![], None).await {
-                Ok(category) => { Ok(category)}
-                Err(e) => {errors.push("setup__nrp_category_not_created"); Err(e)}
-            }
-        }
-        Some(channel_id) => {
-            match ctx.http().get_channel(channel_id.id.into()).await{
-                Ok(channel) => {Ok(channel.guild().unwrap())}
-                Err(_) => {
-                    match create_channel(ctx, tr!(*ctx, "nrp_category_name"), ChannelType::Category, 1, vec![], None).await {
-                        Ok(category) => {
-                            server.nrp_category_id((category.id.get(), IdType::Category));
-                            Ok(category)}
-                        Err(e) => {errors.push("setup__nrp_category_not_created"); Err(e)}
-                    }
-                }
-            }
-        }
-    };
-
-    let rp_category_result = match server.rp_category_id{
-        None => {
-            match create_channel(ctx, tr!(*ctx, "rp_category_name"), ChannelType::Category, 1, vec![], None).await {
-                Ok(category) => { Ok(category)}
-                Err(e) => {errors.push("setup__rp_category_not_created"); Err(e)}
-            }
-        }
-        Some(channel_id) => {
-            match ctx.http().get_channel(channel_id.id.into()).await{
-                Ok(channel) => {Ok(channel.guild().unwrap())}
-                Err(_) => {
-                    match create_channel(ctx, tr!(*ctx, "rp_category_name"), ChannelType::Category, 1, vec![], None).await {
-                        Ok(category) => {
-                            server.rp_category_id((category.id.get(), IdType::Category));
-                            Ok(category)}
-                        Err(e) => {errors.push("setup__rp_category_not_created"); Err(e)}
-                    }
-                }
-            }
-        }
-    };
-
-    if !errors.is_empty() {
-
-        return Err("setup__roles_setup_failed".into())
+    let existing = server.admin_category_id;
+    let admin_category_result = resolve_or_create(ctx, existing, "setup__admin_category_not_created", &mut errors, move || {
+        create_channel(ctx, tr!(*ctx, "admin_category_name"), ChannelType::Category, 0, admin_category_permissions, None)
+    }).await;
+    if let (Ok((category, true)), Some(_)) = (&admin_category_result, existing) {
+        server.admin_category_id((category.id.get(), IdType::Category));
     }
 
-    let admin_category = admin_category_result.unwrap();
-    let nrp_category = nrp_category_result.unwrap();
-    let rp_category = rp_category_result.unwrap();
+    let existing = server.nrp_category_id;
+    let nrp_category_result = resolve_or_create(ctx, existing, "setup__nrp_category_not_created", &mut errors, move || {
+        create_channel(ctx, tr!(*ctx, "nrp_category_name"), ChannelType::Category, 1, vec![], None)
+    }).await;
+    if let (Ok((category, true)), Some(_)) = (&nrp_category_result, existing) {
+        server.nrp_category_id((category.id.get(), IdType::Category));
+    }
 
-    let mut errors = vec![];
+    let existing = server.rp_category_id;
+    let rp_category_result = resolve_or_create(ctx, existing, "setup__rp_category_not_created", &mut errors, move || {
+        create_channel(ctx, tr!(*ctx, "rp_category_name"), ChannelType::Category, 1, vec![], None)
+    }).await;
+    if let (Ok((category, true)), Some(_)) = (&rp_category_result, existing) {
+        server.rp_category_id((category.id.get(), IdType::Category));
+    }
 
-    let log_channel_result = match server.log_channel_id{
-        None => {
-            let result = create_channel(ctx, tr!(*ctx, "log_channel_name"), ChannelType::Text, 0, vec![], Some(admin_category.clone().id.get())).await;
-            match result {
-                Ok(channel) => { Ok(channel)}
-                Err(e) => { errors.push("setup__log_channel_not_created"); Err(e)}
-            }
-        }
-        Some(channel_id) => {
-            match ctx.http().get_channel(channel_id.id.into()).await{
-                Ok(channel) => { Ok(channel.guild().unwrap())}
-                Err(_) => {
-                    let result = create_channel(ctx, tr!(*ctx, "log_channel_name"), ChannelType::Text, 0, vec![], Some(admin_category.clone().id.get())).await;
-                    match result{
-                        Ok(channel) => { Ok(channel)}
-                        Err(e) => { errors.push("setup__log_channel_not_created"); Err(e)}
-                    }
-                }
-            }
-        }
+    let (Ok((admin_category, _)), Ok((nrp_category, _)), Ok((rp_category, _))) =
+        (admin_category_result, nrp_category_result, rp_category_result)
+    else {
+        return Err("setup__roles_setup_failed".into())
     };
 
-    let commands_channel_result = match server.commands_channel_id{
-        None => {
-            let result = create_channel(ctx, tr!(*ctx, "commands_channel_name"), ChannelType::Text, 0, vec![], Some(admin_category.clone().id.get())).await;
-            match result {
-                Ok(channel) => { Ok(channel)}
-                Err(e) => {errors.push("setup__commands_channel_not_created"); Err(e)}
-            }
-        }
-        Some(channel_id) => {
-            match ctx.http().get_channel(channel_id.id.into()).await{
-                Ok(channel) => { Ok(channel.guild().unwrap())}
-                Err(_) => {
-                    let result = create_channel(ctx, tr!(*ctx, "commands_channel_name"), ChannelType::Text, 0, vec![], Some(admin_category.clone().id.get())).await;
-                    match result{
-                        Ok(channel) => { Ok(channel)}
-                        Err(e) => {errors.push("setup__commands_channel_not_created"); Err(e)}
-                    }
-                }
-            }
-        }
-    };
+    // `errors` ne contient plus que ce qui concerne les salons créés ci-dessous.
+    errors.clear();
 
-    let moderation_channel_result = match server.moderation_channel_id{
-        None => {
-            let result = create_channel(ctx, tr!(*ctx, "moderation_channel_name"), ChannelType::Text, 0, vec![], Some(admin_category.clone().id.get())).await;
-            match result {
-                Ok(channel) => { Ok(channel)}
-                Err(e) => {errors.push("setup__moderation_channel_not_created"); Err(e)}
-            }
-        }
-        Some(channel_id) => {
-            match ctx.http().get_channel(channel_id.id.into()).await{
-                Ok(channel) => { Ok(channel.guild().unwrap())}
-                Err(_) => {
-                    let result = create_channel(ctx, tr!(*ctx, "moderation_channel_name"), ChannelType::Text, 0, vec![], Some(admin_category.clone().id.get())).await;
-                    match result{
-                        Ok(channel) => { Ok(channel)}
-                        Err(e) => {errors.push("setup__moderation_channel_not_created"); Err(e)}
-                    }
-                }
-            }
-        }
-    };
+    let admin_category_id = admin_category.id.get();
+    let nrp_category_id = nrp_category.id.get();
+    let rp_category_id = rp_category.id.get();
 
-    let nrp_general_channel_result = match server.nrp_general_channel_id{
-        None => {
-            let result = create_channel(ctx, tr!(*ctx, "nrp_general_channel_name"), ChannelType::Text, 0, vec![], Some(nrp_category.clone().id.get())).await;
-            match result {
-                Ok(channel) => { Ok(channel)}
-                Err(e) => {errors.push("setup__nrp_general_channel_not_created"); Err(e)}
-            }
-        }
-        Some(channel_id) => {
-            match ctx.http().get_channel(channel_id.id.into()).await{
-                Ok(channel) => { Ok(channel.guild().unwrap())}
-                Err(_) => {
-                    let result = create_channel(ctx, tr!(*ctx, "nrp_general_channel_name"), ChannelType::Text, 0, vec![], Some(nrp_category.clone().id.get())).await;
-                    match result{
-                        Ok(channel) => { Ok(channel)}
-                        Err(e) => {errors.push("setup__nrp_general_channel_not_created"); Err(e)}
-                    }
-                }
-            }
-        }
-    };
+    let log_channel_result = resolve_or_create(ctx, server.log_channel_id, "setup__log_channel_not_created", &mut errors, move || {
+        create_channel(ctx, tr!(*ctx, "log_channel_name"), ChannelType::Text, 0, vec![], Some(admin_category_id))
+    }).await;
 
-    let character_channel_permissions = get_rp_character_permission_set(server.player_role_id.clone().unwrap().id.into());
+    let commands_channel_result = resolve_or_create(ctx, server.commands_channel_id, "setup__commands_channel_not_created", &mut errors, move || {
+        create_channel(ctx, tr!(*ctx, "commands_channel_name"), ChannelType::Text, 0, vec![], Some(admin_category_id))
+    }).await;
 
-    let rp_character_channel = match server.rp_character_channel_id{
-        None => {
-            let result = create_channel(ctx, tr!(*ctx, "rp_character_channel_name"), ChannelType::Text, 0, character_channel_permissions, Some(rp_category.clone().id.get())).await;
-            match result {
-                Ok(channel) => { Ok(channel)}
-                Err(e) => {errors.push("setup__rp_character_channel_not_created"); Err(e)}
-            }
-        }
-        Some(channel_id) => {
-            match ctx.http().get_channel(channel_id.id.into()).await{
-                Ok(channel) => { Ok(channel.guild().unwrap())}
-                Err(_) => {
-                    let result = create_channel(ctx, tr!(*ctx, "rp_character_channel_name"), ChannelType::Text, 0, character_channel_permissions, Some(rp_category.clone().id.get())).await;
-                    match result{
-                        Ok(channel) => { Ok(channel)}
-                        Err(e) => {errors.push("setup__rp_character_channel_not_created"); Err(e)}
-                    }
-                }
-            }
-        }
-    };
+    let moderation_channel_result = resolve_or_create(ctx, server.moderation_channel_id, "setup__moderation_channel_not_created", &mut errors, move || {
+        create_channel(ctx, tr!(*ctx, "moderation_channel_name"), ChannelType::Text, 0, vec![], Some(admin_category_id))
+    }).await;
 
-    let wiki_channel_result = match server.rp_wiki_channel_id{
-        None => {
-            let result = create_channel(ctx, tr!(*ctx, "rp_wiki_channel_name"), ChannelType::Forum, 0, vec![], Some(rp_category.clone().id.get())).await;
-            match result {
-                Ok(channel) => {
-                    let _ = channel.clone().edit(ctx, EditChannel::new().available_tags(vec![
-                        CreateForumTag::new(PLACE_TAG),
-                        CreateForumTag::new(SPACE_TAG),
-                        CreateForumTag::new(ITEM_TAG),
-                    ])).await;
-                    Ok(channel)
-                }
-                Err(e) => {errors.push("setup__wiki_channel_not_created"); Err(e)}
-            }
-        }
-        Some(channel_id) => {
-            match ctx.http().get_channel(channel_id.id.into()).await{
-                Ok(channel) => { Ok(channel.guild().unwrap())}
-                Err(_) => {
-                    let result = create_channel(ctx, tr!(*ctx, "rp_wiki_channel_name"), ChannelType::Forum, 0, vec![], Some(rp_category.clone().id.get())).await;
-                    match result{
-                        Ok(channel) => { Ok(channel)}
-                        Err(e) => {errors.push("setup__wiki_channel_not_created"); Err(e)}
-                    }
-                }
-            }
-        }
-    };
+    let nrp_general_channel_result = resolve_or_create(ctx, server.nrp_general_channel_id, "setup__nrp_general_channel_not_created", &mut errors, move || {
+        create_channel(ctx, tr!(*ctx, "nrp_general_channel_name"), ChannelType::Text, 0, vec![], Some(nrp_category_id))
+    }).await;
 
-    let universal_time_channel_permissions = get_universal_time_permission_set(server.everyone_role_id.clone().unwrap().id.into());
+    let character_channel_permissions = get_rp_character_permission_set(player_role);
 
-    let universal_time_channel_result = match server.universal_time_channel_id{
-        None => {
-            let result = create_channel(ctx, tr!(*ctx, "universal_time_channel_name"), ChannelType::Text, 0, universal_time_channel_permissions.clone(), Some(rp_category.clone().id.get())).await;
-            match result {
-                Ok(channel) => { Ok(channel)}
-                Err(e) => {errors.push("setup__universal_time_channel_not_created"); Err(e)}
-            }
-        }
-        Some(channel_id) => {
-            match ctx.http().get_channel(channel_id.id.into()).await{
-                Ok(channel) => { Ok(channel.guild().unwrap())}
-                Err(_) => {
-                    let result = create_channel(ctx, tr!(*ctx, "universal_time_channel_name"), ChannelType::Text, 0, universal_time_channel_permissions, Some(rp_category.clone().id.get())).await;
-                    match result{
-                        Ok(channel) => { Ok(channel)}
-                        Err(e) => {errors.push("setup__universal_time_channel_not_created"); Err(e)}
-                    }
-                }
-            }
-        }
-    };
+    let rp_character_channel_result = resolve_or_create(ctx, server.rp_character_channel_id, "setup__rp_character_channel_not_created", &mut errors, move || {
+        create_channel(ctx, tr!(*ctx, "rp_character_channel_name"), ChannelType::Text, 0, character_channel_permissions, Some(rp_category_id))
+    }).await;
+
+    let wiki_channel_result = resolve_or_create(ctx, server.rp_wiki_channel_id, "setup__wiki_channel_not_created", &mut errors, move || async move {
+        let channel = create_channel(ctx, tr!(*ctx, "rp_wiki_channel_name"), ChannelType::Forum, 0, vec![], Some(rp_category_id)).await?;
+        let _ = channel.clone().edit(ctx, EditChannel::new().available_tags(vec![
+            CreateForumTag::new(PLACE_TAG),
+            CreateForumTag::new(SPACE_TAG),
+            CreateForumTag::new(ITEM_TAG),
+        ])).await;
+        Ok(channel)
+    }).await;
+
+    let universal_time_channel_permissions = get_universal_time_permission_set(everyone_role);
+
+    let universal_time_channel_result = resolve_or_create(ctx, server.universal_time_channel_id, "setup__universal_time_channel_not_created", &mut errors, move || {
+        create_channel(ctx, tr!(*ctx, "universal_time_channel_name"), ChannelType::Text, 0, universal_time_channel_permissions, Some(rp_category_id))
+    }).await;
 
     if !errors.is_empty()  {
         server.rollback(ctx, snapshot).await;
         return Err("setup__channel_setup_failed".into())
     }
 
-    let log_channel = log_channel_result.unwrap();
-    let commands_channel = commands_channel_result.unwrap();
-    let moderation_channel = moderation_channel_result.unwrap();
-    let nrp_general_channel = nrp_general_channel_result.unwrap();
-    let rp_character_channel = rp_character_channel.unwrap();
-    let wiki_channel = wiki_channel_result.unwrap();
-    let universal_time_channel = universal_time_channel_result.unwrap();
-
-
+    let (
+        Ok((log_channel, _)),
+        Ok((commands_channel, _)),
+        Ok((moderation_channel, _)),
+        Ok((nrp_general_channel, _)),
+        Ok((rp_character_channel, _)),
+        Ok((wiki_channel, _)),
+        Ok((universal_time_channel, _)),
+    ) = (
+        log_channel_result,
+        commands_channel_result,
+        moderation_channel_result,
+        nrp_general_channel_result,
+        rp_character_channel_result,
+        wiki_channel_result,
+        universal_time_channel_result,
+    ) else {
+        server.rollback(ctx, snapshot).await;
+        return Err("setup__channel_setup_failed".into())
+    };
 
     server.nrp_category_id(Id{ id: nrp_category.id.get(), id_type: IdType::Category });
     server.rp_category_id(Id{ id: rp_category.id.get(), id_type: IdType::Category });
@@ -341,28 +191,33 @@ pub async fn complementary_setup<'a>(ctx: &Context<'_>, server : &'a mut Server,
     server.rp_wiki_channel_id(Id{id: wiki_channel.id.get(), id_type: IdType::Channel });
     server.universal_time_channel_id(Id{id: universal_time_channel.id.get(), id_type: IdType::Channel });
 
-    let mut channel_order = vec![(admin_category.id, 0), (nrp_category.id, 1), (rp_category.id, 2), (server.road_category_id.unwrap().id.into(), 3)];
-    let channels = ctx.guild_id().unwrap().channels(ctx).await.unwrap();
-
-    let allowed = [
-        admin_category.id.get(),
-        nrp_category.id.get(),
-        rp_category.id.get(),
-        server.road_category_id.unwrap().id.into()
-    ];
-
-    for (channel_id, _) in channels{
-        if !allowed.contains(&channel_id.get()) {
-            channel_order.push((channel_id, 4))
+    // Réorganisation cosmétique des salons : un échec ici ne doit pas faire échouer tout le setup.
+    match guild_id.channels(ctx).await {
+        Ok(channels) => {
+            let allowed = [
+                admin_category.id.get(),
+                nrp_category.id.get(),
+                rp_category.id.get(),
+                road_category_id.get(),
+            ];
+            let mut channel_order = vec![
+                (admin_category.id, 0),
+                (nrp_category.id, 1),
+                (rp_category.id, 2),
+                (road_category_id, 3),
+            ];
+            for (channel_id, _) in channels {
+                if !allowed.contains(&channel_id.get()) {
+                    channel_order.push((channel_id, 4))
+                }
+            }
+            if let Err(e) = guild_id.reorder_channels(ctx, channel_order).await {
+                tracing::warn!("complementary_setup: impossible de réorganiser les salons de la guilde {guild_id} : {e:?}");
+            }
         }
-    }
-
-
-    let reorder_result = ctx.guild_id().unwrap().reorder_channels(ctx, channel_order).await;
-
-    match reorder_result {
-        Ok(_) => {}
-        Err(_) => {}
+        Err(e) => {
+            tracing::warn!("complementary_setup: impossible de lister les salons de la guilde {guild_id} : {e:?}");
+        }
     }
 
     match server.update().await {
@@ -373,4 +228,92 @@ pub async fn complementary_setup<'a>(ctx: &Context<'_>, server : &'a mut Server,
     };
 
     Ok("setup__setup_success_message")
+}
+
+/// Retourne le salon/la catégorie Discord enregistré(e) dans `existing`, à condition qu'il/elle
+/// existe encore et soit bien un salon de serveur. Sinon `None` (jamais de panic).
+async fn fetch_existing_guild_channel(ctx: &Context<'_>, existing: Option<Id>) -> Option<GuildChannel> {
+    let id = existing?;
+    if id.id == 0 {
+        return None;
+    }
+    ctx.http().get_channel(id.id.into()).await.ok()?.guild()
+}
+
+/// Résout un salon déjà enregistré, ou le crée s'il n'a jamais existé ou a été supprimé.
+///
+/// Retourne le salon et un booléen valant `true` s'il vient d'être créé.
+/// En cas d'échec de création, `error_key` est ajouté à `errors` et l'erreur est propagée.
+async fn resolve_or_create<F, Fut>(
+    ctx: &Context<'_>,
+    existing: Option<Id>,
+    error_key: &'static str,
+    errors: &mut Vec<&'static str>,
+    create: F,
+) -> serenity::Result<(GuildChannel, bool)>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = serenity::Result<GuildChannel>>,
+{
+    if let Some(channel) = fetch_existing_guild_channel(ctx, existing).await {
+        return Ok((channel, false));
+    }
+    match create().await {
+        Ok(channel) => Ok((channel, true)),
+        Err(e) => {
+            errors.push(error_key);
+            Err(e)
+        }
+    }
+}
+
+/// Convertit un rôle optionnel du serveur en `RoleId`, ou renvoie l'erreur de setup des rôles.
+fn required_role(role: Option<Id>) -> Result<RoleId, Error> {
+    match role {
+        Some(Id { id, .. }) if id != 0 => Ok(RoleId::new(id)),
+        _ => Err("setup__roles_setup_failed".into()),
+    }
+}
+
+/// Convertit un identifiant de salon optionnel du serveur en `ChannelId`, ou renvoie l'erreur de setup des salons.
+fn required_channel_id(channel: Option<Id>) -> Result<ChannelId, Error> {
+    match channel {
+        Some(Id { id, .. }) if id != 0 => Ok(ChannelId::new(id)),
+        _ => Err("setup__channel_setup_failed".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn id(value: u64) -> Option<Id> {
+        Some(Id { id: value, id_type: IdType::Role })
+    }
+
+    #[test]
+    fn required_role_accepts_a_stored_role() {
+        assert_eq!(required_role(id(42)).unwrap(), RoleId::new(42));
+    }
+
+    #[test]
+    fn required_role_rejects_missing_or_zero() {
+        assert!(required_role(None).is_err());
+        assert!(required_role(id(0)).is_err());
+    }
+
+    #[test]
+    fn required_channel_id_rejects_missing_or_zero() {
+        assert_eq!(required_channel_id(id(7)).unwrap(), ChannelId::new(7));
+        assert!(required_channel_id(None).is_err());
+        assert!(required_channel_id(id(0)).is_err());
+    }
+
+    #[test]
+    fn setup_errors_use_known_translation_keys() {
+        let err = required_role(None).unwrap_err().to_string();
+        assert_eq!(err, "setup__roles_setup_failed");
+        let err = required_channel_id(None).unwrap_err().to_string();
+        assert_eq!(err, "setup__channel_setup_failed");
+    }
 }
