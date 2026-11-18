@@ -18,6 +18,13 @@ pub struct Character {
     pub universe_id: ObjectId,
     pub name: String,
     pub stats: Vec<Stat>,
+    /// Description publique de la fiche, copiée depuis l'embed à l'acceptation.
+    /// Absente des documents antérieurs (lecture compatible grâce à `default`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Image du personnage (URL), cf. docs/activity/ARCHITECTURE.md ❓Q5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<String>,
 }
 
 impl Character {

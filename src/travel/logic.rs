@@ -1060,6 +1060,12 @@ pub fn get_travel_threshold(modifier: u64) -> f64 {
 /// Calcule la distance parcourue réelle (en km) d'un groupe à l'instant T.
 pub fn calculate_current_distance(player_move: &TravelGroup) -> f64 {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    calculate_current_distance_at(player_move, now)
+}
+
+/// Variante pure de [`calculate_current_distance`] à un instant `now` donné (secondes Unix).
+/// Utilisée par l'activité Discord pour le compte à rebours (même calcul que le bot).
+pub fn calculate_current_distance_at(player_move: &TravelGroup, now: u64) -> f64 {
     let start_ts = player_move.step_start_timestamp.unwrap_or(now);
     let end_ts = player_move.step_end_timestamp.unwrap_or(now);
     

@@ -180,6 +180,9 @@ pub async fn connect_bot() -> Result<Client, ()>{
             *http_client = Some(client.http.clone());
         }
 
+        // API de l'activité Discord (no-op si ACTIVITY_ENABLED n'est pas défini).
+        crate::activity::spawn(client.http.clone());
+
         if let Err(why) = client.start_shards(SHARD_NUMBER).await {
             println!("Client error: {why:?}");
         }

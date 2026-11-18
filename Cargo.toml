@@ -28,3 +28,8 @@ dotenv = "0.15.0"
 reqwest = { version = "0.13.2", features = ["json"] }
 uuid = { version = "1.17.0", features = ["v4"] }
 rand = "0.10.0"
+# --- Activité Discord (API HTTP embarquée, cf. docs/activity/ARCHITECTURE.md) ---
+axum = { version = "0.8", features = ["ws"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs", "set-header", "limit"] }
+sha2 = "0.10"
