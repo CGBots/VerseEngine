@@ -1,10 +1,8 @@
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use serenity::all::{Http, UserId, Color, CreateMessage, CreateInteractionResponse, CreateInteractionResponseMessage};
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
-use tokio::time::sleep;
 use fluent::FluentArgs;
 use crate::database::loot::PlayerLoot;
 use crate::database::db_client::get_db_client;
@@ -12,56 +10,49 @@ use crate::database::inventory::{Inventory, HolderType};
 use crate::database::items::get_item_by_name;
 use crate::database::universe::get_universe_by_id;
 use crate::translation::get_by_locale;
+use crate::utility::timer::{self, Timer};
 use crate::utility::carousel::{CarouselConfig, CarouselPage, create_carousel_embed, create_carousel_components, paginate_text};
 
 pub static LOOTS: Lazy<Arc<Mutex<Vec<PlayerLoot>>>> = Lazy::new(|| Arc::new(Mutex::new(vec![])));
-pub static LOOT_SLEEPER: Lazy<Arc<Mutex<Option<JoinHandle<()>>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
+/// Minuteur unique de la file des loots (voir [`crate::utility::timer`]).
+pub static LOOT_TIMER: Lazy<Timer> = Lazy::new(|| Timer::new("loot"));
 pub static HTTP_CLIENT: Lazy<Arc<Mutex<Option<Arc<Http>>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
 
-fn loot_process(delay: u64) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        sleep(Duration::from_secs(delay)).await;
+fn now_secs() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+}
 
-        let mut next_delay: Option<u64> = None;
-        let completed_loots: Vec<PlayerLoot>;
+/// Sépare les loots terminés (`end_timestamp <= now`) de ceux encore en cours.
+fn split_finished_loots(loots: Vec<PlayerLoot>, now: u64) -> (Vec<PlayerLoot>, Vec<PlayerLoot>) {
+    loots.into_iter().partition(|l| l.end_timestamp <= now)
+}
 
-        {
-            let mut loots = LOOTS.lock().await;
-            if loots.is_empty() {
-                let mut sleeper = LOOT_SLEEPER.lock().await;
-                *sleeper = None;
-                return;
-            }
+/// Délai avant la fin du loot le plus proche, `None` si la file est vide.
+fn next_loot_delay(loots: &[PlayerLoot], now: u64) -> Option<u64> {
+    loots.iter().map(|l| l.end_timestamp.saturating_sub(now)).min()
+}
 
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-            
-            let (finished, pending): (Vec<PlayerLoot>, Vec<PlayerLoot>) = loots.clone().into_iter().partition(|l| l.end_timestamp <= now);
-            *loots = pending;
-            completed_loots = finished;
+fn loot_job() -> timer::Job {
+    timer::job(process_due_loots)
+}
 
-            if !loots.is_empty() {
-                let mut min_end = u64::MAX;
-                for l in loots.iter() {
-                    if l.end_timestamp < min_end {
-                        min_end = l.end_timestamp;
-                    }
-                }
-                next_delay = Some(if min_end > now { min_end - now } else { 0 });
-            }
+/// Finalise les loots échus et retourne le délai avant le prochain.
+async fn process_due_loots() -> Option<u64> {
+    let completed = {
+        let mut loots = LOOTS.lock().await;
+        let (finished, pending) = split_finished_loots(std::mem::take(&mut *loots), now_secs());
+        *loots = pending;
+        finished
+    };
+
+    for loot in completed {
+        if let Err(e) = finalize_loot(loot, false).await {
+            eprintln!("[loot] cannot finalize a loot: {e:?}");
         }
+    }
 
-        for loot in completed_loots {
-            let _ = finalize_loot(loot, false).await;
-        }
-
-        if let Some(d) = next_delay {
-            let mut sleeper = LOOT_SLEEPER.lock().await;
-            *sleeper = Some(loot_process(d));
-        } else {
-            let mut sleeper = LOOT_SLEEPER.lock().await;
-            *sleeper = None;
-        }
-    })
+    let loots = LOOTS.lock().await;
+    next_loot_delay(&loots, now_secs())
 }
 
 async fn finalize_loot(mut loot: PlayerLoot, is_late: bool) -> Result<(), crate::discord::poise_structs::Error> {
@@ -100,7 +91,8 @@ async fn finalize_loot(mut loot: PlayerLoot, is_late: bool) -> Result<(), crate:
 
         // Marquer comme fini et supprimer de la DB
         loot.is_finished = true;
-        loot.remove_with_session(&mut session).await?;
+        let removed = loot.remove_with_session(&mut session).await?;
+        timer::ensure_claimed(removed.deleted_count)?;
         Ok(())
     }.await;
 
@@ -266,16 +258,8 @@ pub async fn add_loot(http: Arc<Http>, player_loot: PlayerLoot) -> Result<(), cr
     let mut loots = LOOTS.lock().await;
     loots.push(player_loot.clone());
 
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    let delay = if player_loot.end_timestamp > now { player_loot.end_timestamp - now } else { 0 };
-
-    let mut sleeper = LOOT_SLEEPER.lock().await;
-    if let Some(handle) = sleeper.as_ref() {
-        handle.abort();
-        *sleeper = Some(loot_process(delay));
-    } else {
-        *sleeper = Some(loot_process(delay));
-    }
+    // Ne repousse jamais un réveil plus proche déjà prévu pour un autre loot.
+    LOOT_TIMER.schedule(player_loot.end_timestamp.saturating_sub(now_secs()), loot_job());
 
     Ok(())
 }
@@ -301,61 +285,88 @@ pub async fn stop_loot(universe_id: mongodb::bson::oid::ObjectId, user_id: u64) 
     Ok(removed_loot)
 }
 
-#[allow(dead_code)]
+/// Recharge la file des loots depuis la base. Appelé à chaque `ready` Discord, donc aussi après
+/// une reconnexion : l'ancien minuteur est arrêté, le traitement éventuellement en cours se termine
+/// d'abord, et chaque loot n'est finalisé qu'une fois.
 pub async fn setup() {
+    LOOT_TIMER.stop();
+    let _exclusive = LOOT_TIMER.exclusive().await;
+    // Gardé jusqu'au remplacement de la file : un loot lancé pendant la relecture n'est pas perdu.
+    let mut loots = LOOTS.lock().await;
+
     let universes = match crate::database::universe::Universe::get_all_universes().await {
         Ok(u) => u,
-        Err(e) => panic!("Impossible d'initialiser la file de loot : erreur lors de la récupération des univers : {:?}", e),
+        Err(e) => {
+            // Avant : panic. On garde la file en mémoire et on continue.
+            eprintln!("Impossible d'initialiser la file de loot : erreur lors de la récupération des univers : {:?}", e);
+            LOOT_TIMER.restart(next_loot_delay(&loots, now_secs()), loot_job());
+            return;
+        }
     };
-    
+
     let mut all_active_loots = Vec::new();
     for universe in universes {
         match PlayerLoot::get_active_loots(universe.universe_id).await {
             Ok(active_loots) => all_active_loots.extend(active_loots),
-            Err(e) => panic!("Impossible d'initialiser la file de loot : erreur lors de la récupération des loots pour l'univers {:?} : {:?}", universe.universe_id, e),
-        }
-    }
-
-    if all_active_loots.is_empty() {
-        println!("File de loot initialisée (0 loot en cours).");
-        return;
-    }
-
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    let (finished, pending): (Vec<PlayerLoot>, Vec<PlayerLoot>) = all_active_loots.into_iter().partition(|l| l.end_timestamp <= now);
-
-    for loot in finished {
-        let _ = finalize_loot(loot, true).await;
-    }
-
-    if pending.is_empty() {
-        println!("File de loot initialisée (0 loot en attente après traitement des loots terminés).");
-        return;
-    }
-
-    let pending_count = pending.len();
-
-    {
-        let mut loots_lock = LOOTS.lock().await;
-        *loots_lock = pending;
-    }
-
-    let mut min_delay = u64::MAX;
-    
-    {
-        let loots = LOOTS.lock().await;
-        for l in loots.iter() {
-            let delay = if l.end_timestamp > now { l.end_timestamp - now } else { 0 };
-            if delay < min_delay {
-                min_delay = delay;
+            Err(e) => {
+                eprintln!("Impossible d'initialiser la file de loot : erreur lors de la récupération des loots pour l'univers {:?} : {:?}", universe.universe_id, e);
+                LOOT_TIMER.restart(next_loot_delay(&loots, now_secs()), loot_job());
+                return;
             }
         }
     }
 
-    if min_delay != u64::MAX {
-        let mut sleeper = LOOT_SLEEPER.lock().await;
-        *sleeper = Some(loot_process(min_delay));
+    let (finished, pending) = split_finished_loots(all_active_loots, now_secs());
+    for loot in finished {
+        if let Err(e) = finalize_loot(loot, true).await {
+            eprintln!("[loot] cannot finalize a recovered loot: {e:?}");
+        }
     }
 
-    println!("File de loot initialisée ({} loot(s) en attente).", pending_count);
+    *loots = pending;
+    LOOT_TIMER.restart(next_loot_delay(&loots, now_secs()), loot_job());
+    println!("File de loot initialisée ({} loot(s) en attente).", loots.len());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mongodb::bson::oid::ObjectId;
+
+    fn loot_ending_at(end: u64) -> PlayerLoot {
+        PlayerLoot {
+            _id: None,
+            universe_id: ObjectId::new(),
+            user_id: end,
+            server_id: 1,
+            items: vec![],
+            start_timestamp: 0,
+            end_timestamp: end,
+            is_finished: false,
+        }
+    }
+
+    #[test]
+    fn finished_loots_are_separated_from_pending_ones() {
+        let (finished, pending) = split_finished_loots(vec![loot_ending_at(10), loot_ending_at(20), loot_ending_at(30)], 20);
+        assert_eq!(finished.iter().map(|l| l.end_timestamp).collect::<Vec<_>>(), vec![10, 20]);
+        assert_eq!(pending.iter().map(|l| l.end_timestamp).collect::<Vec<_>>(), vec![30]);
+    }
+
+    #[test]
+    fn the_next_wake_up_targets_the_earliest_loot() {
+        // L'ordre d'ajout ne compte pas : un loot ajouté après mais plus court passe devant.
+        let loots = [loot_ending_at(500), loot_ending_at(150), loot_ending_at(300)];
+        assert_eq!(next_loot_delay(&loots, 100), Some(50));
+    }
+
+    #[test]
+    fn an_overdue_loot_wakes_up_immediately() {
+        assert_eq!(next_loot_delay(&[loot_ending_at(90)], 100), Some(0));
+    }
+
+    #[test]
+    fn no_loot_means_no_wake_up() {
+        assert_eq!(next_loot_delay(&[], 100), None);
+    }
 }

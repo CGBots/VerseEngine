@@ -55,4 +55,4 @@ Tests d'intégration :
 
 ## Intégration continue
 
-`.github/workflows/ci.yml` exécute `cargo check`, `cargo test`, les tests d'intégration MongoDB (service `mongo:8`) et un build de l'image Docker à chaque push et pull request.
+`.github/workflows/ci.yml` exécute `cargo check`, `cargo test`, les tests d'intégration MongoDB (replica set `mongo:8`) et un build de l'image Docker à chaque push et pull request.
