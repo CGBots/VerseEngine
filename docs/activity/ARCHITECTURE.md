@@ -174,7 +174,7 @@ Pourquoi pas `Place.position` ? (1) le terrain (heightmap) est lié à la carte,
 ### 8.3 Collections à venir
 - `character_submissions` (phase d, **validé D4**) : fiches en cours de création / en attente, écrites **par le flux Discord existant et par l'activité** (le message Discord garde l'embed et les boutons, mais lit/écrit la base). Champs : `universe_id, user_id, name, description, story, special_request, image?, status (draft|submitted|accepted|refused), message_ref, created_at, updated_at`.
 - `Inventory.equipped: bool` (`#[serde(default)]`), **sans emplacement** (D6). Les effets de l'équipement passeront plus tard par des « champs de valeurs » ; en phase c, équiper/déséquiper ne fait que basculer l'état et journaliser.
-- `known_roads` (phase b, D10) : `{universe_id, user_id, road_ids: [channel_id…]}`, index unique `(universe_id, user_id)`, `$addToSet` à chaque départ sur une route, **dans le service de voyage partagé** (donc identique slash/activité).
+- `known_roads` (phase b, D10, **livré**) : `{universe_id, user_id, road_ids: [channel_id…]}`, index unique `(universe_id, user_id)`, `$addToSet` à chaque départ sur une route, **dans le service de voyage partagé** (donc identique slash/activité).
 - `logs` (D9) : `{universe_id, server_id, ts, actor_id, kind, target, payload}`. `kind` couvre **tout ce qui modifie le gameplay** : consommation, équipement/déséquipement, échange, utilisation d'objet, loot, craft (début/fin/arrêt), déplacement (départ/arrêt/arrivée/rejoindre/quitter), début/fin d'effet, lieux, routes, objets, loot tables, recettes (création/modification/suppression), validation/refus de fiche. Une fonction unique `gameplay_log::record()` écrit en base (dans la transaction de l'action quand il y en a une) **et** envoie au salon de log. Rétention : pas de TTL par défaut (à confirmer si le volume devient un problème).
 
 ## 9. Carte
@@ -203,12 +203,12 @@ Terrain extrudé (hauteur exagérée, eau à plat), lieux en piliers/icônes, ro
 
 ## 10. Hébergement
 
-- Le binaire écoute `ACTIVITY_BIND` (défaut `127.0.0.1:8787`, jamais `0.0.0.0` par défaut) et sert aussi le front statique (`ACTIVITY_STATIC_DIR`, défaut `web/activity/dist`).
-- **TLS** terminé par un reverse proxy (Caddy recommandé, certificats automatiques) sur `activity.<votre-domaine>`.
-- **Portail développeur Discord** → *Activities* → *URL Mappings* : préfixe `/` → `activity.<votre-domaine>`. Activer l'Activité sur l'application du bot, ajouter le redirect OAuth2 `https://127.0.0.1` (exigé par la console, non utilisé par le SDK).
-- Variables d'environnement ajoutées (voir `.env.example`) : `ACTIVITY_ENABLED`, `ACTIVITY_BIND`, `ACTIVITY_STATIC_DIR`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `ACTIVITY_SESSION_TTL_SECS`.
-- **Docker** : étape Node (`npm ci && npm run build`) ajoutée au `Dockerfile` en phase b, `dist/` copié dans l'image ; `docker-compose.yml` reçoit un service `caddy` optionnel et le port 8787 exposé seulement au réseau interne. Remarque : le `Dockerfile` actuel copie `.env` dans l'image — à éviter (les secrets se retrouvent dans les couches) ; préférer `env_file` dans compose.
-- Développement local : `cloudflared tunnel --url http://localhost:5173` + URL mapping temporaire (procédure Discord standard).
+Procédure complète, vérifiée sur la documentation officielle : **[`DEPLOY.md`](DEPLOY.md)**.
+
+- Le binaire écoute `ACTIVITY_BIND` (défaut `127.0.0.1:8787` ; `0.0.0.0:8787` dans le conteneur, publié sur `127.0.0.1` seulement) et sert le front statique (`ACTIVITY_STATIC_DIR`, défaut `web/activity/dist`).
+- TLS par un reverse proxy (Caddy) sur le sous-domaine ; URL mapping Discord `/` → ce sous-domaine, sans protocole.
+- `Dockerfile` multi-étapes : étape Node (`npm ci`, tests, build) puis `dist/` copié dans l'image du bot (D1). Aucun secret dans l'image.
+- La commande Entry Point « Launch » créée par Discord est conservée lors de l'enregistrement des commandes du bot.
 
 ## 11. Tests
 
@@ -230,7 +230,7 @@ Terrain extrudé (hauteur exagérée, eau à plat), lieux en piliers/icônes, ro
 - [x] Logique pure phase b : placement MDS + stress majorization, parseur Azgaar JSON Full + rattachement par nom + heightmap, vue ETA
 - [x] Réseau routier Azgaar (somme à travers les bifurcations, routes maritimes optionnelles, longueurs déclarées, unités) et zone explorable (polygone, masque de terrain) — `map/network.rs`
 - [x] `Character.image` = référence de pièce jointe (D5) ; `Cargo.lock` versionné (D11)
-- [ ] Phase b — `known_roads`, extraction `travel/service.rs` (start/stop/join/leave sans `poise::Context`), routes voyage, `GET /api/map`, collection `universe_maps`, hub change streams → WebSocket, scène three.js/r3f, Dockerfile multi-étapes
+- [x] Phase b — `travel/service.rs` partagé (slash + activité), `known_roads`, `GET /api/map` (routes secrètes et lieux cachés filtrés côté serveur), `/api/me/travel*`, collection `universe_maps` (placement calculé mis en cache), change streams → WebSocket, `Character.image` → URL, scène three.js/r3f + repli 2D, Dockerfile multi-étapes, `DEPLOY.md`
 - [ ] Phase c — inventaire (`equipped: bool`)
 - [ ] Phase d — admin : `character_submissions`, image en paramètre + fil, `logs`, propositions, import Azgaar avec zone
 
