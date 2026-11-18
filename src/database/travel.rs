@@ -1,4 +1,3 @@
-use log::log;
 use mongodb::bson::{doc, to_document};
 use mongodb::bson::oid::ObjectId;
 use mongodb::results::{DeleteResult, InsertOneResult, UpdateResult};
@@ -7,8 +6,6 @@ use serde_with::DisplayFromStr;
 use serde_with::serde_as;
 use crate::database::db_client::{get_db_client};
 use crate::database::db_namespace::{TRAVELS_COLLECTION_NAME, VERSEENGINE_DB_NAME};
-use crate::database::modifiers::Modifier;
-use crate::database::stats::{get_stat_by_name, StatValue, SPEED_STAT};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub enum SpaceType{
@@ -91,7 +88,7 @@ impl TravelGroup {
     }
 
     pub async fn upsert(&self) -> mongodb::error::Result<UpdateResult> {
-        let mut doc = to_document(self).unwrap();
+        let mut doc = to_document(self)?;
         doc.remove("_id");
         let filter = doc! {"_id": self._id};
         let update = doc! {"$set": doc};
@@ -106,7 +103,7 @@ impl TravelGroup {
     }
 
     pub async fn upsert_with_session(&self, session: &mut mongodb::ClientSession) -> mongodb::error::Result<UpdateResult> {
-        let mut doc = to_document(self).unwrap();
+        let mut doc = to_document(self)?;
         doc.remove("_id");
         let filter = doc! {"_id": self._id};
         let update = doc! {"$set": doc};
@@ -135,16 +132,5 @@ impl TravelGroup {
             moves.push(m);
         }
         Ok(moves)
-    }
-
-    pub async fn next_step(self) -> Option<(StatValue, Option<Modifier>)>{
-        if !self.is_end && !self.members.is_empty() {
-            let Ok(Some(stat)) = get_stat_by_name(self.universe_id, SPEED_STAT).await else {
-                log!(log::Level::Error, "Failed to get stat. [{:?}]", self);
-                return None;
-            };
-            let Ok((_speed, _shortest_modifier)) = stat.resolve(self.actual_space_id, self.members[0]).await else { todo!() };
-        };
-        None
     }
 }
