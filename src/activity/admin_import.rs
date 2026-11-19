@@ -58,7 +58,23 @@ pub fn may_import(access: AccessLevel, universe: Option<&Universe>, user_id: u64
 pub struct Draft {
     pub map: Arc<AzgaarMap>,
     pub terrain: Option<Arc<Terrain>>,
+    /// Carte générée (E7) : routes telles que dessinées.
+    pub explicit_roads: Option<Arc<Vec<crate::activity::map::network::RoadCandidate>>>,
     pub created: Instant,
+}
+
+/// Ce que l'aperçu et l'exécution reprennent d'une carte en attente.
+#[derive(Clone)]
+pub struct DraftView {
+    pub map: Arc<AzgaarMap>,
+    pub explicit_roads: Option<Arc<Vec<crate::activity::map::network::RoadCandidate>>>,
+}
+
+impl DraftView {
+    /// Carte générée par l'activité (et non importée d'Azgaar).
+    pub fn generated(&self) -> bool {
+        self.explicit_roads.is_some()
+    }
 }
 
 #[derive(Default)]
@@ -79,11 +95,11 @@ impl ImportDrafts {
         map.insert((guild_id, user_id), draft);
     }
 
-    pub fn get(&self, guild_id: u64, user_id: u64) -> Option<(Arc<AzgaarMap>, Option<Arc<Terrain>>)> {
+    pub fn get(&self, guild_id: u64, user_id: u64) -> Option<DraftView> {
         let map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         map.get(&(guild_id, user_id))
             .filter(|d| d.created.elapsed() < DRAFT_TTL)
-            .map(|d| (d.map.clone(), d.terrain.clone()))
+            .map(|d| DraftView { map: d.map.clone(), explicit_roads: d.explicit_roads.clone() })
     }
 
     pub fn remove(&self, guild_id: u64, user_id: u64) {
@@ -228,6 +244,26 @@ struct Suggestion {
     burgs: Vec<u64>,
 }
 
+/// Rattachements proposés (« Créer en plus », I16), d'après les noms.
+async fn suggestions(ctx: &ImportContext, map: &AzgaarMap) -> ApiResult<Vec<Suggestion>> {
+    let mut suggestions = vec![];
+    if let Some(u) = &ctx.universe {
+        let places: Vec<crate::database::places::Place> = crate::database::places::get_places_by_universe_id(u.universe_id).await?.try_collect().await?;
+        let names: Vec<(u64, String)> = places.iter().map(|p| (p.category_id, p.name.clone())).collect();
+        for (place_id, status) in match_places(&names, &map.burgs) {
+            let place_name = names.iter().find(|(id, _)| *id == place_id).map(|(_, n)| n.clone()).unwrap_or_default();
+            let (status, burgs) = match status {
+                MatchStatus::Exact(b) => ("exact", vec![b]),
+                MatchStatus::Ambiguous(v) => ("ambiguous", v),
+                MatchStatus::Partial(v) => ("partial", v),
+                MatchStatus::None => ("none", vec![]),
+            };
+            suggestions.push(Suggestion { place_id, place_name, status, burgs });
+        }
+    }
+    Ok(suggestions)
+}
+
 async fn upload_map(State(state): State<AppState>, Authed(s): Authed, body: Bytes) -> ApiResult<Json<serde_json::Value>> {
     check_write(&state, &s)?;
     let ctx = require_importer(&state, &s).await?;
@@ -244,22 +280,7 @@ async fn upload_map(State(state): State<AppState>, Authed(s): Authed, body: Byte
     .map_err(|_| ApiError::internal())?;
     let (file, terrain) = parsed.map_err(|e| ApiError::bad_request(e.key()))?;
 
-    // Rattachements proposés (« Créer en plus », I16), d'après les noms.
-    let mut suggestions = vec![];
-    if let Some(u) = &ctx.universe {
-        let places: Vec<crate::database::places::Place> = crate::database::places::get_places_by_universe_id(u.universe_id).await?.try_collect().await?;
-        let names: Vec<(u64, String)> = places.iter().map(|p| (p.category_id, p.name.clone())).collect();
-        for (place_id, status) in match_places(&names, &file.map.burgs) {
-            let place_name = names.iter().find(|(id, _)| *id == place_id).map(|(_, n)| n.clone()).unwrap_or_default();
-            let (status, burgs) = match status {
-                MatchStatus::Exact(b) => ("exact", vec![b]),
-                MatchStatus::Ambiguous(v) => ("ambiguous", v),
-                MatchStatus::Partial(v) => ("partial", v),
-                MatchStatus::None => ("none", vec![]),
-            };
-            suggestions.push(Suggestion { place_id, place_name, status, burgs });
-        }
-    }
+    let suggestions = suggestions(&ctx, &file.map).await?;
 
     let map = &file.map;
     let response = serde_json::json!({
@@ -274,7 +295,60 @@ async fn upload_map(State(state): State<AppState>, Authed(s): Authed, body: Byte
         "suggestions": suggestions,
         "has_universe": ctx.universe.is_some(),
     });
-    state.import_drafts.put(s.guild_id, s.user_id, Draft { map: Arc::new(file.map), terrain: terrain.map(Arc::new), created: Instant::now() });
+    state.import_drafts.put(s.guild_id, s.user_id, Draft { map: Arc::new(file.map), terrain: terrain.map(Arc::new), explicit_roads: None, created: Instant::now() });
+    Ok(Json(response))
+}
+
+
+// ---------------------------------------------------------------------------
+// « Générer une map » (E7)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GenerateRequest {
+    /// Graine affichée (32 bits, lisible et exacte en JavaScript) ; absente : tirée au hasard.
+    #[serde(default)]
+    pub seed: Option<u32>,
+    pub count: usize,
+}
+
+async fn generate_map(State(state): State<AppState>, Authed(s): Authed, Json(req): Json<GenerateRequest>) -> ApiResult<Json<crate::activity::map::generate::GeneratedMap>> {
+    check_write(&state, &s)?;
+    require_importer(&state, &s).await?;
+    use crate::activity::map::generate::{generate, MAX_PLACES, MIN_PLACES};
+    if !(MIN_PLACES..=MAX_PLACES).contains(&req.count) {
+        return Err(ApiError::bad_request("activity__generate_bad_count"));
+    }
+    let seed = req.seed.unwrap_or_else(rand::random::<u32>);
+    let map = tokio::task::spawn_blocking(move || generate(seed as u64, req.count)).await.map_err(|_| ApiError::internal())?;
+    Ok(Json(map))
+}
+
+/// Carte générée puis modifiée par l'admin : vérifiée, puis gardée comme une carte envoyée.
+async fn use_generated(State(state): State<AppState>, Authed(s): Authed, Json(map): Json<crate::activity::map::generate::GeneratedMap>) -> ApiResult<Json<serde_json::Value>> {
+    check_write(&state, &s)?;
+    let ctx = require_importer(&state, &s).await?;
+    if map.seed > u32::MAX as u64 {
+        return Err(ApiError::bad_request("activity__invalid_request"));
+    }
+    map.validate().map_err(ApiError::bad_request)?;
+    let azgaar = map.to_azgaar();
+    let roads = map.road_candidates();
+    let response = serde_json::json!({
+        "name": serde_json::Value::Null,
+        "version": "generated",
+        "width": azgaar.width,
+        "height": azgaar.height,
+        "distance_unit": "km",
+        "route_count": roads.len(),
+        "burgs": azgaar.burgs.iter().map(|b| BurgDto { id: b.id, name: b.name.clone(), x: b.x, y: b.y, capital: b.capital }).collect::<Vec<_>>(),
+        "terrain": serde_json::Value::Null,
+        "suggestions": suggestions(&ctx, &azgaar).await?,
+        "has_universe": ctx.universe.is_some(),
+        "generated": true,
+    });
+    state.import_drafts.put(s.guild_id, s.user_id, Draft { map: Arc::new(azgaar), terrain: None, explicit_roads: Some(Arc::new(roads)), created: Instant::now() });
     Ok(Json(response))
 }
 
@@ -351,6 +425,8 @@ impl PlanRequest {
 /// Tout ce qu'il faut pour construire (et plus tard exécuter) un plan.
 pub struct PlanInputs {
     pub map: Arc<AzgaarMap>,
+    /// Carte générée par l'activité (enregistrée comme `Manual`, sans relief).
+    pub generated: bool,
     pub options: ImportOptions,
     pub existing_places: Vec<ExistingPlace>,
     pub existing_roads: Vec<ExistingRoad>,
@@ -359,7 +435,8 @@ pub struct PlanInputs {
 /// Rassemble les données du plan : carte envoyée, lieux et routes existants, serveurs vérifiés.
 pub async fn plan_inputs(state: &AppState, s: &Session, ctx: &ImportContext, req: &PlanRequest) -> ApiResult<PlanInputs> {
     req.validate().map_err(ApiError::bad_request)?;
-    let (map, _) = state.import_drafts.get(s.guild_id, s.user_id).ok_or_else(|| ApiError::not_found("activity__import_no_map"))?;
+    let draft = state.import_drafts.get(s.guild_id, s.user_id).ok_or_else(|| ApiError::not_found("activity__import_no_map"))?;
+    let map = draft.map.clone();
     let universe_id = ctx.universe.as_ref().map(|u| u.universe_id);
 
     let mut servers = vec![];
@@ -400,8 +477,9 @@ pub async fn plan_inputs(state: &AppState, s: &Session, ctx: &ImportContext, req
         // Un serveur à créer : son installation, plus les rôles @everyone et du bot.
         new_server_load: ServerLoad { channels: c, roles: r + 2 },
         max_places: DEFAULT_MAX_PLACES_PER_SERVER,
+        explicit_roads: draft.explicit_roads.as_ref().map(|r| r.as_ref().clone()),
     };
-    Ok(PlanInputs { map, options, existing_places, existing_roads })
+    Ok(PlanInputs { map, generated: draft.generated(), options, existing_places, existing_roads })
 }
 
 pub async fn compute_plan(inputs: &PlanInputs) -> ApiResult<ImportPlan> {
@@ -433,8 +511,15 @@ async fn plan(State(state): State<AppState>, Authed(s): Authed, Json(req): Json<
 
 /// Routes admin de l'import. L'envoi de la carte a sa propre limite de taille.
 pub fn routes() -> (Router<AppState>, Router<AppState>) {
-    let standard = Router::new().route("/admin/import/servers", get(list_servers)).route("/admin/import/plan", post(plan));
-    let upload = Router::new().route("/admin/import/map", post(upload_map)).layer(DefaultBodyLimit::max(MAX_MAP_BYTES));
+    let standard = Router::new()
+        .route("/admin/import/servers", get(list_servers))
+        .route("/admin/import/plan", post(plan))
+        .route("/admin/import/generate", post(generate_map));
+    // Une carte générée de 600 lieux, renvoyée après modification, dépasse 64 Kio.
+    let upload = Router::new()
+        .route("/admin/import/map", post(upload_map))
+        .route("/admin/import/generated", post(use_generated))
+        .layer(DefaultBodyLimit::max(MAX_MAP_BYTES));
     (standard, upload)
 }
 
@@ -485,7 +570,7 @@ mod tests {
     #[test]
     fn drafts_expire_and_are_bounded() {
         let d = ImportDrafts::default();
-        let map = || Draft { map: Arc::new(crate::activity::map::azgaar::parse(r#"{"pack":{"burgs":[{},{"i":1,"name":"A","x":1,"y":1}]}}"#).unwrap()), terrain: None, created: Instant::now() };
+        let map = || Draft { map: Arc::new(crate::activity::map::azgaar::parse(r#"{"pack":{"burgs":[{},{"i":1,"name":"A","x":1,"y":1}]}}"#).unwrap()), terrain: None, explicit_roads: None, created: Instant::now() };
         for i in 0..(MAX_DRAFTS as u64 + 3) {
             d.put(1, i, map());
         }
@@ -660,6 +745,51 @@ mod tests {
                 .delete_one(mongodb::bson::doc! {"server_id": guild.to_string()})
                 .await
                 .unwrap();
+        }
+
+        /// E7 : une carte générée, modifiée par l'admin (renommage, route supprimée, lieu et route
+        /// ajoutés), puis renvoyée, donne un aperçu avec exactement les routes dessinées.
+        #[test]
+        #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
+        fn a_generated_and_edited_map_gets_a_plan() {
+            use crate::activity::map::generate::{GenPlace, GenRoad, GeneratedMap};
+            block_on(async {
+                let (app, _, token) = app(vec![random_id()], AccessLevel::Admin);
+                let (st, body) = call(&app, "POST", "/api/admin/import/generate", &token, Body::from(r#"{"seed":1234,"count":12}"#), true).await;
+                assert_eq!(st, StatusCode::OK, "{body}");
+                let mut map: GeneratedMap = serde_json::from_value(body.clone()).unwrap();
+                assert_eq!(map.places.len(), 12);
+                // Même graine : même carte.
+                tokio::time::sleep(Duration::from_millis(1100)).await;
+                let (_, again) = call(&app, "POST", "/api/admin/import/generate", &token, Body::from(r#"{"seed":1234,"count":12}"#), true).await;
+                assert_eq!(again, body);
+
+                map.places[0].name = "Ma capitale".into();
+                let removed = map.roads.pop().unwrap();
+                let new_id = 100;
+                map.places.push(GenPlace { id: new_id, name: "Nouveau".into(), x: 10.0, y: 10.0, capital: false });
+                map.roads.push(GenRoad { a: new_id, b: map.places[0].id, control: [20.0, 20.0] });
+                tokio::time::sleep(Duration::from_millis(1100)).await;
+                let (st, uploaded) = call(&app, "POST", "/api/admin/import/generated", &token, Body::from(serde_json::to_string(&map).unwrap()), true).await;
+                assert_eq!(st, StatusCode::OK, "{uploaded}");
+                assert_eq!(uploaded["generated"], true);
+                assert!(uploaded["burgs"].as_array().unwrap().iter().any(|b| b["name"] == "Ma capitale"));
+
+                tokio::time::sleep(Duration::from_millis(1100)).await;
+                let (st, plan) = call(&app, "POST", "/api/admin/import/plan", &token, Body::from(r#"{"mode":"replace"}"#), true).await;
+                assert_eq!(st, StatusCode::OK, "{plan}");
+                let roads = plan["plan"]["roads"].as_array().unwrap();
+                assert_eq!(roads.len(), map.roads.len(), "exactly the drawn roads");
+                let pair = |r: &serde_json::Value| (r["burg_a"].as_u64().unwrap(), r["burg_b"].as_u64().unwrap());
+                assert!(!roads.iter().any(|r| pair(r) == (removed.a.min(removed.b), removed.a.max(removed.b))), "the deleted road is gone");
+                assert_eq!(plan["plan"]["places"].as_array().unwrap().len(), 13);
+
+                // Une carte invalide est refusée.
+                tokio::time::sleep(Duration::from_millis(1100)).await;
+                map.roads.push(GenRoad { a: new_id, b: 9999, control: [0.0, 0.0] });
+                let (st, body) = call(&app, "POST", "/api/admin/import/generated", &token, Body::from(serde_json::to_string(&map).unwrap()), true).await;
+                assert_eq!((st, body["error"].as_str()), (StatusCode::BAD_REQUEST, Some("activity__generate_bad_road")));
+            });
         }
 
         /// I2 : l'activité s'ouvre sur un serveur sans univers pour un administrateur, pas pour un

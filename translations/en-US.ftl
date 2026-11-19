@@ -1366,3 +1366,6 @@ activity_ui__import_unowned_list = { $count } placed item(s) without owner will 
 activity_ui__import_unowned_item = { $name } ({ $place }), { $content } item(s) inside
 activity_ui__import_confirm_unowned = I confirm the destruction of these items
 activity_ui__import_removal_warning = Warning: { $places } place(s) and { $roads } road(s) will be deleted from Discord, and { $characters } player(s) moved. This part cannot be undone.
+activity__generate_bad_count = The number of places must be between 2 and 600.
+activity__generate_bad_place = A place is invalid: empty or too long name, or position outside the map.
+activity__generate_bad_road = A road is invalid: unknown place, duplicate road or out-of-bounds path.

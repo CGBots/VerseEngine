@@ -1377,3 +1377,6 @@ activity_ui__import_unowned_list = { $count } objet(s) posé(s) sans propriétai
 activity_ui__import_unowned_item = { $name } ({ $place }), { $content } objet(s) dedans
 activity_ui__import_confirm_unowned = Je confirme la destruction de ces objets
 activity_ui__import_removal_warning = Attention : { $places } lieu(x) et { $roads } route(s) seront supprimés de Discord, et { $characters } joueur(s) déplacés. Cette partie ne peut pas être annulée.
+activity__generate_bad_count = Le nombre de lieux doit être compris entre 2 et 600.
+activity__generate_bad_place = Un lieu est invalide : nom vide ou trop long, ou position hors de la carte.
+activity__generate_bad_road = Une route est invalide : lieu inconnu, route en double ou tracé hors limites.

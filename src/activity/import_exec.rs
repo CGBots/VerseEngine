@@ -132,6 +132,8 @@ pub struct Execution {
     pub setup: SetupType,
     pub plan: ImportPlan,
     pub map: Arc<AzgaarMap>,
+    /// Carte générée par l'activité : enregistrée comme `Manual`, sans relief.
+    pub generated: bool,
     pub zone: Vec<[f64; 2]>,
     /// Lieux et routes à supprimer, avec les choix de l'admin (vérifiés).
     pub removal: Option<(Removal, RemovalChoices)>,
@@ -281,7 +283,10 @@ async fn run(p: &mut Provisioner, exec: &Execution) -> Result<ObjectId, &'static
     }
 
     // 6. Mises à jour, carte et suppressions, en une transaction (point de non-retour).
-    let map = universe_map(universe_id, &exec.map, plan, &place_of_burg, &exec.zone);
+    let mut map = universe_map(universe_id, &exec.map, plan, &place_of_burg, &exec.zone);
+    if exec.generated {
+        map.source = MapSource::Manual;
+    }
     let removal = match &exec.removal {
         Some((removal, choices)) => {
             let start = choices.start_burg.and_then(|b| place_of_burg.get(&b)).cloned();
@@ -478,6 +483,7 @@ async fn execute_route(State(state): State<AppState>, Authed(s): Authed, Json(re
         setup: req.plan.setup,
         plan,
         map: inputs.map,
+        generated: inputs.generated,
         zone: req.plan.zone.clone(),
         removal,
         fail_after_places: None,
@@ -788,6 +794,46 @@ mod tests {
             });
         }
 
+        /// E7 : une carte générée de 3 lieux est créée sur Discord ; elle est enregistrée comme
+        /// `Manual`, sans relief (l'activité dessine son terrain 3D).
+        #[test]
+        #[ignore = "integration test: needs MongoDB, DISCORD_TOKEN and VERSEENGINE_TEST_GUILD_ID; run with --ignored"]
+        fn a_generated_map_is_created_on_discord() {
+            use futures::TryStreamExt;
+            block_on(async {
+                let _ = crate::database::db_client::get_db_client().await;
+                let (http, guild, app, _state, token) = setup();
+                let before = counts(&http, guild).await;
+                let (st, map) = call(&app, "POST", "/api/admin/import/generate", &token, Body::from(r#"{"seed":77,"count":3}"#)).await;
+                assert_eq!(st, StatusCode::OK, "{map}");
+                tokio::time::sleep(Duration::from_millis(1100)).await;
+                let (st, _) = call(&app, "POST", "/api/admin/import/generated", &token, Body::from(map.to_string())).await;
+                assert_eq!(st, StatusCode::OK);
+                tokio::time::sleep(Duration::from_millis(1100)).await;
+                let req = format!(r#"{{"plan":{PLAN},"confirm_name":"Test généré","new_universe":{{"name":"Test généré"}}}}"#);
+                let (st, body) = call(&app, "POST", "/api/admin/import/execute", &token, Body::from(req)).await;
+                assert_eq!(st, StatusCode::OK, "{body}");
+                let done = wait_job(&app, &token, body["job_id"].as_str().unwrap()).await;
+                assert_eq!(done["outcome"]["status"], "done", "{done}");
+                let universe_id = ObjectId::parse_str(done["outcome"]["universe_id"].as_str().unwrap()).unwrap();
+                let places: Vec<Place> = crate::database::places::get_places_by_universe_id(universe_id).await.unwrap().try_collect().await.unwrap();
+                assert_eq!(places.len(), 3);
+                let expected: Vec<String> = map["places"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap().to_string()).collect();
+                assert!(places.iter().all(|p| expected.contains(&p.name)));
+                let roads: Vec<crate::database::road::Road> = crate::database::road::get_roads_by_universe(universe_id).await.unwrap().try_collect().await.unwrap();
+                assert_eq!(roads.len(), map["roads"].as_array().unwrap().len());
+                assert!(roads.iter().all(|r| r.distance >= 1));
+                let stored = crate::database::universe_maps::get_universe_map(universe_id).await.unwrap().unwrap();
+                assert_eq!(stored.source, MapSource::Manual);
+                assert!(stored.terrain.is_none());
+                assert_eq!(stored.road_paths.len(), roads.len());
+
+                crate::test_support::delete_universe_everywhere(&http, universe_id).await;
+                crate::database::db_client::get_db_client().await.database(VERSEENGINE_DB_NAME).collection::<mongodb::bson::Document>("provisioning_jobs").delete_many(doc! {"kind": "map_import", "universe_id": null}).await.unwrap();
+                assert_eq!(counts(&http, guild).await, before, "everything is cleaned up");
+            });
+        }
+
         /// Un échec au milieu (après le premier lieu) défait tout : univers, serveur, rôles et
         /// salons, documents.
         #[test]
@@ -813,6 +859,7 @@ mod tests {
                     setup: SetupType::PartialSetup,
                     plan,
                     map: Arc::new(map),
+                    generated: false,
                     zone: vec![],
                     removal: None,
                     fail_after_places: Some(1),

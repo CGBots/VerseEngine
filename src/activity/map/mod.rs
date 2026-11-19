@@ -5,3 +5,4 @@ pub mod layout;
 pub mod network;
 pub mod partition;
 pub mod import_plan;
+pub mod generate;

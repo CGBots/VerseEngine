@@ -77,6 +77,9 @@ pub struct ImportOptions {
     /// Charge d'un serveur à ajouter (son installation, `setup_budget`).
     pub new_server_load: ServerLoad,
     pub max_places: usize,
+    /// Carte générée (E7) : routes telles que dessinées par l'admin, au lieu de les déduire du
+    /// réseau Azgaar (aucun détour retiré).
+    pub explicit_roads: Option<Vec<crate::activity::map::network::RoadCandidate>>,
 }
 
 impl Default for ImportOptions {
@@ -91,6 +94,7 @@ impl Default for ImportOptions {
             servers: vec![],
             new_server_load: ServerLoad { channels: 11, roles: 4 },
             max_places: DEFAULT_MAX_PLACES_PER_SERVER,
+            explicit_roads: None,
         }
     }
 }
@@ -281,7 +285,10 @@ pub fn build_plan(map: &AzgaarMap, options: &ImportOptions, existing_places: &[E
     };
 
     // Routes candidates.
-    let candidates = road_candidates(map, &burg_ids, &options.zone, options.include_sea, SNAP_PX);
+    let candidates = match &options.explicit_roads {
+        Some(roads) => roads.iter().filter(|r| retained.contains(&r.burg_a) && retained.contains(&r.burg_b)).cloned().collect(),
+        None => road_candidates(map, &burg_ids, &options.zone, options.include_sea, SNAP_PX),
+    };
     let index: HashMap<u64, usize> = burg_ids.iter().enumerate().map(|(i, b)| (*b, i)).collect();
     let road_by_places: HashMap<(u64, u64), &ExistingRoad> = existing_roads.iter().map(|r| (pair(r.place_a, r.place_b), r)).collect();
 
