@@ -121,3 +121,11 @@ Chaque étape est testée, poussée sur `feature/map-import`, et met à jour `PR
 | E7 | « Générer une map » (I11) | Graine, nombre de lieux, édition simple. |
 | E8 | Brouillard (I17, Q4) | Option par univers, brume animée opaque. |
 | E9 | Azgaar dans l'activité (I3) | Facultatif, après accord et essai réel dans Discord. |
+
+## 9. Décisions du 19/11/2026 (session « import de carte »)
+
+| # | Sujet | Décision |
+|---|-------|----------|
+| Q6 | Découpage | Ordre E1 → E9 validé. |
+| Q7 | Anciens rôles de route | La migration **supprime** chaque rôle de route une fois les permissions individuelles posées. |
+| Q8 | Quota de 250 créations de rôles | **Temporiser** la création pour l'étaler, plutôt qu'annuler. Selon l'utilisateur, atteindre 250 créations revient de toute façon à atteindre la limite dure de 250 rôles présents. Nuance retenue pour la mise en œuvre : le quota compte aussi les rôles créés puis supprimés (retour en arrière, nouvel essai). L'exécuteur espace donc les créations de rôles, ne recrée jamais un rôle existant (I10), et affiche l'attente dans la barre de progression quand Discord en impose une. |

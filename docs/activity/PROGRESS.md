@@ -1,6 +1,6 @@
 # Activité Discord — suivi entre les sessions
 
-Dernière mise à jour : 18/11/2026 (session « environnement de test Discord »). Ce fichier, `ARCHITECTURE.md` et `DEPLOY.md` (même dossier) sont la référence pour reprendre le travail.
+Dernière mise à jour : 19/11/2026 (session « import de carte », branche `feature/map-import`). Ce fichier, `ARCHITECTURE.md` et `DEPLOY.md` (même dossier) sont la référence pour reprendre le travail.
 
 ## État des branches
 
@@ -52,7 +52,13 @@ PR #12 (`feature/discord-activity`) :
 - Le personnage **suit le tracé réel de la route** (polyligne Azgaar conservée par `road_candidates`, stockée dans `universe_maps.road_paths`, envoyée avec chaque route) ; sans tracé, ligne droite.
 - **À décider (visuels)** : la ligne 5 du `.map` contient le dessin SVG de la carte, mais Azgaar ne la lit plus et annonce sa suppression ; ses polices web ne se chargent pas sous la CSP Discord. Le fond PNG/JPEG/WebP déjà en place reste disponible.
 
-## Prochaine grande fonctionnalité : import et génération de carte
+## Import et génération de carte (branche `feature/map-import`, en cours)
+- Vérifications du § 6 faites, résultats dans `IMPORT_SPEC.md` § 7 : quota de 250 créations de rôles par serveur (≈ 6 h), 2 000 pour les salons, permission individuelle testée (204 ; non-membre 10009 ; retrait idempotent), algorithme de répartition retenu. Azgaar dans l'iframe : non vérifiable depuis le cloud, on livre d'abord le repli.
+- Découpage E1–E9 validé (`IMPORT_SPEC.md` § 8, décisions Q6–Q8 au § 9). Prochaine étape : **E1, routes sans rôle**.
+- Fichiers Moria absents de cette session : à redéposer pour `a_real_map_save_is_read` et `a_real_full_export_is_parsed`.
+- Base : `cargo test --locked` 207 réussis ; intégration 17 réussis (les 2 tests Moria échouent faute de fichiers) ; `npm test` 39 réussis.
+
+## Cahier des charges de l'import
 Cahier des charges complet et validé : **`docs/activity/IMPORT_SPEC.md`** (décisions I1–I17, Q1–Q5). À traiter dans une session dédiée. Points marquants : répartition de l'univers sur plusieurs serveurs (150 lieux au plus par serveur, création des serveurs par l'admin), plus de rôle par route (permissions individuelles), brouillard optionnel par univers, double vérification par le nom de l'univers, retour en arrière complet en cas d'erreur.
 
 ## Points ouverts
