@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiBlobUrl, type MapView } from '../api';
-import { roadPath, splitAlong, type MapPoint, type PlayerMotion } from '../map/geometry';
+import { initialBox, roadPath, splitAlong, type MapPoint, type PlayerMotion } from '../map/geometry';
 import { useAnimatedPosition } from '../map/useMotion';
 import { initials, pinPath } from '../map/player';
 
@@ -53,7 +53,18 @@ export function MapView2D({ map, currentPlaceId, reachable, motion, playerPictur
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const [imageFailed, setImageFailed] = useState(false);
 
-  useEffect(() => setBox({ x: 0, y: 0, w: map.width, h: map.height }), [map.width, map.height]);
+  // Cadrage de départ (une fois par carte, quand la taille de la vue est connue) : la carte remplit
+  // la vue, centrée sur le personnage. Ensuite, c'est le joueur qui déplace et zoome.
+  const framed = useRef<string>('');
+  useEffect(() => {
+    const el = ref.current;
+    const key = `${map.width}x${map.height}`;
+    if (!el || framed.current === key || !el.clientWidth || !el.clientHeight) return;
+    // Le joueur a une position : on attend qu'elle soit calculée pour centrer dessus.
+    if (motion && !player) return;
+    framed.current = key;
+    setBox(initialBox(map.width, map.height, el.clientWidth, el.clientHeight, player));
+  }, [map.width, map.height, px, player, motion]);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;

@@ -10,6 +10,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { roadPath, webglAvailable, type PlayerMotion } from './map/geometry';
 import { playerPictureUrl } from './map/player';
 import { connectRealtime } from './realtime';
+import { pullDecision, useIsPhone } from './sheet';
 
 type State =
   | { kind: 'loading' }
@@ -54,6 +55,8 @@ export function App() {
   const [t, setT] = useState<Translator>(() => fallbackT);
   const [adminMode, setAdminMode] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const isPhone = useIsPhone();
   const [character, setCharacter] = useState<CharacterView | null>(null);
   const [characterError, setCharacterError] = useState<string | null>(null);
   const [map, setMap] = useState<MapView | null>(null);
@@ -159,15 +162,50 @@ export function App() {
     playerName: character?.name ?? session.user.global_name ?? session.user.username,
     onSelectPlace: setSelected,
   };
+  const panel = character ? (
+    <CharacterPanel character={character} avatarUrl={avatar} t={t} onOpenInventory={() => { /* phase c */ }} onResync={() => void loadCharacter()} />
+  ) : (
+    <aside className="side-panel"><p>{t(characterError ?? 'activity__no_character')}</p></aside>
+  );
+  const pull = (startY: number, y: number) => {
+    const d = pullDecision(startY, y, sheetOpen);
+    if (d) setSheetOpen(d === 'open');
+  };
   return (
-    <div className="layout">
-      {character ? (
-        <CharacterPanel character={character} avatarUrl={avatar} t={t} onOpenInventory={() => { /* phase c */ }} onResync={() => void loadCharacter()} />
+    <div className={`layout${isPhone ? ' phone' : ''}`}>
+      {isPhone ? (
+        <>
+          {/* Téléphone : la fiche se déroule depuis le haut de l'écran. */}
+          {sheetOpen && <div className="sheet-backdrop" onClick={() => setSheetOpen(false)} />}
+          <div
+            id="character-sheet"
+            className={`sheet${sheetOpen ? ' open' : ''}`}
+            aria-hidden={!sheetOpen}
+            onKeyDown={(e) => e.key === 'Escape' && setSheetOpen(false)}
+          >
+            {panel}
+            <button
+              type="button"
+              className="sheet-handle"
+              aria-label={t('activity_ui__close')}
+              onClick={() => setSheetOpen(false)}
+              onPointerDown={(e) => {
+                // Capture : le doigt quitte vite la poignée mais le geste doit continuer.
+                e.currentTarget.setPointerCapture(e.pointerId);
+                e.currentTarget.dataset.y = String(e.clientY);
+              }}
+              onPointerMove={(e) => { const y0 = Number(e.currentTarget.dataset.y); if (e.buttons && Number.isFinite(y0)) pull(y0, e.clientY); }}
+            >
+              <span aria-hidden />
+            </button>
+          </div>
+        </>
       ) : (
-        <aside className="side-panel"><p>{t(characterError ?? 'activity__no_character')}</p></aside>
+        panel
       )}
       <main className="map-area">
         <TopBar
+          characterButton={isPhone ? { picture: mapProps.playerPicture ?? character?.image_url ?? null, open: sheetOpen, onToggle: () => setSheetOpen((o) => !o), onPull: pull } : undefined}
           universeName={session.universe.name}
           clockParams={session.universe_clock}
           adminAvailable={session.admin_mode_available}

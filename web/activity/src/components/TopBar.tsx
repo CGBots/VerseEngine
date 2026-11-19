@@ -18,6 +18,8 @@ const PHASE_LABEL: Record<Phase, string> = {
   sunset: 'activity_ui__phase_sunset',
 };
 
+let pullStart: number | null = null;
+
 /** Heure de l'univers, recalculée chaque seconde à partir de l'heure du serveur. */
 function UniverseClock({ params, t }: { params: UniverseClockParams | null; t: Translator }) {
   const [now, setNow] = useState(() => clock.now());
@@ -37,6 +39,8 @@ function UniverseClock({ params, t }: { params: UniverseClockParams | null; t: T
 }
 
 interface Props {
+  /** Sur téléphone : bouton (photo du personnage) qui ouvre la fiche, et geste « tirer vers le bas ». */
+  characterButton?: { picture: string | null; open: boolean; onToggle: () => void; onPull: (startY: number, y: number) => void };
   universeName: string;
   clockParams: UniverseClockParams | null;
   adminAvailable: boolean;
@@ -46,9 +50,32 @@ interface Props {
   t: Translator;
 }
 
-export function TopBar({ universeName, clockParams, adminAvailable, adminMode, onToggleAdmin, onOpenSettings, t }: Props) {
+export function TopBar({ characterButton, universeName, clockParams, adminAvailable, adminMode, onToggleAdmin, onOpenSettings, t }: Props) {
   return (
-    <header className="toolbar">
+    <header
+      className="toolbar"
+      onPointerDown={characterButton ? (e) => { pullStart = e.clientY; } : undefined}
+      onPointerMove={characterButton ? (e) => {
+        if (pullStart == null || !e.buttons) return;
+        // Geste amorcé vers le bas : on capture le pointeur (pas avant, pour garder les clics des boutons).
+        if (e.clientY - pullStart > 6 && !e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.setPointerCapture(e.pointerId);
+        characterButton.onPull(pullStart, e.clientY);
+      } : undefined}
+      onPointerUp={() => { pullStart = null; }}
+    >
+      {characterButton && (
+        <button
+          type="button"
+          className="character-button"
+          aria-expanded={characterButton.open}
+          aria-controls="character-sheet"
+          aria-label={t('activity_ui__character')}
+          title={t('activity_ui__character')}
+          onClick={characterButton.onToggle}
+        >
+          {characterButton.picture ? <img src={characterButton.picture} alt="" /> : <span aria-hidden>?</span>}
+        </button>
+      )}
       <span className="universe-name">{universeName}</span>
       {adminMode && <span className="admin-badge">{t('activity_ui__admin_mode')}</span>}
       <div className="toolbar-right">

@@ -152,3 +152,22 @@ export function roadPath(map: MapView, fromId: string, toId: string): MapPoint[]
   if (!near(pts[pts.length - 1], end)) pts = [...pts, end];
   return pts;
 }
+
+/**
+ * Cadrage de départ de la carte 2D : remplit toute la vue (pas de bande vide, même en portrait
+ * sur téléphone), centré sur `focus` (le personnage) sans sortir de la carte.
+ */
+export function initialBox(mapW: number, mapH: number, viewW: number, viewH: number, focus: MapPoint | null) {
+  const aspect = viewW > 0 && viewH > 0 ? viewW / viewH : mapW / mapH;
+  // Plus grande fenêtre de proportions `aspect` contenue dans la carte.
+  let w = mapW;
+  let h = w / aspect;
+  if (h > mapH) {
+    h = mapH;
+    w = h * aspect;
+  }
+  const c = focus ?? { x: mapW / 2, y: mapH / 2 };
+  const x = Math.min(mapW - w, Math.max(0, c.x - w / 2));
+  const y = Math.min(mapH - h, Math.max(0, c.y - h / 2));
+  return { x, y, w, h };
+}

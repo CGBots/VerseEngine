@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MapView } from '../api';
-import { lerpPoint, pointAlong, positionOnRoad, roadPath, roadProgress, SCENE_SIZE, smoothToward, splitAlong, terrainHeight, toScene, traveledAt } from './geometry';
+import { initialBox, lerpPoint, pointAlong, positionOnRoad, roadPath, roadProgress, SCENE_SIZE, smoothToward, splitAlong, terrainHeight, toScene, traveledAt } from './geometry';
 
 const map: MapView = {
   source: 'Computed',
@@ -111,5 +111,26 @@ describe('suivi du tracé des routes', () => {
     expect(p[p.length - 1]).toEqual({ x: 1000, y: 250 });
     expect(roadPath(map, '1', '2')).toEqual([{ x: 0, y: 250 }, { x: 1000, y: 250 }]);
     expect(roadPath(map, '1', '99')).toEqual([]);
+  });
+});
+
+describe('initialBox', () => {
+  it('remplit une vue portrait sans bande vide, centrée sur le personnage', () => {
+    const b = initialBox(1600, 1000, 390, 600, { x: 800, y: 500 });
+    expect(b.h).toBe(1000);
+    expect(b.w).toBeCloseTo(650);
+    expect(b.x).toBeCloseTo(475);
+    expect(b.y).toBe(0);
+  });
+  it('ne sort pas de la carte quand le personnage est au bord', () => {
+    const b = initialBox(1600, 1000, 390, 600, { x: 10, y: 10 });
+    expect(b.x).toBe(0);
+    expect(b.y).toBe(0);
+  });
+  it('montre toute la largeur en paysage large', () => {
+    const b = initialBox(1600, 1000, 1600, 900, null);
+    expect(b.w).toBe(1600);
+    expect(b.h).toBe(900);
+    expect(b.y).toBe(50);
   });
 });
