@@ -1,6 +1,6 @@
 # Import et génération de carte — cahier des charges
 
-Rédigé le 19/11/2026 à partir des réponses de l'utilisateur. Sert de point de départ à une session dédiée. Complète `ARCHITECTURE.md` (décisions D1–D12) et `PROGRESS.md`.
+Rédigé le 19/11/2026 à partir des réponses de l'utilisateur (toutes les questions sont tranchées). Sert de point de départ à une session dédiée. Complète `ARCHITECTURE.md` (décisions D1–D12) et `PROGRESS.md`.
 
 ## 1. Objectif
 
@@ -55,12 +55,18 @@ L'admin doit donc **créer lui-même les serveurs** et y inviter le bot. L'impor
 
 Avec 150 lieux, il reste environ 95 rôles pour les routes (250 − 150 − environ 5 rôles de base). Or un réseau de 150 lieux compte généralement 1,3 à 2 routes par lieu, soit environ 200 à 300 routes. **C'est la limite des rôles qui bloque, pas celle de 150 lieux** (voir la question Q1).
 
-## 5. Questions encore ouvertes
+## 5. Réponses aux dernières questions (19/11/2026)
 
-- **Q1. Rôles des routes** (voir § 4). Options :
-  - (a) garder un rôle par route : l'import calcule le budget exact et place moins de lieux par serveur (environ 60 à 70) ;
-  - (b) supprimer les rôles de route et donner l'accès au salon de la route par une permission individuelle sur le salon, posée au départ et retirée à l'arrivée : un serveur peut alors approcher 150 lieux, mais le mécanisme de voyage du bot change.
-- **Q2. Objets posés sans propriétaire** (`owner_id` vide) : les détruire, ou les donner à un personnage ou un lieu choisi ?
-- **Q3. Visuels si Azgaar ne tourne pas dans Discord** (I3) : le `.map` contient un SVG de la carte (ligne 5), mais Azgaar annonce sa suppression, et ses polices seraient approchées. Faut-il l'utiliser en attendant, ou afficher le rendu 3D/2D de l'activité ?
-- **Q4. Brouillard** (I17) : les lieux jamais visités sont-ils cachés, ou affichés grisés et sans nom ? La carte est-elle assombrie hors des zones découvertes ?
-- **Q5. Nom du salon générique** (I5) : `place-centrale` dans la langue du serveur (`central-square` en anglais) ?
+| # | Sujet | Décision |
+|---|-------|----------|
+| Q1 | Rôles des routes | **Option (b)** : plus de rôle par route. L'accès au salon d'une route se donne par une **permission individuelle** sur ce salon, posée au départ du voyage et retirée à l'arrivée ou à l'arrêt. Le voyage du bot (`travel/logic.rs`, `manage_roles`, `travel/service.rs`) change en conséquence, pour les commandes slash comme pour l'activité. Une migration des routes existantes (rôle → permissions) est à prévoir. Budget : environ 150 lieux par serveur (1 rôle + 1 catégorie + 1 salon chacun), routes limitées par le nombre de salons (500 par serveur, 50 par catégorie) et par les permissions (1 000 par salon, code d'erreur 30060). |
+| Q2 | Objets posés sans propriétaire | Avant la validation, l'admin est **alerté** de la liste des objets qui seront **détruits**, et **doit confirmer**. |
+| Q3 | Visuels sans Azgaar dans Discord | La solution la plus durable : **le rendu 2D/3D de l'activité**. Le SVG de la ligne 5 du `.map` n'est pas utilisé. |
+| Q4 | Brouillard | **Un vrai effet de brouillard** (brume animée et opaque) qui empêche toute lecture de la carte hors des zones découvertes. Ni masquage, ni assombrissement, ni noircissement. |
+| Q5 | Salon générique d'un lieu | `place-centrale` (fr), `central-square` (en), selon la langue du serveur. |
+
+## 6. Points à vérifier en début de session
+
+- Faisabilité d'Azgaar dans l'iframe de l'activité (I3) : CSP de Discord, iframe imbriquée, polices servies depuis notre domaine. Sinon, redirection vers azgaar.github.io (instructions), puis import du `.map` et rendu par l'activité (Q3).
+- Limites de débit de Discord lors de la création en masse de salons et de rôles (respect de `Retry-After`, barre de progression).
+- Partition des lieux entre serveurs (I4) : graphe pondéré par les routes, au plus 150 lieux et dans le budget de salons par serveur, en minimisant les routes entre serveurs.

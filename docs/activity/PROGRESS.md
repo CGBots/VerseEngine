@@ -52,6 +52,9 @@ PR #12 (`feature/discord-activity`) :
 - Le personnage **suit le tracé réel de la route** (polyligne Azgaar conservée par `road_candidates`, stockée dans `universe_maps.road_paths`, envoyée avec chaque route) ; sans tracé, ligne droite.
 - **À décider (visuels)** : la ligne 5 du `.map` contient le dessin SVG de la carte, mais Azgaar ne la lit plus et annonce sa suppression ; ses polices web ne se chargent pas sous la CSP Discord. Le fond PNG/JPEG/WebP déjà en place reste disponible.
 
+## Prochaine grande fonctionnalité : import et génération de carte
+Cahier des charges complet et validé : **`docs/activity/IMPORT_SPEC.md`** (décisions I1–I17, Q1–Q5). À traiter dans une session dédiée. Points marquants : répartition de l'univers sur plusieurs serveurs (150 lieux au plus par serveur, création des serveurs par l'admin), plus de rôle par route (permissions individuelles), brouillard optionnel par univers, double vérification par le nom de l'univers, retour en arrière complet en cas d'erreur.
+
 ## Points ouverts
 - Déploiement : option 2 choisie (redirection d'un port vers le bot, HTTPS servi par le bot). À valider d'abord : Discord accepte-t-il un port dans le mapping (`activity.home.knifetail.eu:8484` s'enregistre ; le chargement réel n'est pas encore testé). Puis certificat par validation DNS (hébergeur DNS à connaître) et HTTPS dans le bot.
 - Mise en page téléphone : la fiche prend le haut de l'écran et le panneau de voyage couvre la carte. À revoir (onglets ou panneau à tirer, choix à faire).
