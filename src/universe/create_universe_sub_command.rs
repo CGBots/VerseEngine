@@ -1,10 +1,7 @@
-use chrono::{Utc, TimeZone};
-use crate::database::universe::{Universe};
 use crate::discord::poise_structs::*;
-use crate::database::server::{get_server_by_id, Server};
-use crate::database::stats::{Stat, SPEED_STAT};
-use crate::database::stats::StatValue::I64;
-use crate::universe::setup::setup_sub_command::{SetupType, _setup};
+use crate::provisioning::universe::{create_universe as create_universe_service, NewUniverse};
+use crate::provisioning::Provisioner;
+use crate::universe::setup::setup_sub_command::SetupType;
 use crate::utility::reply::reply;
 
 /// Creates a new universe with the specified name and setup type.
@@ -107,81 +104,23 @@ pub async fn _create_universe(
     universe_name: String,
     setup_type: SetupType
 ) -> Result<&'static str, Error> {
-    let Ok(result) = Universe::check_universe_limit(ctx.author().id.into()).await
-        else {return Err("create_universe__check_universe_limit_failed".into())};
-
-    if !result { return Err("create_universe__universe_limit_reached".into()); }
-
-    let Ok(server) = get_server_by_id(ctx.guild_id().unwrap().get()).await
-        else {return Err("create_universe__get_server_failed".into())};
-
-    if server.is_some(){ return Err("create_universe__already_exist_for_this_server".into()) }
-
-    let now = Utc::now();
-    let now_ms = now.timestamp_millis() as u128;
-    
-    // Synchroniser le temps sur le temps IRL (UTC)
-    // On veut que "Midi" (Noon, index 2) soit l'ancre à 12:00 UTC.
-    // Le cycle dure 24h (86400s) à 100% de vitesse.
-    // Midnight (index 0) est à 00:00 UTC.
-    // Donc l'origine (Midnight) est le début de la journée IRL actuelle (00:00 UTC).
-    let midnight_utc = Utc.from_utc_datetime(&now.date_naive().and_hms_opt(0, 0, 0).unwrap());
-    let time_origin_ms = midnight_utc.timestamp_millis() as u128;
-
-    let universe = Universe {
-        universe_id: Default::default(),
-        name: universe_name.clone(),
+    let locale = ctx.locale().unwrap_or("fr").to_string();
+    let mut provisioner = Provisioner::new(ctx.serenity_context().http.clone());
+    let new = NewUniverse {
+        name: &universe_name,
         creator_id: ctx.author().id.get(),
-        global_time_modifier: 100,
-        time_origin_timestamp: time_origin_ms,
-        creation_timestamp: now_ms
+        guild_id: ctx.guild_id().unwrap().get(),
+        setup: setup_type,
+        time_modifier: None,
+        locale: &locale,
     };
-
-    let mut session = crate::database::db_client::get_db_client().await.start_session().await?;
-    session.start_transaction().await?;
-
-    if let Err(e) = universe.insert_universe_with_session(&mut session).await {
-        println!("Error inserting universe: {:?}", e);
-        session.abort_transaction().await?;
-        return Err("create_universe__universe_insert_failed".into());
+    match create_universe_service(&mut provisioner, new).await {
+        Ok(_) => {
+            provisioner.finish().await;
+            Ok("create_universe__universe_successfully_created")
+        }
+        // Erreurs de validation (rien n'a été créé) : leur propre message.
+        Err(e) if e.key.starts_with("create_universe__") => Err(e.key.into()),
+        Err(_) => Err("setup_server__failed".into()),
     }
-
-    let server = Server::default()
-        .universe_id(universe.universe_id)
-        .server_id(ctx.guild_id().unwrap().get()).clone();
-
-    if let Err(e) = server.insert_server_with_session(&mut session).await {
-        println!("Error inserting server: {:?}", e);
-        session.abort_transaction().await?;
-        return Err("create_universe__server_insert_failed".into());
-    }
-
-    let speed_stat = Stat {
-        _id: Default::default(),
-        universe_id: universe.universe_id,
-        name: SPEED_STAT.to_string(),
-        base_value: I64(3),
-        formula: None,
-        min: Some(I64(0)),
-        max: Some(I64(999)),
-        modifiers: vec![],
-    };
-
-    if let Err(e) = speed_stat.insert_stat_with_session(&mut session).await {
-        println!("Error inserting speed stat: {:?}", e);
-        session.abort_transaction().await?;
-        return Err("create_universe__speed_stat_insert_failed".into());
-    }
-
-    session.commit_transaction().await?;
-
-    if let Err(e) = universe.setup_constraints().await {
-        println!("Error setting up constraints: {:?}", e);
-        // On ne retourne pas d'erreur car l'univers est déjà créé et commité.
-        // Les index sont un bonus de performance/intégrité mais pas bloquants ici.
-    }
-
-    let Ok(_) = _setup(ctx, setup_type).await else { return Err("setup_server__failed".into()) };
-
-    Ok("create_universe__universe_successfully_created")
 }

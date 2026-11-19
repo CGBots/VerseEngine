@@ -3,8 +3,8 @@ use serenity::all::{ButtonStyle, Color, ComponentInteractionCollector, CreateAct
 use crate::database::server::{get_server_by_id};
 use crate::discord::poise_structs::{Context, Error};
 use crate::tr;
-use crate::universe::setup::full_setup::full_setup;
-use crate::universe::setup::partial_setup::partial_setup;
+use crate::provisioning::server_setup::setup_server;
+use crate::provisioning::Provisioner;
 use crate::utility::reply::reply;
 
 ///  * Enum representing the type of setup to be performed.
@@ -78,10 +78,9 @@ pub async fn setup(
 ///      - If the user cancels, the setup process terminates with a cancellation response.
 ///      - If the user chooses to continue, the process resets the existing setup.
 ///    - If no configuration exists, proceeds directly to the setup process.
-/// 4. Executes either a full or partial setup based on the `setup_type` provided:
-///    - `FullSetup`: Performs a comprehensive setup with all components of the server.
-///    - `PartialSetup`: Configures only a subset of the server based on specific criteria.
-/// 5. Updates the server configuration in the database.
+/// 4. Runs [`setup_server`] (shared with the map import): what still exists is reused, what is
+///    missing is created; on failure everything created is deleted and the server document is
+///    left unchanged.
 /// 6. Returns a success message if the setup completes successfully, or an error message if an error occurs.
 ///
 /// # Button Interaction Workflow
@@ -112,7 +111,6 @@ pub async fn _setup(ctx: &Context<'_>, setup_type: SetupType) -> Result<&'static
 
     let Ok(server_opt) = get_server_by_id(guild_id.get()).await else { return Err("setup__server_not_found".into()) };
     let Some(mut server) = server_opt else { return Err("setup__server_not_found".into()) };
-    let server_snapshot = server.clone().snaphot(ctx).await;
 
     if server.admin_role_id.is_some()
         || server.moderator_role_id.is_some()
@@ -173,15 +171,16 @@ pub async fn _setup(ctx: &Context<'_>, setup_type: SetupType) -> Result<&'static
         };
     }
 
-    let result = match setup_type {
-        SetupType::FullSetup => { full_setup(ctx, &mut server, server_snapshot).await }
-        SetupType::PartialSetup => { partial_setup(ctx, &mut server, server_snapshot).await }
-    };
-
-    let Ok(_) = server.update().await else { return Err("setup__server_update_failed".into()) };
-
-    match result {
-        Ok(_) => { Ok("setup_server__success") }
-        Err(_) => { Err("setup_server__failed".into()) }
+    let locale = ctx.locale().unwrap_or("fr").to_string();
+    let mut provisioner = Provisioner::new(ctx.serenity_context().http.clone());
+    match setup_server(&mut provisioner, &mut server, setup_type, &locale).await {
+        Ok(()) => {
+            provisioner.finish().await;
+            Ok("setup_server__success")
+        }
+        Err(e) => {
+            eprintln!("[setup] {}: {} left over", e.key, e.left_over.len());
+            Err("setup_server__failed".into())
+        }
     }
 }

@@ -54,9 +54,9 @@ PR #12 (`feature/discord-activity`) :
 
 ## Import et génération de carte (branche `feature/map-import`, en cours)
 - Vérifications du § 6 faites, résultats dans `IMPORT_SPEC.md` § 7 : quota de 250 créations de rôles par serveur (≈ 6 h), 2 000 pour les salons, permission individuelle testée (204 ; non-membre 10009 ; retrait idempotent), algorithme de répartition retenu. Azgaar dans l'iframe : non vérifiable depuis le cloud, on livre d'abord le repli.
-- Découpage E1–E9 validé (`IMPORT_SPEC.md` § 8, décisions Q6–Q8 au § 9). **E1 livrée** (routes sans rôle, migration, `IMPORT_SPEC.md` § 10). **E2a livrée** (exécuteur de création avec journal et retour en arrière, services lieu et route, `IMPORT_SPEC.md` § 11). En cours : **E2b**, installation d'univers et de serveur.
+- Découpage E1–E9 validé (`IMPORT_SPEC.md` § 8, décisions Q6–Q8 au § 9). **E1 livrée** (routes sans rôle, migration, `IMPORT_SPEC.md` § 10). **E2 livrée** (exécuteur de création avec journal et retour en arrière, services lieu, route, univers et installation de serveur, partagés avec les commandes slash, `IMPORT_SPEC.md` § 11). Prochaine étape : **E3, plan d'import**. Point ouvert : limite de 2 serveurs par univers.
 - Fichiers Moria redéposés : les deux tests réels passent. 60 lieux au plus par serveur (Q9).
-- `cargo test --locked` : 218 réussis ; intégration (`--ignored --skip test_discord_bot_connection`, avec `AZGAAR_MAP_FILE` et `AZGAAR_FULL_JSON`) : 24 réussis ; `npm test` : 39 réussis.
+- `cargo test --locked` : 221 réussis ; intégration (`--ignored --skip test_discord_bot_connection --test-threads=1`, avec `AZGAAR_MAP_FILE` et `AZGAAR_FULL_JSON`) : 27 réussis, sur les deux serveurs de test. `--test-threads=1` : les tests d'installation utilisent le même serveur Discord ; `npm test` : 39 réussis.
 
 ## Cahier des charges de l'import
 Cahier des charges complet et validé : **`docs/activity/IMPORT_SPEC.md`** (décisions I1–I17, Q1–Q5). À traiter dans une session dédiée. Points marquants : répartition de l'univers sur plusieurs serveurs (150 lieux au plus par serveur, création des serveurs par l'admin), plus de rôle par route (permissions individuelles), brouillard optionnel par univers, double vérification par le nom de l'univers, retour en arrière complet en cas d'erreur.

@@ -16,6 +16,8 @@
 
 pub mod place;
 pub mod road;
+pub mod server_setup;
+pub mod universe;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,7 +33,7 @@ use tokio::sync::watch;
 use tokio::time::Instant;
 
 use crate::database::db_client::get_db_client;
-use crate::database::db_namespace::{PLACES_COLLECTION_NAME, PROVISIONING_JOBS_COLLECTION_NAME, ROADS_COLLECTION_NAME, VERSEENGINE_DB_NAME};
+use crate::database::db_namespace::{PLACES_COLLECTION_NAME, PROVISIONING_JOBS_COLLECTION_NAME, ROADS_COLLECTION_NAME, SERVERS_COLLECTION_NAME, STATS_COLLECTION_NAME, UNIVERSES_COLLECTION_NAME, VERSEENGINE_DB_NAME};
 
 /// Intervalle minimal entre deux créations de rôles (Q8).
 pub const ROLE_CREATION_INTERVAL: Duration = Duration::from_millis(1500);
@@ -53,6 +55,13 @@ pub enum Created {
     },
     PlaceDoc { id: ObjectId },
     RoadDoc { id: ObjectId },
+    /// Univers créé : son document, ses serveurs et ses stats.
+    UniverseDocs { universe_id: ObjectId },
+    /// Serveur rattaché à un univers existant.
+    ServerDoc {
+        #[serde_as(as = "DisplayFromStr")]
+        guild_id: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -257,6 +266,13 @@ async fn rollback_entries(http: &Http, created: &[Created], progress: Option<&wa
         let ok = match entry {
             Created::PlaceDoc { id } => db.collection::<mongodb::bson::Document>(PLACES_COLLECTION_NAME).delete_one(doc! {"_id": id}).await.is_ok(),
             Created::RoadDoc { id } => db.collection::<mongodb::bson::Document>(ROADS_COLLECTION_NAME).delete_one(doc! {"_id": id}).await.is_ok(),
+            Created::UniverseDocs { universe_id } => {
+                let u = db.collection::<mongodb::bson::Document>(UNIVERSES_COLLECTION_NAME).delete_one(doc! {"_id": universe_id}).await.is_ok();
+                let s = db.collection::<mongodb::bson::Document>(SERVERS_COLLECTION_NAME).delete_many(doc! {"universe_id": universe_id}).await.is_ok();
+                let st = db.collection::<mongodb::bson::Document>(STATS_COLLECTION_NAME).delete_many(doc! {"universe_id": universe_id}).await.is_ok();
+                u && s && st
+            }
+            Created::ServerDoc { guild_id } => db.collection::<mongodb::bson::Document>(SERVERS_COLLECTION_NAME).delete_one(doc! {"server_id": guild_id.to_string()}).await.is_ok(),
             Created::Channel { channel_id } => match ChannelId::new(*channel_id).delete(http).await {
                 Ok(_) => true,
                 Err(e) => discord_code(&e) == Some(DISCORD_UNKNOWN_CHANNEL),
@@ -362,7 +378,7 @@ mod tests {
     }
 
     /// Tests contre l'API REST Discord et MongoDB. Serveur : `VERSEENGINE_TEST_GUILD_ID`.
-    mod integration {
+    mod discord_integration {
         use super::super::place::provision_place;
         use super::super::road::provision_road;
         use super::*;

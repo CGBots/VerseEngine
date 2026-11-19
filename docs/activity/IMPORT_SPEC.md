@@ -148,5 +148,13 @@ Chaque étape est testée, poussée sur `feature/map-import`, et met à jour `PR
 - `provision_road` : salon sans rôle (Q1) dans la catégorie donnée (l'import pourra répartir les routes sur plusieurs catégories de 50), `server_two_id` si la route relie deux serveurs. `/road_create_road` l'utilise.
 - Tests contre l'API REST (exécutés sur RpBotTest2) : échec d'une route après un lieu complet → **tout** est défait, lieu compris ; tâche interrompue défaite au démarrage ; progression de la création puis du retour en arrière. Les tests vérifient MongoDB avant de créer quoi que ce soit sur Discord.
 
-### E2b, à faire : installation d'un univers et d'un serveur sans `poise::Context`
-Création de l'univers (I14 : nom, type d'installation, vitesse du temps) et installation partielle ou complète d'un serveur (rôles de base, catégories, salons), partagées par `/universe_create_universe`, `/universe_setup`, `/universe_add_server` et l'import.
+### E2b, livrée : installation d'un univers et d'un serveur sans `poise::Context`
+- `provisioning/server_setup.rs` : installation partielle (4 rôles de base + catégorie des routes) ou complète (+ 3 catégories et 7 salons), noms dans la langue demandée. Ce qui existe encore est réutilisé, jamais recréé ; le document `servers` n'est écrit qu'à la fin. Budget : `setup_budget` (1 ou 11 salons, 4 rôles).
+- **Correction** : l'ordre des rôles demandait à Discord de déplacer le rôle du bot et les rôles au-dessus de lui, ce qui échoue (50013 « Missing Permissions », vu sur RpBotTest2 ; `/universe_setup` échouait donc déjà sur un tel serveur). Désormais seuls les 4 rôles de base sont placés, juste sous le rôle le plus haut du bot (`base_role_positions`).
+- `provisioning/universe.rs` : `create_universe` (nom validé, vitesse du temps facultative de 1 à 10 000 %, temps réel par défaut, I14 ; univers, serveur et stat de vitesse dans une transaction, puis installation ; en cas d'échec l'univers et ses documents sont supprimés aussi) et `add_server`.
+- `/universe_setup`, `/universe_create_universe` et `/universe_add_server` utilisent ces services. L'ancien code d'installation (`partial_setup.rs`, `complementary_setup.rs`, `full_setup.rs`, `Server::rollback`, `Server::snaphot`, `IdExt`) est supprimé.
+- Tests contre Discord, sur les deux serveurs de test : univers avec installation complète, rôles dans le bon ordre, puis retour en arrière complet (Discord et base) ; installation partielle puis complète sans recréer de rôle ; paramètres invalides sans aucun appel à Discord.
+- CI : les tests Discord portent `discord` dans leur nom et les tests sur une vraie carte commencent par `a_real_` ; le job d'intégration les saute (`--skip discord --skip a_real_`). Les tests Moria faisaient échouer ce job sur la PR #12.
+
+### Point ouvert : limite de serveurs par univers
+`FREE_LIMIT_SERVERS_PER_UNIVERSE = 2` (`database/universe.rs`). À 60 lieux par serveur, l'import est donc limité à 120 lieux ; Moria entière en demanderait 9. Décision de l'utilisateur à prendre avant E4.

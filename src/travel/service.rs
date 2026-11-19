@@ -523,12 +523,14 @@ mod integration {
     /// la route est réel, dans le serveur de test, et le voyageur est le propriétaire de ce serveur.
     #[test]
     #[ignore = "integration test: needs MongoDB, DISCORD_TOKEN and VERSEENGINE_TEST_GUILD_ID; run with --ignored"]
-    fn a_trip_grants_then_revokes_the_road_access() {
+    fn a_trip_grants_then_revokes_the_road_access_on_discord() {
         use crate::database::characters::Character;
         use crate::database::stats::{Stat, StatValue, SPEED_STAT};
         use crate::test_support::{discord_http, required_env_u64, TempChannel};
         use serenity::all::{GuildId, PermissionOverwriteType, UserId};
         block_on(async {
+            // MongoDB d'abord : sans base, rien ne doit être créé sur Discord.
+            let _ = crate::database::db_client::get_db_client().await;
             let http = discord_http();
             *crate::travel::logic::HTTP_CLIENT.lock().await = Some(http.clone());
             let test_guild = GuildId::new(required_env_u64("VERSEENGINE_TEST_GUILD_ID"));

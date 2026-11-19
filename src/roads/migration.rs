@@ -149,10 +149,12 @@ mod tests {
     /// retiré, deux fois (idempotence).
     #[test]
     #[ignore = "integration test: needs MongoDB, DISCORD_TOKEN and VERSEENGINE_TEST_GUILD_ID; run with --ignored"]
-    fn a_road_role_is_migrated_to_an_individual_permission() {
+    fn a_road_role_is_migrated_to_an_individual_permission_on_discord() {
         use crate::test_support::{block_on, discord_http, random_id, required_env_u64, TempChannel};
         use serenity::all::{EditRole, PermissionOverwriteType, UserId};
         block_on(async {
+            // MongoDB d'abord : sans base, rien ne doit être créé sur Discord.
+            let _ = crate::database::db_client::get_db_client().await;
             let http = discord_http();
             let guild = GuildId::new(required_env_u64("VERSEENGINE_TEST_GUILD_ID"));
             let owner = http.get_guild(guild).await.unwrap().owner_id;
