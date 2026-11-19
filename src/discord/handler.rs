@@ -44,6 +44,18 @@ use crate::travel::logic::manage_roles;
 pub struct Handler;
 #[async_trait]
 impl EventHandler for Handler {
+    /// Le bot rejoint un serveur : les écrans d'import de l'activité relisent la liste.
+    async fn guild_create(&self, _ctx: Context, _guild: serenity::all::Guild, is_new: Option<bool>) {
+        if is_new == Some(true) {
+            crate::activity::events::notify_servers_changed();
+        }
+    }
+
+    /// Le bot quitte un serveur (ou en est retiré).
+    async fn guild_delete(&self, _ctx: Context, _incomplete: serenity::all::UnavailableGuild, _full: Option<serenity::all::Guild>) {
+        crate::activity::events::notify_servers_changed();
+    }
+
     ///  Handles the `ready` event in an asynchronous context for testing purposes.
     ///
     ///  This function is executed when the bot successfully connects to Discord

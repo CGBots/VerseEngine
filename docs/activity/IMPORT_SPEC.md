@@ -129,6 +129,7 @@ Chaque étape est testée, poussée sur `feature/map-import`, et met à jour `PR
 | Q6 | Découpage | Ordre E1 → E9 validé. |
 | Q7 | Anciens rôles de route | La migration **supprime** chaque rôle de route une fois les permissions individuelles posées. |
 | Q8 | Quota de 250 créations de rôles | **Temporiser** la création pour l'étaler, plutôt qu'annuler. Selon l'utilisateur, atteindre 250 créations revient de toute façon à atteindre la limite dure de 250 rôles présents. Nuance retenue pour la mise en œuvre : le quota compte aussi les rôles créés puis supprimés (retour en arrière, nouvel essai). L'exécuteur espace donc les créations de rôles, ne recrée jamais un rôle existant (I10), et affiche l'attente dans la barre de progression quand Discord en impose une. |
+| Q11 | Choix des serveurs | L'import est bloqué tant que tous les serveurs nécessaires ne sont pas renseignés (§ 13). |
 | Q10 | Serveurs par univers | Plus de limite pour l'instant ; elle reviendra comme fonctionnalité premium (§ 11). |
 | Q9 | Lieux par serveur | **60 au plus** (au lieu de 150). Raison donnée par l'utilisateur : avec 2,5 routes par lieu en moyenne, 60 lieux + 150 extrémités de routes restent sous 250. Mesuré sur Moria (`a_real_map_save_is_read`) : 656 routes terrestres pour 532 bourgs desservis, soit **2,47 routes par bourg** (2,97 avec les routes maritimes). Budget d'un serveur de 60 lieux : 64 rôles, environ 9 + 120 + 75 à 100 routes ≈ 210 à 230 salons. Le quota de 250 créations de rôles permet ainsi plusieurs essais. Moria entière (538 bourgs) demanderait 9 serveurs. |
 
@@ -194,3 +195,10 @@ Logique pure, sans Discord ni base : `activity/map/partition.rs` et `activity/ma
 - À la fin, les sessions du serveur sans univers sont reliées au nouvel univers sans reconnexion (`SessionStore::link_universe`), et la carte envoyée est oubliée.
 - Limites connues : pas d'annonce dans le forum wiki pour les lieux importés (des centaines de messages) ; les catégories de routes supplémentaires ne sont pas enregistrées sur le serveur, donc `/road_create_road` continue d'utiliser la première.
 - Tests réels sur RpBotTest2 (et « rpbot test ») : import d'une petite carte dans un nouvel univers à travers le routeur (mauvais nom refusé sans rien créer ; univers, lieux avec salon générique, route, carte et session reliée vérifiés ; tout nettoyé ensuite) ; échec simulé après le premier lieu → plus rien sur Discord ni en base.
+
+### Choix des serveurs (Q11, 19/11/2026)
+Décision : **l'import reste bloqué tant que tous les serveurs nécessaires ne sont pas renseignés.** Mise en œuvre :
+- Une activité ne peut pas lister les serveurs de l'utilisateur sans le scope OAuth `guilds`, et cette liste viendrait du client. La liste est donc faite **par le bot** (`GET /api/admin/import/servers` : serveurs du bot où l'admin est administrateur, vérifiés côté serveur), qui renvoie aussi le **lien d'invitation du bot** (`invite_url`, permission Administrateur, commandes).
+- L'écran (E5) montre un emplacement par serveur nécessaire : le serveur courant, puis un menu par emplacement. Un bouton ouvre le lien d'invitation (`openExternalLink` du SDK, Discord demande confirmation) ; l'admin crée le serveur dans Discord puis y invite le bot.
+- **Mise à jour sans interroger Discord en boucle** : quand le bot rejoint ou quitte un serveur (`guild_create`, `guild_delete` ; intent `GUILDS` ajouté), l'évènement `servers_updated` est poussé par WebSocket aux administrateurs, et l'écran relit la liste.
+- « Valider » reste grisé tant qu'un emplacement est vide ; le serveur refuse aussi (`activity__import_servers_missing`).

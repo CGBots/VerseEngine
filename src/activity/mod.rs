@@ -47,7 +47,7 @@ pub fn spawn(bot_http: Arc<Http>) {
     };
     tokio::spawn(async move {
         let discord = Arc::new(discord_api::LiveDiscord::new(&cfg, bot_http.clone()));
-        let state = http::AppState::new(discord, cfg.session_ttl).with_bot_http(bot_http);
+        let state = http::AppState::new(discord, cfg.session_ttl).with_bot_http(bot_http).with_client_id(cfg.client_id);
         state.hub.start_watchers();
         let mut app = http::router(state);
         if let Some(dir) = cfg.static_dir.as_ref().filter(|d| d.is_dir()) {

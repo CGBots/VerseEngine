@@ -196,7 +196,12 @@ async fn list_servers(State(state): State<AppState>, Authed(s): Authed) -> ApiRe
         out.push(ServerChoice { guild_id: g.id, name: g.name, linked, eligible: access == AccessLevel::Admin && linked != "other", current: g.id == s.guild_id });
     }
     out.sort_by_key(|c| (!c.current, c.name.to_lowercase()));
-    Ok(Json(serde_json::json!({ "servers": out, "max_places_per_server": DEFAULT_MAX_PLACES_PER_SERVER })))
+    Ok(Json(serde_json::json!({
+        "servers": out,
+        "max_places_per_server": DEFAULT_MAX_PLACES_PER_SERVER,
+        // Ajouter un serveur : l'admin le crée dans Discord, puis y invite le bot avec ce lien.
+        "invite_url": state.bot_invite_url,
+    })))
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +462,12 @@ mod tests {
         assert_eq!(request(&big).unwrap().validate(), Err("activity__invalid_request"));
         let nan = request(r#"{"mode":"replace","zone":[[1e999,0]]}"#);
         assert!(nan.is_err() || nan.unwrap().validate().is_err());
+    }
+
+    #[test]
+    fn the_invite_link_asks_for_the_bot_and_its_commands() {
+        let url = crate::activity::http::bot_invite_url(123);
+        assert_eq!(url, "https://discord.com/oauth2/authorize?client_id=123&scope=bot%20applications.commands&permissions=8");
     }
 
     #[test]

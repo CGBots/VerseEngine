@@ -60,6 +60,8 @@ pub struct AppState {
     pub import_drafts: Arc<crate::activity::admin_import::ImportDrafts>,
     /// Imports en cours ou terminés (progression).
     pub import_jobs: Arc<crate::activity::import_exec::ImportJobs>,
+    /// Lien d'invitation du bot (ajout d'un serveur à l'import). `None` en test.
+    pub bot_invite_url: Option<String>,
 }
 
 impl AppState {
@@ -77,13 +79,25 @@ impl AppState {
             images: Arc::default(),
             import_drafts: Arc::default(),
             import_jobs: Arc::default(),
+            bot_invite_url: None,
         }
+    }
+
+    pub fn with_client_id(mut self, client_id: u64) -> Self {
+        self.bot_invite_url = Some(bot_invite_url(client_id));
+        self
     }
 
     pub fn with_bot_http(mut self, http: Arc<serenity::all::Http>) -> Self {
         self.bot_http = Some(http);
         self
     }
+}
+
+/// Lien d'invitation du bot sur un serveur : commandes et permission Administrateur (le bot
+/// donne lui-même cette permission au rôle admin de l'installation, il doit donc l'avoir).
+pub fn bot_invite_url(client_id: u64) -> String {
+    format!("https://discord.com/oauth2/authorize?client_id={client_id}&scope=bot%20applications.commands&permissions=8")
 }
 
 pub fn now_secs() -> u64 { chrono::Utc::now().timestamp().max(0) as u64 }

@@ -34,6 +34,9 @@ pub enum EventKind {
     CharacterUpdated,
     /// Lieux, routes ou carte de l'univers modifiés.
     MapUpdated,
+    /// Le bot a rejoint ou quitté un serveur : la liste des serveurs de l'import est à relire
+    /// (administrateurs seulement).
+    ServersUpdated,
     /// Des évènements ont pu être perdus : tout relire.
     Resync,
 }
@@ -58,6 +61,7 @@ impl Event {
         }
         match self.kind {
             EventKind::MapUpdated | EventKind::Resync => true,
+            EventKind::ServersUpdated => session.access == AccessLevel::Admin,
             EventKind::CharacterUpdated => self.users.contains(&session.user_id),
             EventKind::TravelUpdated => self.users.contains(&session.user_id) || session.access >= AccessLevel::Moderator,
         }
@@ -101,6 +105,17 @@ pub fn event_from_change(collection: &str, operation: &OperationType, full_docum
 pub const WATCHED: [&str; 5] =
     [TRAVELS_COLLECTION_NAME, CHARACTERS_COLLECTION_NAME, PLACES_COLLECTION_NAME, ROADS_COLLECTION_NAME, UNIVERSE_MAPS_COLLECTION_NAME];
 
+/// Diffuseur de l'API démarrée, pour les évènements qui viennent du bot (pas de la base).
+static ACTIVE_HUB: std::sync::OnceLock<Hub> = std::sync::OnceLock::new();
+
+/// À l'arrivée ou au départ du bot d'un serveur : les écrans d'import ouverts relisent la liste
+/// des serveurs (sans interroger Discord en boucle). Sans activité démarrée, ne fait rien.
+pub fn notify_servers_changed() {
+    if let Some(hub) = ACTIVE_HUB.get() {
+        hub.publish(Event { kind: EventKind::ServersUpdated, universe_id: None, users: vec![] });
+    }
+}
+
 /// Diffuseur d'évènements, partagé par toutes les WebSockets.
 #[derive(Clone)]
 pub struct Hub {
@@ -127,8 +142,9 @@ impl Hub {
         let _ = self.sender.send(event);
     }
 
-    /// Lance un change stream par collection suivie.
+    /// Lance un change stream par collection suivie, et reçoit les évènements du bot.
     pub fn start_watchers(&self) {
+        let _ = ACTIVE_HUB.set(self.clone());
         for collection in WATCHED {
             let hub = self.clone();
             tokio::spawn(async move { hub.watch(collection).await });
@@ -179,6 +195,22 @@ impl Hub {
             tokio::time::sleep(backoff).await;
             backoff = (backoff * 2).min(Duration::from_secs(30));
         }
+    }
+}
+
+#[cfg(test)]
+mod servers_tests {
+    use super::*;
+    use crate::activity::session::test_session;
+
+    #[test]
+    fn only_admins_are_told_that_servers_changed() {
+        let e = Event { kind: EventKind::ServersUpdated, universe_id: None, users: vec![] };
+        let mut s = test_session(1);
+        s.universe_id = None;
+        assert!(!e.is_visible_to(&s));
+        s.access = AccessLevel::Admin;
+        assert!(e.is_visible_to(&s), "even without universe");
     }
 }
 
