@@ -7,6 +7,7 @@ import { pointAlong, roadPath, SCENE_SIZE, toScene, type MapPoint, type PlayerMo
 import { useAnimatedPosition } from '../map/useMotion';
 import { biomeColor, LAND, proceduralTerrain, type Heightmap } from '../map/procedural';
 import { labelTexture, PIN_ASPECT, pinTexture } from '../map/sprites';
+import { FogLayer } from './FogLayer';
 
 const RELIEF = 7; // hauteur maximale du relief (unités de scène)
 
@@ -205,6 +206,8 @@ export function MapScene({ map, currentPlaceId, reachable, motion, playerPicture
         return <Place key={p.id} x={s.x} y={elevation(hm, map, p.x, p.y)} z={s.z} name={p.name} color={color} onClick={() => onSelectPlace(p.id)} />;
       })}
       {motion && <Player map={map} hm={hm} motion={motion} picture={playerPicture} name={playerName} />}
+      {/* Brouillard (E8) : au-dessus du plus haut relief. */}
+      {map.fog && <FogLayer map={map} height={RELIEF * (1 - LAND) + 1.2} />}
     </Canvas>
   );
 }

@@ -1402,3 +1402,6 @@ activity_ui__generate_use = Utiliser cette carte
 activity_ui__generate_empty_name = Un lieu n'a pas de nom.
 activity_ui__generate_map_name = carte générée
 activity__fog_creator_only = Seul le créateur de l'univers peut activer ou couper le brouillard.
+activity_ui__universe_section = Univers
+activity_ui__fog_toggle = Brouillard sur la carte des joueurs
+activity_ui__fog_help = Les joueurs ne voient que les lieux découverts et leurs destinations ; le reste est couvert d'une brume. Les modérateurs et les administrateurs voient toute la carte.

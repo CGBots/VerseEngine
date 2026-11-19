@@ -3,6 +3,7 @@ import { apiBlobUrl, type MapView } from '../api';
 import { initialBox, roadPath, splitAlong, type MapPoint, type PlayerMotion } from '../map/geometry';
 import { useAnimatedPosition } from '../map/useMotion';
 import { initials, pinPath } from '../map/player';
+import { Fog2D } from './Fog2D';
 
 interface Props {
   map: MapView;
@@ -168,6 +169,8 @@ export function MapView2D({ map, currentPlaceId, reachable, motion, playerPictur
           </g>
         );
       })()}
+      {/* Brouillard (E8) : sous les lieux, qui sont tous découverts ou entrevus. */}
+      <Fog2D map={map} />
       {map.places.map((p) => {
         const fill = p.id === currentPlaceId ? '#57f287' : reachable.has(p.id) ? '#5865f2' : '#f2f3f5';
         return (

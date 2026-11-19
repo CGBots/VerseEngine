@@ -51,6 +51,7 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
   const [servers, setServers] = useState<ServerList | null>(null);
   const [newName, setNewName] = useState('');
   const [timeModifier, setTimeModifier] = useState('');
+  const [fog, setFog] = useState(false);
   const [typedName, setTypedName] = useState('');
   const [job, setJob] = useState<JobState | null>(null);
 
@@ -123,7 +124,7 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
       const res = await importApi.execute({
         plan: planRequest(choices),
         confirm_name: typedName,
-        new_universe: universeName ? undefined : { name: newName.trim(), time_modifier: speed },
+        new_universe: universeName ? undefined : { name: newName.trim(), time_modifier: speed, fog },
         removal: plan?.removal ? removalChoices(choices) : undefined,
       });
       jobId.current = res.job_id;
@@ -302,6 +303,10 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
               <label>
                 {t('activity_ui__import_time_speed')}
                 <input type="number" min={1} max={10000} placeholder="100" value={timeModifier} onChange={(e) => setTimeModifier(e.target.value)} />
+              </label>
+              <label>
+                <input type="checkbox" checked={fog} onChange={(e) => setFog(e.target.checked)} />
+                {t('activity_ui__fog_toggle')}
               </label>
             </fieldset>
           )}

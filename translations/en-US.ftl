@@ -1391,3 +1391,6 @@ activity_ui__generate_use = Use this map
 activity_ui__generate_empty_name = A place has no name.
 activity_ui__generate_map_name = generated map
 activity__fog_creator_only = Only the universe creator can turn the fog on or off.
+activity_ui__universe_section = Universe
+activity_ui__fog_toggle = Fog on the players' map
+activity_ui__fog_help = Players only see the places they discovered and their destinations; the rest is covered by mist. Moderators and administrators see the whole map.

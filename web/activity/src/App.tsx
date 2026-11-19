@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, ApiError, getSessionToken, travelApi, type CharacterView, type MapView, type SessionInfo, type TravelState } from './api';
+import { api, ApiError, getSessionToken, travelApi, universeApi, type CharacterView, type MapView, type SessionInfo, type TravelState } from './api';
 import { connect } from './discord';
 import { loadTranslator, pickLocale, type Translator } from './i18n';
 import { CharacterPanel } from './components/CharacterPanel';
@@ -69,6 +69,8 @@ export function App() {
   const [importOpen, setImportOpen] = useState(false);
   /** Incrémenté quand le bot rejoint ou quitte un serveur : l'écran d'import relit la liste. */
   const [serversVersion, setServersVersion] = useState(0);
+  const [fogEnabled, setFogEnabled] = useState(false);
+  const [fogBusy, setFogBusy] = useState(false);
   const use3d = useRef(webglAvailable()).current;
 
   const loadCharacter = useCallback(async () => {
@@ -104,6 +106,7 @@ export function App() {
       const { session, locale } = await connect();
       setT(await loadTranslator(pickLocale(locale)).then((tr) => () => tr));
       setState({ kind: 'ready', session });
+      setFogEnabled(session.fog_enabled);
       // Sans univers, il n'y a encore ni personnage ni carte à charger.
       if (session.universe) await reloadAll();
     } catch (e) {
@@ -281,7 +284,23 @@ export function App() {
           </div>
         </div>
       )}
-      {settingsOpen && <SettingsPanel t={t} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <SettingsPanel
+          t={t}
+          onClose={() => setSettingsOpen(false)}
+          fog={session.is_creator ? {
+            enabled: fogEnabled,
+            busy: fogBusy,
+            onToggle: (enabled) => {
+              setFogBusy(true);
+              universeApi.setFog(enabled)
+                .then((r) => { setFogEnabled(r.fog_enabled); return loadMap(); })
+                .catch((e) => setMessage(t(errorKey(e))))
+                .finally(() => setFogBusy(false));
+            },
+          } : undefined}
+        />
+      )}
     </div>
   );
 }
