@@ -46,8 +46,11 @@ export interface SessionInfo {
   expires_in: number;
   user: { id: string; username: string; global_name: string | null; avatar: string | null };
   guild_id: string;
-  universe: { id: string; name: string };
+  /** `null` : serveur relié à aucun univers (seul un administrateur peut alors ouvrir l'activité, pour l'import). */
+  universe: { id: string; name: string } | null;
   access: 'player' | 'moderator' | 'admin';
+  /** Import et génération de carte permis (créateur de l'univers ou administrateur). */
+  can_import: boolean;
   admin_mode_available: boolean;
   /** `null` si le temps de l'univers est à l'arrêt. */
   universe_clock: { origin: number; phase_duration_secs: number } | null;

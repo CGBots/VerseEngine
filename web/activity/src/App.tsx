@@ -99,7 +99,8 @@ export function App() {
       const { session, locale } = await connect();
       setT(await loadTranslator(pickLocale(locale)).then((tr) => () => tr));
       setState({ kind: 'ready', session });
-      await reloadAll();
+      // Sans univers, il n'y a encore ni personnage ni carte à charger.
+      if (session.universe) await reloadAll();
     } catch (e) {
       setState({ kind: 'error', key: e instanceof ApiError ? e.key : 'activity__unauthorized' });
     }
@@ -153,6 +154,13 @@ export function App() {
     );
 
   const { session } = state;
+  if (!session.universe)
+    return (
+      <div className="center">
+        <p>{t('activity_ui__no_universe_yet')}</p>
+      </div>
+    );
+  const universe = session.universe;
   const avatar = session.user.avatar ? `https://cdn.discordapp.com/avatars/${session.user.id}/${session.user.avatar}.png?size=128` : null;
   const mapProps = {
     currentPlaceId,
@@ -206,7 +214,7 @@ export function App() {
       <main className="map-area">
         <TopBar
           characterButton={isPhone ? { picture: mapProps.playerPicture ?? character?.image_url ?? null, open: sheetOpen, onToggle: () => setSheetOpen((o) => !o), onPull: pull } : undefined}
-          universeName={session.universe.name}
+          universeName={universe.name}
           clockParams={session.universe_clock}
           adminAvailable={session.admin_mode_available}
           adminMode={adminMode}

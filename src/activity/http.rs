@@ -20,7 +20,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use crate::activity::discord_api::{DiscordError, DiscordGateway};
 use crate::activity::dto::*;
 use crate::activity::error::{ApiError, ApiResult};
-use crate::activity::permissions::{compute_access, AccessInput};
+use crate::activity::permissions::{compute_access, AccessInput, AccessLevel};
 use crate::activity::ratelimit::RateLimiter;
 use crate::activity::session::{Session, SessionStore};
 use crate::activity::events::EventKind;
@@ -56,6 +56,8 @@ pub struct AppState {
     pub hub: crate::activity::events::Hub,
     /// URL des images de personnage (références de pièces jointes).
     pub images: Arc<crate::activity::images::ImageCache>,
+    /// Cartes Azgaar envoyées par les admins, en attente d'import.
+    pub import_drafts: Arc<crate::activity::admin_import::ImportDrafts>,
 }
 
 impl AppState {
@@ -71,6 +73,7 @@ impl AppState {
             bot_http: None,
             hub: crate::activity::events::Hub::new(),
             images: Arc::default(),
+            import_drafts: Arc::default(),
         }
     }
 
@@ -98,9 +101,11 @@ pub fn router(state: AppState) -> Router {
         .route("/i18n/{locale}", get(i18n))
         .fallback(|| async { ApiError::not_found("activity__route_not_found") });
 
+    // Limite de 64 Kio partout, sauf l'envoi d'une carte Azgaar (32 Mio, route dédiée).
+    let (admin, upload) = crate::activity::admin_import::routes();
+    let api = api.merge(admin).layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES)).merge(upload.layer(RequestBodyLimitLayer::new(crate::activity::admin_import::MAX_MAP_BYTES)));
     Router::new()
         .nest("/api", api)
-        .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
         .layer(SetResponseHeaderLayer::if_not_present(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")))
         .layer(SetResponseHeaderLayer::if_not_present(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer")))
         .layer(SetResponseHeaderLayer::if_not_present(header::CACHE_CONTROL, HeaderValue::from_static("no-store")))
@@ -202,11 +207,17 @@ async fn auth_token(State(state): State<AppState>, body: Result<Json<TokenReques
         return Err(ApiError::forbidden("activity__not_in_instance"));
     }
     let guild_id = instance.location.as_ref().and_then(|l| l.guild_id).ok_or_else(|| ApiError::forbidden("activity__guild_only"))?;
-    // 4. Guilde → serveur VerseEngine → univers.
-    let server = crate::database::server::get_server_by_id(guild_id).await?.ok_or_else(|| ApiError::not_found("activity__server_not_linked"))?;
-    let universe = crate::database::universe::get_universe_by_id(server.universe_id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("activity__universe_not_found"))?;
+    // 4. Guilde → serveur VerseEngine → univers. Un serveur sans univers est accepté (I2) : seul
+    //    un administrateur du serveur pourra y importer ou générer une carte.
+    let server = crate::database::server::get_server_by_id(guild_id).await?;
+    let universe = match &server {
+        Some(server) => Some(
+            crate::database::universe::get_universe_by_id(server.universe_id)
+                .await?
+                .ok_or_else(|| ApiError::not_found("activity__universe_not_found"))?,
+        ),
+        None => None,
+    };
     // 5. Appartenance et droits, lus par le bot.
     let member = state.discord.member(guild_id, user.id).await.map_err(map_discord)?.ok_or_else(|| ApiError::forbidden("activity__not_a_member"))?;
     let access = compute_access(&AccessInput {
@@ -215,21 +226,26 @@ async fn auth_token(State(state): State<AppState>, body: Result<Json<TokenReques
         member_roles: &member.roles,
         guild_roles: &member.guild_roles,
         guild_id,
-        admin_role_id: server.admin_role_id.map(|i| i.id),
-        moderator_role_id: server.moderator_role_id.map(|i| i.id),
+        admin_role_id: server.as_ref().and_then(|s| s.admin_role_id).map(|i| i.id),
+        moderator_role_id: server.as_ref().and_then(|s| s.moderator_role_id).map(|i| i.id),
     });
+    if universe.is_none() && access < AccessLevel::Admin {
+        return Err(ApiError::not_found("activity__server_not_linked"));
+    }
 
     let session_token = state.sessions.create(Session {
         user_id: user.id,
         username: user.global_name.clone().unwrap_or_else(|| user.username.clone()),
         guild_id,
-        universe_id: server.universe_id,
+        universe_id: universe.as_ref().map(|u| u.universe_id),
         instance_id: req.instance_id.clone(),
         locale: normalize_locale(req.locale.as_deref()),
         access,
         expires_at: std::time::Instant::now(),
     });
     tracing::info!(user = user.id, guild = guild_id, ?access, "activity: session ouverte");
+    // I1 : import et génération réservés au créateur de l'univers et aux administrateurs.
+    let can_import = crate::activity::admin_import::may_import(access, universe.as_ref(), user.id);
 
     Ok(Json(json!({
         "access_token": grant.access_token,
@@ -237,8 +253,9 @@ async fn auth_token(State(state): State<AppState>, body: Result<Json<TokenReques
         "expires_in": state.sessions.ttl().as_secs(),
         "user": UserDto { id: user.id.to_string(), username: user.username, global_name: user.global_name, avatar: user.avatar },
         "guild_id": guild_id.to_string(),
-        "universe_clock": universe_clock(&universe),
-        "universe": UniverseDto { id: universe.universe_id.to_hex(), name: universe.name },
+        "universe_clock": universe.as_ref().map(universe_clock).unwrap_or(serde_json::Value::Null),
+        "universe": universe.map(|u| UniverseDto { id: u.universe_id.to_hex(), name: u.name }),
+        "can_import": can_import,
         "access": access,
         "admin_mode_available": access.can_use_admin_mode(),
         "server_time": now_secs(),
@@ -264,7 +281,7 @@ async fn me(Authed(s): Authed) -> Json<serde_json::Value> {
         "user_id": s.user_id.to_string(),
         "username": s.username,
         "guild_id": s.guild_id.to_string(),
-        "universe_id": s.universe_id.to_hex(),
+        "universe_id": s.universe_id.map(|u| u.to_hex()),
         "access": s.access,
         "admin_mode_available": s.access.can_use_admin_mode(),
         "server_time": now_secs(),
@@ -277,8 +294,8 @@ async fn me(Authed(s): Authed) -> Json<serde_json::Value> {
 
 async fn me_character(State(state): State<AppState>, Authed(s): Authed) -> ApiResult<Json<CharacterDto>> {
     use crate::database::characters::get_character_by_user_id;
-    let character = get_character_by_user_id(s.universe_id, s.user_id).await?.ok_or_else(|| ApiError::not_found("activity__no_character"))?;
-    let universe = crate::database::universe::get_universe_by_id(s.universe_id).await?.ok_or_else(|| ApiError::not_found("activity__universe_not_found"))?;
+    let character = get_character_by_user_id(s.universe()?, s.user_id).await?.ok_or_else(|| ApiError::not_found("activity__no_character"))?;
+    let universe = crate::database::universe::get_universe_by_id(s.universe()?).await?.ok_or_else(|| ApiError::not_found("activity__universe_not_found"))?;
     let universe_stats: Vec<Stat> = universe.get_stats().await?.try_collect().await?;
     let group = character.clone().get_player_move().await?;
 
@@ -309,7 +326,7 @@ async fn me_character(State(state): State<AppState>, Authed(s): Authed) -> ApiRe
         .collect();
 
     let now = now_secs();
-    let (location, travel, group_members) = group_state(s.universe_id, group.as_ref(), now).await?;
+    let (location, travel, group_members) = group_state(s.universe()?, group.as_ref(), now).await?;
     let image_url = match (&character.image, &state.bot_http) {
         (Some(image), Some(http)) => state.images.resolve(http, image).await,
         _ => None,
@@ -370,15 +387,15 @@ async fn map(Authed(s): Authed) -> ApiResult<Json<MapDto>> {
     use crate::database::road::{get_roads_by_universe, Road};
     use crate::database::universe_maps::{get_universe_map, save_universe_map};
 
-    let places: Vec<Place> = get_places_by_universe_id(s.universe_id).await?.try_collect().await?;
-    let roads: Vec<Road> = get_roads_by_universe(s.universe_id).await?.try_collect().await?;
+    let places: Vec<Place> = get_places_by_universe_id(s.universe()?).await?.try_collect().await?;
+    let roads: Vec<Road> = get_roads_by_universe(s.universe()?).await?.try_collect().await?;
     let hash = graph_hash(&places, &roads);
-    let stored = get_universe_map(s.universe_id).await?;
+    let stored = get_universe_map(s.universe()?).await?;
     let universe_map = match stored {
         Some(m) if !needs_layout(Some(&m), &hash) => m,
         _ => {
             // Calcul O(n²) : hors des threads de l'exécuteur async.
-            let (universe_id, p, r, now) = (s.universe_id, places.clone(), roads.clone(), now_secs());
+            let (universe_id, p, r, now) = (s.universe()?, places.clone(), roads.clone(), now_secs());
             let computed = tokio::task::spawn_blocking(move || computed_map(universe_id, &p, &r, now)).await.map_err(|e| {
                 tracing::error!(error = %e, "activity: échec du placement");
                 ApiError::internal()
@@ -388,8 +405,8 @@ async fn map(Authed(s): Authed) -> ApiResult<Json<MapDto>> {
         }
     };
 
-    let group = get_group_of_user(s.universe_id, s.user_id).await?;
-    let known = crate::database::known_roads::known_road_ids(s.universe_id, s.user_id).await?;
+    let group = get_group_of_user(s.universe()?, s.user_id).await?;
+    let known = crate::database::known_roads::known_road_ids(s.universe()?, s.user_id).await?;
     let current_road = group.as_ref().filter(|g| g.actual_space_type == SpaceType::Road).map(|g| g.actual_space_id);
     let visible: HashSet<u64> =
         roads.iter().filter(|r| road_is_visible(r, &known, current_road)).map(|r| r.channel_id).collect();
@@ -409,7 +426,7 @@ async fn map(Authed(s): Authed) -> ApiResult<Json<MapDto>> {
 /// Servie avec `Content-Security-Policy: sandbox` : même ouverte directement, elle ne peut rien
 /// exécuter. Mise en cache côté client : l'URL change avec l'image (`?v=<empreinte>`).
 async fn map_background(Authed(s): Authed) -> ApiResult<Response> {
-    let background = crate::database::universe_maps::get_universe_map(s.universe_id)
+    let background = crate::database::universe_maps::get_universe_map(s.universe()?)
         .await?
         .and_then(|m| m.background)
         .ok_or_else(|| ApiError::not_found("activity__map_not_found"))?;
@@ -524,8 +541,8 @@ struct TravelStateDto {
 
 async fn travel_state(s: &Session, result: Option<&'static str>) -> ApiResult<Json<TravelStateDto>> {
     let now = now_secs();
-    let group = get_group_of_user(s.universe_id, s.user_id).await?;
-    let (location, travel, group_members) = group_state(s.universe_id, group.as_ref(), now).await?;
+    let group = get_group_of_user(s.universe()?, s.user_id).await?;
+    let (location, travel, group_members) = group_state(s.universe()?, group.as_ref(), now).await?;
     let destinations = match &group {
         Some(_) => crate::travel::service::destinations(s.guild_id, s.user_id)
             .await
@@ -737,6 +754,12 @@ mod tests {
         fn member<'a>(&'a self, _g: u64, _u: u64) -> BoxFuture<'a, Result<Option<MemberInfo>, DiscordError>> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Ok(None) })
+        }
+        fn bot_guilds<'a>(&'a self, _limit: usize) -> BoxFuture<'a, Result<Vec<GuildSummary>, DiscordError>> {
+            Box::pin(async { Ok(vec![]) })
+        }
+        fn guild_counts<'a>(&'a self, _g: u64) -> BoxFuture<'a, Result<GuildCounts, DiscordError>> {
+            Box::pin(async { Ok(GuildCounts { channels: 0, roles: 1 }) })
         }
     }
 
@@ -1066,8 +1089,8 @@ mod tests {
             let second = crate::database::map_backgrounds::set_map_background(universe_id, &second_png).await.unwrap();
 
             let (app, state) = app_with(Arc::default());
-            let mine = state.sessions.create(crate::activity::session::Session { universe_id, ..test_session(1) });
-            let other = state.sessions.create(crate::activity::session::Session { universe_id: ObjectId::new(), ..test_session(2) });
+            let mine = state.sessions.create(crate::activity::session::Session { universe_id: Some(universe_id), ..test_session(1) });
+            let other = state.sessions.create(crate::activity::session::Session { universe_id: Some(ObjectId::new()), ..test_session(2) });
             let res = app.clone().oneshot(authed("GET", "/api/map/background", &mine, None)).await.unwrap();
             let status = res.status();
             let headers = res.headers().clone();
@@ -1115,7 +1138,7 @@ mod tests {
             TravelGroup { _id: ObjectId::new(), universe_id, actual_space_id: a, members: vec![user], server_id: 1, ..Default::default() }.insert().await.unwrap();
 
             let (app, state) = app_with(Arc::default());
-            let token = state.sessions.create(crate::activity::session::Session { universe_id, ..test_session(user) });
+            let token = state.sessions.create(crate::activity::session::Session { universe_id: Some(universe_id), ..test_session(user) });
             let (st, body, _) = call(app.clone(), authed("GET", "/api/map", &token, None)).await;
             let cached = crate::database::universe_maps::get_universe_map(universe_id).await.unwrap();
 

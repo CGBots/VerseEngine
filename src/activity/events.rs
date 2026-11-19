@@ -52,7 +52,7 @@ impl Event {
     /// administrateur reçoit aussi les déplacements de tous les joueurs de l'univers.
     pub fn is_visible_to(&self, session: &Session) -> bool {
         if let Some(universe) = self.universe_id {
-            if universe != session.universe_id {
+            if Some(universe) != session.universe_id {
                 return false;
             }
         }
@@ -188,7 +188,7 @@ mod tests {
     use crate::activity::session::test_session;
 
     fn session(user_id: u64, universe_id: ObjectId, access: AccessLevel) -> Session {
-        Session { universe_id, access, ..test_session(user_id) }
+        Session { universe_id: Some(universe_id), access, ..test_session(user_id) }
     }
 
     #[test]

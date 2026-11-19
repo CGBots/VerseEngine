@@ -174,3 +174,18 @@ Logique pure, sans Discord ni base : `activity/map/partition.rs` et `activity/ma
 
 ### Question ouverte : unité des distances
 `road_candidates` convertit en km les cartes en miles, lieues ou milles marins (`unit_to_km`). I8 dit « aucune conversion ». Moria est en km, donc sans effet ici. À trancher : garder la conversion (cohérente avec les vitesses en km/h) ou garder le nombre de la carte tel quel.
+
+## 13. E4 en cours : API admin (19/11/2026)
+
+### E4a, livrée : activité sans univers, droits, envoi de la carte, aperçu
+- **Activité sans univers (I2)** : `Session.universe_id` est optionnel. Sur un serveur relié à aucun univers, seul un administrateur (propriétaire, permission ADMINISTRATOR) obtient une session ; un joueur reçoit `activity__server_not_linked`. Les routes de jeu répondent alors `activity__server_not_linked`. La réponse d'authentification porte `universe: null` et `can_import`. Le front affiche pour l'instant un message d'attente (écrans en E5).
+- **Droits (I1)** : `may_import` = administrateur ou créateur de l'univers, **recalculé à chaque requête** à partir de Discord et de la base (`require_importer`). Chaque serveur cible est vérifié (`check_target`) : l'admin y est administrateur, le bot y est, et le serveur n'est relié à aucun univers ou au même ; sinon 403 ou 409.
+- Routes (`activity/admin_import.rs`) :
+  - `GET /api/admin/import/servers` : serveurs du bot (50 au plus) où l'admin est membre, avec `eligible`, `linked` (`none`, `this`, `other`) et `current` ;
+  - `POST /api/admin/import/map` : sauvegarde `.map` brute, **32 Mio au plus** (les autres routes gardent 64 Kio), lue hors du fil asynchrone ; renvoie bourgs, terrain, unités, et les rattachements proposés par nom (I16). La carte est gardée 1 h en mémoire, 16 cartes au plus ;
+  - `POST /api/admin/import/plan` : choix de l'admin (mode, routes maritimes, sélection de bourgs, secrets, rattachements, serveurs, type d'installation, zone), stricts et bornés ; renvoie le plan, le nombre de serveurs à créer et le nombre d'objets Discord.
+- Débit : 1 action/s soutenue par admin sur l'envoi et l'aperçu.
+- Tests (routeur complet, faux Discord, MongoDB) : un admin d'un serveur sans univers envoie une carte et obtient un plan ; un joueur est refusé ; un serveur d'un autre univers (409) ou dont l'admin n'est pas membre (403) est refusé même si le client l'envoie ; l'activité s'ouvre sans univers pour un admin seulement ; seule la route de la carte accepte un gros corps.
+
+### E4b, à faire : exécution
+Création (univers si besoin, serveurs, catégories de routes, lieux, routes, carte `universe_maps`) en tâche de fond avec progression et retour en arrière complet ; validation par le nom de l'univers (I12).

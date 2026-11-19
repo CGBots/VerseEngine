@@ -17,7 +17,7 @@ use crate::utility::reply::reply;
 ///  * - `FullSetup`: Represents a complete setup process.
 ///  * - `PartialSetup`: Represents a partial or incomplete setup process.
 
-#[derive(Debug, poise::ChoiceParameter, Clone, Copy)]
+#[derive(Debug, poise::ChoiceParameter, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SetupType {
     FullSetup,
     PartialSetup

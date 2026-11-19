@@ -95,7 +95,10 @@ Conventions :
 | POST | `/api/me/inventory/{inventory_id}/use` · `/consume` · `/equip` · `/unequip` | c | mêmes services que `/item use`, `/item consume` |
 | GET | `/api/ws` | a | WebSocket (cf. § 7) |
 | GET | `/api/i18n/{locale}` | a | fichier Fluent du bot (`fr`, `en-US`), public |
-| — | `/api/admin/*` | d | lieux, objets, fiches en attente, logs, positions des joueurs, import Azgaar |
+| GET | `/api/admin/import/servers` | d | serveurs utilisables pour l'import (voir `IMPORT_SPEC.md` § 13) |
+| POST | `/api/admin/import/map` | d | sauvegarde `.map` d'Azgaar, 32 Mio au plus |
+| POST | `/api/admin/import/plan` | d | aperçu de l'import |
+| — | `/api/admin/*` | d | lieux, objets, fiches en attente, logs, positions des joueurs |
 
 Validation des entrées : désérialisation stricte (`deny_unknown_fields`), ids parsés (`u64`/`ObjectId`) avant tout accès base, longueurs bornées (noms ≤ 100, descriptions ≤ 4000), corps limité à 64 Kio (import Azgaar : route admin dédiée à 32 Mio, traitée en flux).
 

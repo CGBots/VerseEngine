@@ -4,6 +4,7 @@
 //! ordonnanceurs en mémoire (`travel::logic`, `craft::logic`…). Désactivée par défaut
 //! (`ACTIVITY_ENABLED`). Voir `docs/activity/ARCHITECTURE.md`.
 
+pub mod admin_import;
 pub mod config;
 pub mod discord_api;
 pub mod dto;

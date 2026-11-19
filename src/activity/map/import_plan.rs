@@ -16,6 +16,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use serde_with::{serde_as, DisplayFromStr};
+
 use crate::activity::map::azgaar::AzgaarMap;
 use crate::activity::map::network::{road_candidates, Zone};
 use crate::activity::map::partition::{partition, Edge, Node, PartitionError, PartitionInput, ServerBudget, ServerLoad, DEFAULT_MAX_PLACES_PER_SERVER};
@@ -93,14 +95,21 @@ impl Default for ImportOptions {
     }
 }
 
+#[serde_as]
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PlaceAction {
     Create,
     /// Lieu d'un import précédent, gardé (son nom ne change pas).
-    Keep { category_id: u64 },
+    Keep {
+        #[serde_as(as = "DisplayFromStr")]
+        category_id: u64,
+    },
     /// Lieu existant rattaché à ce bourg.
-    Attach { category_id: u64 },
+    Attach {
+        #[serde_as(as = "DisplayFromStr")]
+        category_id: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -115,13 +124,20 @@ pub struct PlannedPlace {
     pub server: usize,
 }
 
+#[serde_as]
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RoadAction {
     Create,
-    Keep { channel_id: u64 },
+    Keep {
+        #[serde_as(as = "DisplayFromStr")]
+        channel_id: u64,
+    },
     /// Route existante dont la distance ou le secret change.
-    Update { channel_id: u64 },
+    Update {
+        #[serde_as(as = "DisplayFromStr")]
+        channel_id: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -137,20 +153,25 @@ pub struct PlannedRoad {
     pub host: usize,
 }
 
+#[serde_as]
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct PlannedServer {
     /// `None` : serveur à créer par l'admin (un bot ne peut pas créer de serveur).
+    #[serde_as(as = "Option<DisplayFromStr>")]
     pub guild_id: Option<u64>,
     pub budget: ServerBudget,
 }
 
+#[serde_as]
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ImportPlan {
     pub places: Vec<PlannedPlace>,
     pub roads: Vec<PlannedRoad>,
     /// Lieux existants à supprimer (`category_id`).
+    #[serde_as(as = "Vec<DisplayFromStr>")]
     pub remove_places: Vec<u64>,
     /// Routes existantes à supprimer (`channel_id`).
+    #[serde_as(as = "Vec<DisplayFromStr>")]
     pub remove_roads: Vec<u64>,
     pub servers: Vec<PlannedServer>,
     /// Routes entre deux serveurs.
@@ -456,6 +477,14 @@ mod tests {
         assert_eq!(p.places.iter().map(|x| x.burg_id).collect::<Vec<_>>(), vec![1, 2, 3]);
         o.burgs = Some(vec![5]);
         assert_eq!(build_plan(&m, &o, &[], &[]), Err(PlanError::NoBurg));
+    }
+
+    #[test]
+    fn discord_ids_are_serialized_as_strings() {
+        let a = serde_json::to_value(PlaceAction::Keep { category_id: u64::MAX }).unwrap();
+        assert_eq!(a, serde_json::json!({"kind": "keep", "category_id": u64::MAX.to_string()}));
+        let s = serde_json::to_value(PlannedServer { guild_id: Some(1080809463201677332), budget: crate::activity::map::partition::budget(ServerLoad::default(), 0, 0) }).unwrap();
+        assert_eq!(s["guild_id"], "1080809463201677332");
     }
 
     #[test]
