@@ -493,6 +493,22 @@ create_place__role_not_created = Role creation failed
     .title = Role creation failed
     .message = The place role could not be created correctly.
             Please try again or contact support if the problem persists: {support_link}
+create_place__invalid_name = Invalid name
+    .title = Invalid name
+    .message = The place name is empty.
+            Please try again or contact support if the problem persists: {support_link}
+create_place__category_not_created = Category creation failed
+    .title = Category creation failed
+    .message = The place category could not be created. Nothing was kept.
+            Please try again or contact support if the problem persists: {support_link}
+create_place__channel_not_created = Channel creation failed
+    .title = Channel creation failed
+    .message = The place channel could not be created. Nothing was kept.
+            Please try again or contact support if the problem persists: {support_link}
+create_place__database_error = Database error
+    .title = Database error
+    .message = The place could not be saved. Nothing was kept.
+            Please try again or contact support if the problem persists: {support_link}
 create_place__rollback_complete = Rollback completed
     .title = Rollback performed
     .message = Something went wrong during place creation. A rollback has been performed.
@@ -1255,3 +1271,4 @@ travel__no_destination_found = No destination
 travel__no_road_found = No road
     .title = No road
     .message = No road connects your position to this destination.
+place_central_channel_name = central-square

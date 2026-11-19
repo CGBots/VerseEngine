@@ -493,6 +493,22 @@ create_place__role_not_created = Création de rôle échouée
     .title = Création de rôle échouée
     .message = Le rôle du lieu n'as pas pu être créé correctement.
             Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
+create_place__invalid_name = Nom invalide
+    .title = Nom invalide
+    .message = Le nom du lieu est vide.
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
+create_place__category_not_created = Création de catégorie échouée
+    .title = Création de catégorie échouée
+    .message = La catégorie du lieu n'a pas pu être créée. Rien n'a été conservé.
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
+create_place__channel_not_created = Création de salon échouée
+    .title = Création de salon échouée
+    .message = Le salon du lieu n'a pas pu être créé. Rien n'a été conservé.
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
+create_place__database_error = Erreur de base de données
+    .title = Erreur de base de données
+    .message = Le lieu n'a pas pu être enregistré. Rien n'a été conservé.
+            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
 create_place__rollback_complete = Rollback terminé
     .title = Rollback effectué
     .message = Quelque chose s'est mal passé durant la création du lieu. Un rollback à été effectué.
@@ -1266,3 +1282,4 @@ travel__no_destination_found = Aucune destination
 travel__no_road_found = Aucune route
     .title = Aucune route
     .message = Aucune route ne relie votre position à cette destination.
+place_central_channel_name = place-centrale

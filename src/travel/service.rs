@@ -471,7 +471,7 @@ mod integration {
     use mongodb::bson::{doc, oid::ObjectId};
 
     fn place(universe_id: ObjectId, category_id: u64, name: &str) -> Place {
-        Place { _id: ObjectId::new(), universe_id, server_id: 1, category_id, role: random_id(), name: name.into(), modifiers: vec![] }
+        Place { _id: ObjectId::new(), universe_id, server_id: 1, category_id, role: random_id(), name: name.into(), modifiers: vec![], central_channel_id: None }
     }
 
     #[test]

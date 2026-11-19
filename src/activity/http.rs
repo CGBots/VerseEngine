@@ -1107,7 +1107,7 @@ mod tests {
             let user = random_id();
             let (a, b, c) = (random_id(), random_id(), random_id());
             for (id, name) in [(a, "A"), (b, "B"), (c, "C")] {
-                Place { _id: ObjectId::new(), universe_id, server_id: 1, category_id: id, role: 1, name: name.into(), modifiers: vec![] }.insert().await.unwrap();
+                Place { _id: ObjectId::new(), universe_id, server_id: 1, category_id: id, role: 1, name: name.into(), modifiers: vec![], central_channel_id: None }.insert().await.unwrap();
             }
             let (public, secret) = (random_id(), random_id());
             crate::travel::service::tests_support_road(universe_id, public, a, b, false).insert().await.unwrap();

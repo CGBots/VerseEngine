@@ -138,3 +138,15 @@ Chaque étape est testée, poussée sur `feature/map-import`, et met à jour `PR
 - **Arrêt en cours de route** : comme avec l'ancien rôle, le groupe arrêté **reste sur la route** et garde l'accès à son salon ; l'accès est retiré quand il en sort (arrivée, y compris après un demi-tour). Retirer l'accès à l'arrêt laisserait un joueur sur une route dont il ne voit plus le salon.
 - Migration (`roads/migration.rs`, au démarrage du bot, idempotente) : permission individuelle pour les joueurs sur la route, suppression du rôle (Q7 ; un rôle déjà supprimé compte comme un succès), retrait de `role_id`. Un rôle non supprimable est retenté au démarrage suivant.
 - Tests : `a_road_role_is_migrated_to_an_individual_permission` et `a_trip_grants_then_revokes_the_road_access` (MongoDB + API REST, vrai salon, vrai membre), tests unitaires des permissions et de la liste des voyageurs.
+
+## 11. E2 en cours : services de création (19/11/2026)
+
+### E2a, livrée : exécuteur et services lieu et route
+- `src/provisioning/` : `Provisioner` (client HTTP seulement, pas de `poise::Context`). Journal des objets créés (rôles, salons, documents) ; pour une tâche longue, journal écrit en base (`provisioning_jobs`) à chaque création. Retour en arrière dans l'ordre inverse, un objet déjà absent compte comme supprimé ; progression `watch` (phases `Creating`, `Waiting`, `RollingBack`, `Done`, `RolledBack`, `RollbackIncomplete`). Créations de rôles espacées de 1,5 s au moins (Q8).
+- Au démarrage du bot, les tâches restées `Running` (bot arrêté au milieu d'un import) sont entièrement défaites (`rollback_interrupted_jobs`).
+- `provision_place` : rôle, catégorie visible du seul rôle, salon générique `place-centrale` / `central-square` selon la langue du serveur (I5, Q5), synchronisé avec la catégorie ; `Place.central_channel_id` (nouveau champ optionnel). `/place_create_place` l'utilise.
+- `provision_road` : salon sans rôle (Q1) dans la catégorie donnée (l'import pourra répartir les routes sur plusieurs catégories de 50), `server_two_id` si la route relie deux serveurs. `/road_create_road` l'utilise.
+- Tests contre l'API REST (exécutés sur RpBotTest2) : échec d'une route après un lieu complet → **tout** est défait, lieu compris ; tâche interrompue défaite au démarrage ; progression de la création puis du retour en arrière. Les tests vérifient MongoDB avant de créer quoi que ce soit sur Discord.
+
+### E2b, à faire : installation d'un univers et d'un serveur sans `poise::Context`
+Création de l'univers (I14 : nom, type d'installation, vitesse du temps) et installation partielle ou complète d'un serveur (rôles de base, catégories, salons), partagées par `/universe_create_universe`, `/universe_setup`, `/universe_add_server` et l'import.

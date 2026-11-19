@@ -1,8 +1,9 @@
-use mongodb::bson::oid::ObjectId;
-use serenity::all::{CreateChannel, PermissionOverwrite, PermissionOverwriteType, Permissions, RoleId};
+use serenity::all::{PermissionOverwrite, PermissionOverwriteType, Permissions, RoleId};
+use crate::provisioning::road::provision_road;
+use crate::provisioning::Provisioner;
 use tokio::join;
 use crate::database::places::{check_existing_place};
-use crate::database::road::{Road, count_non_secret_roads_for_place};
+use crate::database::road::count_non_secret_roads_for_place;
 use crate::database::server::{get_server_by_id};
 use crate::discord::poise_structs::{Context, Error};
 use crate::utility::reply::reply;
@@ -129,63 +130,29 @@ pub async fn _create_road(ctx: &Context<'_>, place_one_str : String, place_two_s
         return Err("create_road__already_exists".into());
     }
 
-    let secret_channel_value = if secret_channel.is_some() {secret_channel.unwrap()} else {false};
+    let secret_channel_value = secret_channel.unwrap_or(false);
 
     if !secret_channel_value {
         let count_one = count_non_secret_roads_for_place(universe_id, place_one.category_id).await.map_err(|_| Error::from("create_road__database_error"))?;
         let count_two = count_non_secret_roads_for_place(universe_id, place_two.category_id).await.map_err(|_| Error::from("create_road__database_error"))?;
-        
+
         if count_one >= 25 || count_two >= 25 {
             return Err("create_road__limit_reached".into());
         }
     }
 
-    let name = format!("{}-{}", place_one.name, place_two.name);
-    let name = if name.len() > 100 { name[..100].to_string() } else { name };
+    let Some(road_category) = server.road_category_id else { return Err("create_road__server_not_found".into()) };
 
-    // Plus de rôle par route (Q1) : le salon est fermé à @everyone, chaque voyageur reçoit une
-    // permission individuelle au départ (`travel::logic::grant_road_access`).
-    let channel = CreateChannel::new(name.clone())
-        .permissions(road_channel_permissions(guild_id.get()))
-        .category(server.road_category_id.unwrap().id);
-
-    let channel = match ctx.guild_id().unwrap().create_channel(ctx, channel).await {
-        Ok(channel) => channel,
-        Err(_) => return Err("create_road__create_channel_failed".into()),
-    };
-
-    let road = Road{
-        _id: ObjectId::default(),
-        universe_id: server.universe_id,
-        server_id: server.server_id,
-        server_two_id: if place_one.server_id != place_two.server_id {
-            if place_one.server_id == server.server_id { Some(place_two.server_id.to_string()) } else { Some(place_one.server_id.to_string()) }
-        } else { None },
-        road_name: name,
-        role_id: None,
-        channel_id: channel.id.get(),
-        place_one_id: place_one.category_id,
-        place_two_id: place_two.category_id,
-        distance,
-        secret: secret_channel_value,
-        modifiers: vec![]
-    };
-
-    let mut session = crate::database::db_client::get_db_client().await.start_session().await?;
-    session.start_transaction().await?;
-
-    match road.insert_with_session(&mut session).await {
+    // Même création que l'import de carte : salon sans rôle (Q1), puis document.
+    let mut provisioner = Provisioner::new(ctx.serenity_context().http.clone());
+    match provision_road(&mut provisioner, guild_id.get(), road_category.id, &place_one, &place_two, distance, secret_channel_value).await {
         Ok(_) => {
-            session.commit_transaction().await?;
+            provisioner.finish().await;
             Ok("create_road__success")
         }
-        Err(_) => {
-            session.abort_transaction().await?;
-            match channel.delete(ctx).await {
-                Ok(_) => { Err("create_road__insert_road_failed_rollback_success".into()) }
-                Err(_) => { Err("create_road__insert_road_failed_rollback_channel_failed".into()) }
-            }
-        }
+        Err(e) if e.key == "create_road__create_channel_failed" => Err(e.key.into()),
+        Err(e) if e.left_over.is_empty() => Err("create_road__insert_road_failed_rollback_success".into()),
+        Err(_) => Err("create_road__insert_road_failed_rollback_channel_failed".into()),
     }
 }
 

@@ -88,6 +88,10 @@ impl EventHandler for Handler {
     #[cfg(not(test))]
     async fn ready(&self, ctx: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
+        // Tâches de création interrompues par un arrêt (import de carte) : tout est défait (I13).
+        if let Err(e) = crate::provisioning::rollback_interrupted_jobs(&ctx.http).await {
+            eprintln!("[provisioning] cannot roll back interrupted jobs: {e:?}");
+        }
         // Routes à rôle → permissions individuelles (Q1, Q7). Idempotent, reprise au démarrage.
         if let Err(e) = crate::roads::migration::migrate_road_roles(&ctx.http).await {
             eprintln!("[road migration] failed: {e:?}");

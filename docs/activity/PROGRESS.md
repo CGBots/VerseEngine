@@ -17,7 +17,7 @@ Dernière mise à jour : 19/11/2026 (session « import de carte », branche `fea
 ## Environnement de test (session cloud)
 
 - Le proxy injecte le jeton du bot de **test** sur toutes les requêtes `discord.com`, et remplace tout en-tête `Authorization` déjà présent, `Bot` comme `Bearer`. Conséquence : le flux OAuth utilisateur (`/users/@me` avec un jeton utilisateur) **ne peut pas** être testé ici, il renverrait le bot. La gateway n'est pas joignable non plus.
-- Serveur de test : « rpbot test » (`1080809463201677332`). Les tests REST créent puis suppriment leurs propres salons.
+- Serveurs de test : « rpbot test » (`1080809463201677332`) et « RpBotTest2 » (`1100433828931194931`, visible par l'utilisateur avec son compte principal ; utile pour les essais multi-serveurs). Les tests REST créent puis suppriment leurs propres salons. Le salon `test-1-test-2` de RpBotTest2 est antérieur à ces tests : ne pas le supprimer.
 - MongoDB local en replica set : binaires 8.0.4 (fastdl.mongodb.org) dans `/opt/mongodb`, `--replSet rs0 --auth --keyFile`. À réinstaller à chaque nouvelle session (le conteneur est éphémère).
 - Variables des tests d'intégration : `MONGODB_*`, `DISCORD_TOKEN=dummy` (le proxy remplace la valeur), `VERSEENGINE_TEST_GUILD_ID`. serenity n'accepte que les racines webpki : les tests ajoutent le CA de `SSL_CERT_FILE` (`test_support::discord_http`).
 - Les conteneurs Docker n'ont pas de DNS ici : l'image se construit en CI, pas en local.
@@ -54,9 +54,9 @@ PR #12 (`feature/discord-activity`) :
 
 ## Import et génération de carte (branche `feature/map-import`, en cours)
 - Vérifications du § 6 faites, résultats dans `IMPORT_SPEC.md` § 7 : quota de 250 créations de rôles par serveur (≈ 6 h), 2 000 pour les salons, permission individuelle testée (204 ; non-membre 10009 ; retrait idempotent), algorithme de répartition retenu. Azgaar dans l'iframe : non vérifiable depuis le cloud, on livre d'abord le repli.
-- Découpage E1–E9 validé (`IMPORT_SPEC.md` § 8, décisions Q6–Q8 au § 9). **E1 livrée** (routes sans rôle, migration, `IMPORT_SPEC.md` § 10). Prochaine étape : **E2, services de création sans `poise::Context`**.
+- Découpage E1–E9 validé (`IMPORT_SPEC.md` § 8, décisions Q6–Q8 au § 9). **E1 livrée** (routes sans rôle, migration, `IMPORT_SPEC.md` § 10). **E2a livrée** (exécuteur de création avec journal et retour en arrière, services lieu et route, `IMPORT_SPEC.md` § 11). En cours : **E2b**, installation d'univers et de serveur.
 - Fichiers Moria redéposés : les deux tests réels passent. 60 lieux au plus par serveur (Q9).
-- `cargo test --locked` : 210 réussis ; intégration (`--ignored --skip test_discord_bot_connection`, avec `AZGAAR_MAP_FILE` et `AZGAAR_FULL_JSON`) : 21 réussis ; `npm test` : 39 réussis.
+- `cargo test --locked` : 218 réussis ; intégration (`--ignored --skip test_discord_bot_connection`, avec `AZGAAR_MAP_FILE` et `AZGAAR_FULL_JSON`) : 24 réussis ; `npm test` : 39 réussis.
 
 ## Cahier des charges de l'import
 Cahier des charges complet et validé : **`docs/activity/IMPORT_SPEC.md`** (décisions I1–I17, Q1–Q5). À traiter dans une session dédiée. Points marquants : répartition de l'univers sur plusieurs serveurs (150 lieux au plus par serveur, création des serveurs par l'admin), plus de rôle par route (permissions individuelles), brouillard optionnel par univers, double vérification par le nom de l'univers, retour en arrière complet en cas d'erreur.
