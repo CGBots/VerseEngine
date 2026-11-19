@@ -149,6 +149,14 @@ pub struct Server {
     pub rp_character_channel_id: Option<Id>,
 
     pub universal_time_channel_id: Option<Id>,
+
+    /// Identifier of the message the bot keeps editing in the universal time channel
+    /// (the day/night announcement). `None` until the first announcement, and for servers
+    /// created before this field existed.
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    #[serde(default)]
+    pub universal_time_message_id: Option<u64>,
+
     pub universal_invite_url: Option<String>,
 }
 
@@ -174,6 +182,7 @@ impl Default for Server {
             nrp_general_channel_id: None,
             rp_character_channel_id: None,
             universal_time_channel_id: None,
+            universal_time_message_id: None,
             universal_invite_url: None,
         }
     }
@@ -209,6 +218,7 @@ impl Server {
             nrp_general_channel_id: self.nrp_general_channel_id.clone(),
             rp_character_channel_id: self.rp_character_channel_id.clone(),
             universal_time_channel_id: self.universal_time_channel_id.clone(),
+            universal_time_message_id: self.universal_time_message_id,
             universal_invite_url: self.universal_invite_url.clone(),
         }
     }
@@ -612,51 +622,78 @@ pub async fn get_server_by_id(
         .await
 }
 
+/// Remembers (or forgets, with `None`) the id of the day/night announcement message of a server.
+///
+/// Only this field is written (`$set`): the rest of the server document is left untouched, so this
+/// can safely run while a setup command is updating the same server.
+///
+/// # Errors
+///
+/// Returns a MongoDB error if the update fails.
+pub async fn set_universal_time_message_id(
+    server_id: u64,
+    message_id: Option<u64>,
+) -> mongodb::error::Result<()> {
+    let db_client = get_db_client().await;
+    let filter = doc! {"server_id": server_id.to_string()};
+    let update = doc! {"$set": {"universal_time_message_id": message_id.map(|id| id.to_string())}};
+    db_client
+        .database(VERSEENGINE_DB_NAME)
+        .collection::<Server>(SERVERS_COLLECTION_NAME)
+        .update_one(filter, update)
+        .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod test {
-    use crate::database::universe::Universe;
-    use std::time::SystemTime;
-    use lazy_static::lazy_static;
     use super::*;
 
-    static _SERVER_ID: u64 = 1;
-
-    lazy_static! {
-        pub static ref UNIVERSE_ID: ObjectId = ObjectId::new();
+    #[test]
+    fn time_message_id_is_optional_in_existing_documents() {
+        // Un serveur enregistré avant l'ajout du champ doit toujours pouvoir être lu.
+        let mut document = to_document(&Server::default()).unwrap();
+        document.remove("universal_time_message_id");
+        let server: Server = mongodb::bson::from_document(document).unwrap();
+        assert_eq!(server.universal_time_message_id, None);
     }
 
-    async fn insert_universe() -> Result<InsertOneResult, String> {
-        let _ = get_db_client().await;
-        let universe = Universe {
-            universe_id: *UNIVERSE_ID,
-            name: "test".to_string(),
-            creator_id: 0,
-            global_time_modifier: 100,
-            time_origin_timestamp: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
-            creation_timestamp: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
-        };
-        match universe.insert_universe().await {
-            Ok(universe) => Ok(universe),
-            Err(e) => {
-                println!("{}", e);
-                Err(e.to_string())
-            }
-        }
+    #[test]
+    fn time_message_id_is_stored_as_a_string_like_the_other_discord_ids() {
+        let server = Server { universal_time_message_id: Some(1_234_567_890_123_456_789), ..Server::default() };
+        let document = to_document(&server).unwrap();
+        assert_eq!(document.get_str("universal_time_message_id").unwrap(), "1234567890123456789");
+
+        let read_back: Server = mongodb::bson::from_document(document).unwrap();
+        assert_eq!(read_back.universal_time_message_id, Some(1_234_567_890_123_456_789));
     }
 
-    #[tokio::test]
-    async fn test_insert_server() {
-        insert_universe().await.unwrap();
-        let result = Server::default()
-            .insert_server()
-            .await;
+    #[test]
+    #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
+    fn the_time_message_id_is_saved_without_touching_the_rest() {
+        use crate::test_support::{block_on, random_id};
+        block_on(async {
+            let server_id = random_id();
+            let mut server = Server::default();
+            server.server_id(server_id).universal_time_channel_id(42u64);
+            server.insert_server().await.expect("insert the test server");
 
-        assert!(result.is_ok());
+            set_universal_time_message_id(server_id, Some(7)).await.unwrap();
+            let saved = get_server_by_id(server_id).await.unwrap().unwrap();
+            set_universal_time_message_id(server_id, None).await.unwrap();
+            let cleared = get_server_by_id(server_id).await.unwrap().unwrap();
+
+            get_db_client()
+                .await
+                .database(VERSEENGINE_DB_NAME)
+                .collection::<Server>(SERVERS_COLLECTION_NAME)
+                .delete_one(doc! {"server_id": server_id.to_string()})
+                .await
+                .unwrap();
+
+            assert_eq!(saved.universal_time_message_id, Some(7));
+            assert_eq!(saved.universal_time_channel_id.map(|c| c.id), Some(42));
+            assert_eq!(cleared.universal_time_message_id, None);
+        });
     }
 }

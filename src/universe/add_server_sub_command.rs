@@ -97,6 +97,7 @@ pub async fn _add_server(ctx: &Context<'_>, setup_type: SetupType) -> Result<&'s
                     nrp_general_channel_id: Default::default(),
                     rp_character_channel_id: Default::default(),
                     universal_time_channel_id: Default::default(),
+                    universal_time_message_id: Default::default(),
                     universal_invite_url: Default::default(),
                 }.insert_server().await else { return Err("create_universe__server_insert_failed".into()) };
                 let Ok(_) = _setup(&ctx, setup_type).await else { return Err("setup_server__failed".into()) };

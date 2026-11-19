@@ -1,0 +1,249 @@
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { api, ApiError, getSessionToken, travelApi, type CharacterView, type MapView, type SessionInfo, type TravelState } from './api';
+import { connect } from './discord';
+import { loadTranslator, pickLocale, type Translator } from './i18n';
+import { CharacterPanel } from './components/CharacterPanel';
+import { MapView2D } from './components/MapView2D';
+import { TravelPanel } from './components/TravelPanel';
+import { TopBar } from './components/TopBar';
+import { SettingsPanel } from './components/SettingsPanel';
+import { roadPath, webglAvailable, type PlayerMotion } from './map/geometry';
+import { playerPictureUrl } from './map/player';
+import { connectRealtime } from './realtime';
+import { pullDecision, useIsPhone } from './sheet';
+
+type State =
+  | { kind: 'loading' }
+  | { kind: 'error'; key: string }
+  | { kind: 'ready'; session: SessionInfo };
+
+const fallbackT: Translator = (k) => k;
+// three.js est volumineux : chargé à part, après le panneau du personnage.
+const MapScene = lazy(() => import('./components/MapScene').then((m) => ({ default: m.MapScene })));
+const errorKey = (e: unknown) => (e instanceof ApiError ? e.key : 'activity__internal_error');
+
+/** Description du mouvement du joueur ; l'animation est faite par la carte (`useAnimatedPosition`). */
+function usePlayerMotion(map: MapView | null, travel: TravelState | null): PlayerMotion | null {
+  return useMemo(() => {
+    if (!map || !travel?.location) return null;
+    const loc = travel.location;
+    if (loc.kind === 'place') {
+      const p = map.places.find((x) => x.id === loc.id);
+      return p ? { kind: 'place', at: { x: p.x, y: p.y } } : null;
+    }
+    const v = travel.travel;
+    const from = map.places.find((x) => x.id === loc.source_id);
+    const to = map.places.find((x) => x.id === loc.destination_id);
+    if (!v || !from || !to) return null;
+    return {
+      kind: 'road',
+      from: { x: from.x, y: from.y },
+      to: { x: to.x, y: to.y },
+      // Tracé réel de la route (import Azgaar), sinon ligne droite.
+      path: roadPath(map, from.id, to.id),
+      traveledKm: v.traveled_km,
+      roadKm: v.traveled_km + (v.remaining_km ?? 0),
+      speedKmh: v.speed_kmh,
+      refTime: travel.server_time,
+      moving: v.in_move,
+    };
+  }, [map, travel]);
+}
+
+export function App() {
+  const [state, setState] = useState<State>({ kind: 'loading' });
+  const [t, setT] = useState<Translator>(() => fallbackT);
+  const [adminMode, setAdminMode] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const isPhone = useIsPhone();
+  const [character, setCharacter] = useState<CharacterView | null>(null);
+  const [characterError, setCharacterError] = useState<string | null>(null);
+  const [map, setMap] = useState<MapView | null>(null);
+  const [travel, setTravel] = useState<TravelState | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const use3d = useRef(webglAvailable()).current;
+
+  const loadCharacter = useCallback(async () => {
+    try {
+      setCharacter(await api<CharacterView>('/me/character'));
+      setCharacterError(null);
+    } catch (e) {
+      setCharacter(null);
+      setCharacterError(errorKey(e));
+    }
+  }, []);
+  const loadTravel = useCallback(async () => {
+    try {
+      setTravel(await travelApi.state());
+    } catch {
+      setTravel(null);
+    }
+  }, []);
+  const loadMap = useCallback(async () => {
+    try {
+      setMap(await api<MapView>('/map'));
+    } catch {
+      setMap(null);
+    }
+  }, []);
+  const reloadAll = useCallback(async () => {
+    await Promise.all([loadCharacter(), loadTravel(), loadMap()]);
+  }, [loadCharacter, loadTravel, loadMap]);
+
+  const start = useCallback(async () => {
+    setState({ kind: 'loading' });
+    try {
+      const { session, locale } = await connect();
+      setT(await loadTranslator(pickLocale(locale)).then((tr) => () => tr));
+      setState({ kind: 'ready', session });
+      await reloadAll();
+    } catch (e) {
+      setState({ kind: 'error', key: e instanceof ApiError ? e.key : 'activity__unauthorized' });
+    }
+  }, [reloadAll]);
+
+  useEffect(() => {
+    void start();
+  }, [start]);
+
+  // Temps réel : une action faite par commande slash met aussi l'activité à jour.
+  const ready = state.kind === 'ready';
+  useEffect(() => {
+    if (!ready) return;
+    return connectRealtime(getSessionToken, (event) => {
+      if (event === 'travel_updated') void Promise.all([loadTravel(), loadCharacter()]);
+      else if (event === 'character_updated') void loadCharacter();
+      else if (event === 'map_updated') void Promise.all([loadMap(), loadTravel()]);
+      else void reloadAll();
+    });
+  }, [ready, loadTravel, loadCharacter, loadMap, reloadAll]);
+
+  const act = useCallback(
+    async (action: () => Promise<TravelState>) => {
+      setBusy(true);
+      setMessage(null);
+      try {
+        const next = await action();
+        setTravel(next);
+        if (next.result) setMessage(t(next.result));
+        void loadCharacter();
+      } catch (e) {
+        setMessage(t(errorKey(e)));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [t, loadCharacter],
+  );
+
+  const motion = usePlayerMotion(map, travel);
+  const reachable = useMemo(() => new Set(travel?.destinations.map((d) => d.id) ?? []), [travel]);
+  const currentPlaceId = travel?.location?.kind === 'place' ? travel.location.id : null;
+
+  if (state.kind === 'loading') return <div className="center">{t('activity_ui__loading')}</div>;
+  if (state.kind === 'error')
+    return (
+      <div className="center">
+        <p>{t(state.key)}</p>
+        <button type="button" onClick={() => void start()}>{t('activity_ui__retry')}</button>
+      </div>
+    );
+
+  const { session } = state;
+  const avatar = session.user.avatar ? `https://cdn.discordapp.com/avatars/${session.user.id}/${session.user.avatar}.png?size=128` : null;
+  const mapProps = {
+    currentPlaceId,
+    reachable,
+    motion,
+    playerPicture: playerPictureUrl(session.user, character),
+    playerName: character?.name ?? session.user.global_name ?? session.user.username,
+    onSelectPlace: setSelected,
+  };
+  const panel = character ? (
+    <CharacterPanel character={character} avatarUrl={avatar} t={t} onOpenInventory={() => { /* phase c */ }} onResync={() => void loadCharacter()} />
+  ) : (
+    <aside className="side-panel"><p>{t(characterError ?? 'activity__no_character')}</p></aside>
+  );
+  const pull = (startY: number, y: number) => {
+    const d = pullDecision(startY, y, sheetOpen);
+    if (d) setSheetOpen(d === 'open');
+  };
+  return (
+    <div className={`layout${isPhone ? ' phone' : ''}`}>
+      {isPhone ? (
+        <>
+          {/* Téléphone : la fiche se déroule depuis le haut de l'écran. */}
+          {sheetOpen && <div className="sheet-backdrop" onClick={() => setSheetOpen(false)} />}
+          <div
+            id="character-sheet"
+            className={`sheet${sheetOpen ? ' open' : ''}`}
+            aria-hidden={!sheetOpen}
+            onKeyDown={(e) => e.key === 'Escape' && setSheetOpen(false)}
+          >
+            {panel}
+            <button
+              type="button"
+              className="sheet-handle"
+              aria-label={t('activity_ui__close')}
+              onClick={() => setSheetOpen(false)}
+              onPointerDown={(e) => {
+                // Capture : le doigt quitte vite la poignée mais le geste doit continuer.
+                e.currentTarget.setPointerCapture(e.pointerId);
+                e.currentTarget.dataset.y = String(e.clientY);
+              }}
+              onPointerMove={(e) => { const y0 = Number(e.currentTarget.dataset.y); if (e.buttons && Number.isFinite(y0)) pull(y0, e.clientY); }}
+            >
+              <span aria-hidden />
+            </button>
+          </div>
+        </>
+      ) : (
+        panel
+      )}
+      <main className="map-area">
+        <TopBar
+          characterButton={isPhone ? { picture: mapProps.playerPicture ?? character?.image_url ?? null, open: sheetOpen, onToggle: () => setSheetOpen((o) => !o), onPull: pull } : undefined}
+          universeName={session.universe.name}
+          clockParams={session.universe_clock}
+          adminAvailable={session.admin_mode_available}
+          adminMode={adminMode}
+          onToggleAdmin={() => setAdminMode((on) => !on)}
+          onOpenSettings={() => setSettingsOpen(true)}
+          t={t}
+        />
+        <div className="map-view">
+          {map ? (
+            // Export Azgaar : son image, en 2D. Sinon : scène 3D, ou 2D sans WebGL.
+            map.background || !use3d ? (
+              <MapView2D map={map} {...mapProps} />
+            ) : (
+              <Suspense fallback={<MapView2D map={map} {...mapProps} />}>
+                <MapScene map={map} {...mapProps} />
+              </Suspense>
+            )
+          ) : (
+            <div className="map-placeholder">{t('activity_ui__map')}</div>
+          )}
+          {travel && (
+            <TravelPanel
+              state={travel}
+              selectedId={selected}
+              busy={busy}
+              message={message}
+              speed={character?.speed ?? null}
+              t={t}
+              onStart={(id) => void act(() => travelApi.start(id))}
+              onStop={() => void act(travelApi.stop)}
+              onLeave={() => void act(travelApi.leave)}
+              onElapsed={() => void Promise.all([loadTravel(), loadCharacter()])}
+            />
+          )}
+        </div>
+      </main>
+      {settingsOpen && <SettingsPanel t={t} onClose={() => setSettingsOpen(false)} />}
+    </div>
+  );
+}

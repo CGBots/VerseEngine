@@ -1,7 +1,7 @@
 /// # Moteur de Logique de Voyage
 /// 
 /// Ce module gère le déplacement asynchrone des personnages dans l'univers.
-/// Il utilise un système de file d'attente globale (`MOVES`) et une tâche de fond (`SLEEPER`)
+/// Il utilise un système de file d'attente globale (`MOVES`) et un minuteur unique (`MOVE_TIMER`)
 /// pour traiter les étapes de voyage de manière efficace sans bloquer le bot.
 ///
 /// **Concepts clés :**
@@ -11,17 +11,15 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use serenity::all::{Http, GuildId, UserId, RoleId, ChannelId, CreateMessage, CreateEmbed, Color};
 use anyhow::bail;
 use once_cell::sync::Lazy;
 use tokio::sync::{Mutex};
-use tokio::task::JoinHandle;
 use crate::database::travel::{TravelGroup, SpaceType};
 use crate::database::characters::get_character_by_user_id;
 use chrono::{Local, Timelike, Utc};
 use fluent::FluentArgs;
-use tokio::time::sleep;
 use crate::database::road::get_road_by_channel_id;
 use crate::database::stats::{get_stat_by_name, SPEED_STAT};
 use crate::tr_locale;
@@ -34,13 +32,9 @@ use crate::translation::{get_by_locale};
 /// Le premier élément de cette liste est toujours celui qui doit expirer le plus tôt.
 pub static MOVES: Lazy<Arc<Mutex<Vec<TravelGroup>>>> = Lazy::new(|| Arc::new(Mutex::new(vec![])));
 
-/// Handle de la tâche asynchrone (Tokio) actuellement en attente du prochain événement de mouvement.
-///
-/// Le `SLEEPER` contient la tâche `move_process` qui dort pendant la durée nécessaire jusqu'à
-/// l'expiration du premier voyage dans `MOVES`.
-/// Si un nouveau voyage est ajouté en tête de file, la tâche précédente est annulée (aborted)
-/// et un nouveau `SLEEPER` est créé pour refléter le nouveau délai plus court.
-pub static SLEEPER: Lazy<Arc<Mutex<Option<JoinHandle<()>>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
+/// Minuteur unique de la file `MOVES` (voir [`crate::utility::timer`]) : il se réveille à
+/// l'échéance du premier groupe. Un groupe ajouté en tête de file avance le réveil.
+pub static MOVE_TIMER: Lazy<crate::utility::timer::Timer> = Lazy::new(|| crate::utility::timer::Timer::new("travel"));
 
 /// Client HTTP partagé pour les notifications de voyage hors contexte de commande.
 pub static HTTP_CLIENT: Lazy<Arc<Mutex<Option<Arc<Http>>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
@@ -118,22 +112,25 @@ async fn send_travel_invitation(http: &Arc<Http>, user: &serenity::all::User, us
     let _ = user.direct_message(http, CreateMessage::new().content(url).embed(embed)).await;
 }
 
-/// Déclenche une tâche Tokio qui attend la fin de la prochaine étape de voyage.
-///
-/// **Fonctionnement :**
-/// 1. Dort pendant `delay` secondes.
-/// 2. À son réveil, elle extrait le premier groupe de `MOVES`.
-/// 3. Appelle `next_step_logic` pour calculer l'état suivant du voyage.
-/// 4. Si le voyage continue, elle le réinsère dans la file à la bonne position.
-/// 5. Si le voyage est terminé (`is_end`), elle gère l'arrivée (messages, rôles Discord).
-/// 6. Enfin, elle relance récursivement un nouveau `move_process` pour le prochain élément de la file.
-///
-/// Cette fonction assure la continuité du mouvement sans boucle `while` bloquante,
-/// permettant une gestion efficace des milliers de groupes potentiels.
-fn move_process(delay: u64) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        sleep(Duration::from_secs(delay)).await;
+/// Travail du minuteur `MOVE_TIMER`, exécuté à l'échéance du premier groupe :
+/// 1. si le premier groupe de `MOVES` n'est pas encore échu, se reprogramme et s'arrête ;
+/// 2. sinon l'extrait et appelle `next_step_logic` pour calculer l'état suivant du voyage ;
+/// 3. si le voyage continue, le réinsère dans la file à la bonne position ;
+/// 4. si le voyage est terminé (`is_end`), gère l'arrivée (messages, rôles Discord) ;
+/// 5. retourne le délai avant l'échéance du nouveau premier groupe.
+fn move_job() -> crate::utility::timer::Job {
+    crate::utility::timer::job(process_due_move)
+}
 
+/// Délai (secondes) avant la fin de l'étape du premier groupe de la file, 0 s'il est échu.
+/// `None` si la file est vide. Un groupe sans échéance est considéré comme échu.
+pub fn first_move_delay(moves: &[TravelGroup], now: u64) -> Option<u64> {
+    moves.first().map(|m| m.step_end_timestamp.unwrap_or(0).saturating_sub(now))
+}
+
+/// Fait avancer le premier groupe de la file s'il est échu et retourne le délai avant le prochain
+/// réveil.
+async fn process_due_move() -> Option<u64> {
         let mut next_delay: Option<u64> = None;
         let mut next_id: Option<String> = None;
 
@@ -141,10 +138,12 @@ fn move_process(delay: u64) -> JoinHandle<()> {
 
         {
             let mut moves = MOVES.lock().await;
-            if moves.is_empty() {
-                let mut sleeper = SLEEPER.lock().await;
-                *sleeper = None;
-                return;
+            // Ne traite jamais un groupe avant son échéance : un réveil en avance (groupe retiré,
+            // file rechargée) se contente de se reprogrammer.
+            match first_move_delay(&moves, Utc::now().timestamp() as u64) {
+                None => return None,
+                Some(0) => {}
+                Some(remaining) => return Some(remaining),
             }
 
             // Récupère le move qui vient de finir son attente (le premier)
@@ -264,18 +263,10 @@ fn move_process(delay: u64) -> JoinHandle<()> {
             }
         }
 
-        // Relance le processus pour le nouveau premier move (si applicable)
-        if let Some(delay) = next_delay {
-            let mut sleeper = SLEEPER.lock().await;
-            *sleeper = Some(move_process(delay));
+        if let (Some(delay), Some(id)) = (next_delay, &next_id) {
             let current = Local::now();
             let date = format!("{:02}:{:02}:{:02}", current.hour(), current.minute(), current.second());
-            if let Some(id) = next_id {
-                println!("[{date}] Next move process started for user {} with delay {}s", id, delay);
-            }
-        } else {
-            let mut sleeper = SLEEPER.lock().await;
-            *sleeper = None;
+            println!("[{date}] Next move process for group {id} in {delay}s");
         }
 
         // Exécute les changements de rôles si nécessaire
@@ -290,10 +281,11 @@ fn move_process(delay: u64) -> JoinHandle<()> {
                     manage_roles(http.clone(), guild_id, user_id, add, remove).await;
                 }
             } else {
-                eprintln!("HTTP client not initialized in move_process, cannot update roles");
+                eprintln!("HTTP client not initialized in the travel timer, cannot update roles");
             }
         }
-    })
+
+        next_delay
 }
 
 
@@ -310,35 +302,21 @@ pub async fn remove_move(user_id: u64){
         let date = format!("{:02}:{:02}:{:02}", current.hour(), current.minute(), current.second());
         println!("[{date}] Move for group {p_move_id} successfully removed");
 
-        if player_move_index == 0 {
-            let mut sleeper = SLEEPER.lock().await;
-            if let Some(handle) = sleeper.take() {
-                handle.abort();
-                println!("[{date}] Move for group {p_move_id} task aborted");
-            }
-
-            if let Some(next_move) = moves.first() {
-                if let Some(end_ts) = next_move.step_end_timestamp {
-                    let now = Utc::now().timestamp() as u64;
-                    let delay = end_ts.saturating_sub(now);
-                    *sleeper = Some(move_process(delay));
-                    println!("[{date}] Move for group {} started (new first)", next_move._id);
-                }
-            }
-        }
+        // Rien à faire sur le minuteur : s'il se réveille pour ce groupe, il ne trouve rien
+        // d'échu et se reprogramme sur le nouveau premier groupe.
     } else {
         println!("task not found for user {user_id}");
     }
 }
 
-/// Ajoute un nouveau groupe de voyage à la file d'attente globale et réinitialise le `SLEEPER` si nécessaire.
+/// Ajoute un nouveau groupe de voyage à la file d'attente globale et avance le réveil si nécessaire.
 ///
 /// **Actions :**
 /// 1. Verrouille la file `MOVES`.
 /// 2. Utilise `partition_point` pour trouver l'index d'insertion correct afin de maintenir le tri chronologique.
 /// 3. Insère le groupe dans la file.
-/// 4. Si l'élément est inséré à l'index 0 (il devient le plus proche), annule l'ancienne tâche `SLEEPER`
-///    et démarre un nouveau `move_process` avec le délai calculé.
+/// 4. Si l'élément devient le plus proche, avance le réveil de `MOVE_TIMER` (un réveil plus
+///    proche déjà prévu n'est jamais repoussé).
 pub async fn add_move(player_move: TravelGroup){
     let mut moves = MOVES.lock().await;
     // Récupération de la position où insérer l'étape de déplacement (trié par step_end_timestamp)
@@ -352,19 +330,9 @@ pub async fn add_move(player_move: TravelGroup){
     let date = format!("{:02}:{:02}:{:02}", current.hour(), current.minute(), current.second());
     println!("[{date}] Move for group {} successfully added at index {i}", player_move._id);
 
-    if i == 0 {
-        let mut sleeper = SLEEPER.lock().await;
-        if let Some(handle) = sleeper.take() {
-            handle.abort();
-            println!("[{date}] Previous first move task aborted.");
-        }
-
-        if let Some(end_ts) = player_move.step_end_timestamp {
-            let now = Utc::now().timestamp() as u64;
-            let delay = end_ts.saturating_sub(now);
-            *sleeper = Some(move_process(delay));
-            println!("[{date}] Move for group {} started (new first)", player_move._id);
-        }
+    // N'avance le réveil que si ce groupe devient le plus proche.
+    if let Some(delay) = first_move_delay(&moves, Utc::now().timestamp() as u64) {
+        MOVE_TIMER.schedule(delay, move_job());
     }
 }
 
@@ -393,24 +361,15 @@ pub async fn next_step_logic(actual_move: &TravelGroup) -> Result<TravelGroup, a
         // Si le move est déjà marqué comme terminé, on applique la logique d'arrivée
         if actual_move.is_end {
             println!("[Arrival DB Update] Members: {:?}, DestRole: {:?}, RoadRole: {:?}", new_move.members, new_move.destination_role_id, new_move.road_role_id);
-            new_move.actual_space_id = new_move.destination_id.unwrap_or(new_move.actual_space_id);
-            new_move.actual_space_type = SpaceType::Place;
-            new_move.step_end_timestamp = None;
-            new_move.step_start_timestamp = None;
-            new_move.is_in_move = false;
-            new_move.is_end = false;
-            new_move.distance_traveled = 0.0; // Reset distance at arrival
+            apply_arrival(&mut new_move);
 
             // Sauvegarde en base de données pour la persistance de l'arrivée
             new_move.upsert_with_session(&mut session).await
                 .map_err(|e| anyhow::anyhow!("Failed to update travel group {} in DB at arrival: {:?}", new_move._id, e))?;
 
-            // Nettoyage des informations de trajet APRES l'upsert pour que move_process puisse encore les lire
+            // Nettoyage des informations de trajet APRES l'upsert pour que le minuteur puisse encore les lire
             // mais l'objet retourné sera propre pour les prochaines étapes si besoin.
-            new_move.road_id = None;
-            new_move.road_role_id = None;
-            new_move.destination_id = None;
-            new_move.destination_role_id = None;
+            clear_route(&mut new_move);
 
             return Ok(new_move);
         }
@@ -430,14 +389,13 @@ pub async fn next_step_logic(actual_move: &TravelGroup) -> Result<TravelGroup, a
         }
 
         // travel_time en secondes (peut être 0)
-        let travel_time_secs = (end_timestamp as i128 - start_timestamp as i128) as f64;
-        let traveled_distance_km = (travel_time_secs / 3600.0) * prev_speed_kmh;
+        let traveled_distance_km = step_distance_km(start_timestamp, end_timestamp, prev_speed_kmh);
         new_move.distance_traveled += traveled_distance_km;
 
 
         // résolution du stat pour obtenir la vitesse actuelle et le modifier le plus court
         let mut final_speed_kmh = f64::MAX;
-        let mut shortest_modifier_opt = None;
+        let mut shortest_modifier_end_ts: Option<u64> = None;
 
         for &member_id in &new_move.members {
             let (stat_speed_bson, mod_opt) =
@@ -450,21 +408,7 @@ pub async fn next_step_logic(actual_move: &TravelGroup) -> Result<TravelGroup, a
             }
 
             // On cherche le modifier qui se termine le plus tôt parmi tous les membres
-            if let Some(m) = mod_opt {
-                if let Some(end_ts) = m.end_timestamp {
-                    if let Some(current_shortest) = &shortest_modifier_opt {
-                        if let Some(current_end_ts) = (current_shortest as &crate::database::modifiers::Modifier).end_timestamp {
-                            if end_ts < current_end_ts {
-                                shortest_modifier_opt = Some(m);
-                            }
-                        } else {
-                            shortest_modifier_opt = Some(m);
-                        }
-                    } else {
-                        shortest_modifier_opt = Some(m);
-                    }
-                }
-            }
+            shortest_modifier_end_ts = earliest_timestamp(shortest_modifier_end_ts, mod_opt.and_then(|m| m.end_timestamp));
         }
 
         if final_speed_kmh == f64::MAX {
@@ -477,53 +421,26 @@ pub async fn next_step_logic(actual_move: &TravelGroup) -> Result<TravelGroup, a
         let road_opt = get_road_by_channel_id(actual_move.universe_id, actual_move.road_id.ok_or_else(|| anyhow::anyhow!("road_id missing"))?).await?;
         let road = road_opt.ok_or_else(|| anyhow::anyhow!("road not found"))?;
 
-        if final_speed_kmh <= 0.0 {
-            bail!("final_speed must be > 0");
-        }
+        // Calcul pur du prochain segment (voir `plan_step`)
+        let plan = plan_step(road.distance as f64, new_move.distance_traveled, final_speed_kmh, shortest_modifier_end_ts, now)?;
 
-        // remaining distance en km
-        let road_distance_km = road.distance as f64;
-        let remaining_distance_km = (road_distance_km - new_move.distance_traveled).max(0.0);
-
-        // si on est déjà arrivé
-        if remaining_distance_km <= std::f64::EPSILON {
-            new_move.is_end = true;
-            new_move.step_start_timestamp = None;
-            new_move.step_end_timestamp = None;
-            return Ok(new_move);
-        }
-
-        // temps total nécessaire pour finir (secondes)
-        // remaining_distance_km / final_speed_kmh => heures ; *3600 => secondes
-        let time_needed_secs_f = (remaining_distance_km / final_speed_kmh) * 3600.0;
-        let full_time_needed_secs = time_needed_secs_f.ceil() as u64;
-
-        println!("[Travel Debug] Group: {}, Speed: {:.2} km/h, Remaining Time: {}s (Dist: {:.2}km)",
-                 new_move._id, final_speed_kmh, full_time_needed_secs, remaining_distance_km);
-
-        // clamp par le shortest_modifier s'il existe (modifier.end_timestamp est un timestamp absolu)
-        let mut time_to_wait_secs = full_time_needed_secs;
-
-        if let Some(shortest_modifier) = shortest_modifier_opt {
-            if let Some(mod_end_ts) = shortest_modifier.end_timestamp {
-                // si le modifier se termine avant now -> il est expiré, pas d'effet
-                if mod_end_ts > now {
-                    let remaining_modifier_secs = mod_end_ts - now;
-                    if remaining_modifier_secs < time_to_wait_secs {
-                        time_to_wait_secs = remaining_modifier_secs;
-                    }
-                }
+        let (time_to_wait_secs, is_end) = match plan {
+            // si on est déjà arrivé
+            StepPlan::Arrived => {
+                new_move.is_end = true;
+                new_move.step_start_timestamp = None;
+                new_move.step_end_timestamp = None;
+                return Ok(new_move);
             }
-        }
-
-        // si time_to_wait >= full_time_needed => on arrivera au bout de la route
-        if time_to_wait_secs >= full_time_needed_secs {
-            new_move.is_end = true;
-        } else {
-            new_move.is_end = false;
-        }
+            StepPlan::Step { remaining_distance_km, full_time_needed_secs, time_to_wait_secs, is_end } => {
+                println!("[Travel Debug] Group: {}, Speed: {:.2} km/h, Remaining Time: {}s (Dist: {:.2}km)",
+                         new_move._id, final_speed_kmh, full_time_needed_secs, remaining_distance_km);
+                (time_to_wait_secs, is_end)
+            }
+        };
 
         // met à jour timestamps et speed
+        new_move.is_end = is_end;
         new_move.step_start_timestamp = Some(now);
         new_move.step_end_timestamp = Some(now + time_to_wait_secs);
         new_move.modified_speed = final_speed_kmh;
@@ -550,12 +467,20 @@ pub async fn next_step_logic(actual_move: &TravelGroup) -> Result<TravelGroup, a
 /// Initialise le système de voyage au démarrage du bot.
 /// 
 /// Recharge tous les voyages actifs depuis la base de données et relance les processus.
-#[allow(dead_code)]
+///
+/// Appelé à chaque `ready` Discord, donc aussi après une reconnexion : l'ancien minuteur est
+/// arrêté, un traitement en cours se termine d'abord, et la file est remplacée par la base.
 pub async fn setup(){
+    MOVE_TIMER.stop();
+    let _exclusive = MOVE_TIMER.exclusive().await;
+    // Gardé jusqu'au remplacement de la file : un départ pendant la relecture n'est pas perdu.
+    let mut moves = MOVES.lock().await;
+
     let universes = match crate::database::universe::Universe::get_all_universes().await {
         Ok(u) => u,
         Err(e) => {
             eprintln!("Failed to get universes for travel setup: {:?}", e);
+            MOVE_TIMER.restart(first_move_delay(&moves, Utc::now().timestamp() as u64), move_job());
             return;
         }
     };
@@ -567,11 +492,6 @@ pub async fn setup(){
             Ok(moves) => all_moves.extend(moves),
             Err(e) => eprintln!("Failed to get active moves for universe {}: {:?}", universe.universe_id, e),
         }
-    }
-
-    if all_moves.is_empty() {
-        println!("Travel system initialized: 0 active moves.");
-        return;
     }
 
     let now = Utc::now().timestamp() as u64;
@@ -690,28 +610,13 @@ pub async fn setup(){
         }
     }
 
-    if pending_moves.is_empty() {
-        println!("Travel system initialized: 0 pending moves (all recovered were processed).");
-        return;
-    }
-
     // Tri par step_end_timestamp croissant
     pending_moves.sort_by_key(|m| m.step_end_timestamp.unwrap_or(0));
+    *moves = pending_moves;
 
-    {
-        let mut moves = MOVES.lock().await;
-        *moves = pending_moves;
-
-        // On lance le sleeper pour le premier move
-        if let Some(first) = moves.first() {
-            if let Some(end_ts) = first.step_end_timestamp {
-                let delay = end_ts.saturating_sub(now);
-                let mut sleeper = SLEEPER.lock().await;
-                *sleeper = Some(move_process(delay));
-                println!("Travel system initialized: {} active moves, next in {}s", moves.len(), delay);
-            }
-        }
-    }
+    let delay = first_move_delay(&moves, Utc::now().timestamp() as u64);
+    MOVE_TIMER.restart(delay, move_job());
+    println!("Travel system initialized: {} active moves, next in {:?}s", moves.len(), delay);
 }
 
 /// Ajoute ou retire un rôle Discord à un utilisateur.
@@ -1059,17 +964,131 @@ pub fn get_travel_threshold(modifier: u64) -> f64 {
 
 /// Calcule la distance parcourue réelle (en km) d'un groupe à l'instant T.
 pub fn calculate_current_distance(player_move: &TravelGroup) -> f64 {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    calculate_distance_at(player_move, now)
+}
+
+/// Version pure de [`calculate_current_distance`] : distance parcourue (en km) à l'instant `now`
+/// (timestamp UNIX en secondes).
+///
+/// La distance de l'étape en cours est plafonnée à la fin de l'étape : un groupe ne peut pas
+/// avoir avancé plus que ce que le segment actuel lui permettait.
+pub fn calculate_distance_at(player_move: &TravelGroup, now: u64) -> f64 {
     let start_ts = player_move.step_start_timestamp.unwrap_or(now);
     let end_ts = player_move.step_end_timestamp.unwrap_or(now);
-    
+
     // Si on est déjà après la fin du step, on est censé avoir parcouru toute la distance du step
     let effective_now = now.min(end_ts);
     let elapsed_secs = (effective_now.saturating_sub(start_ts)) as f64;
     let speed_kmh = player_move.modified_speed;
-    
+
     let step_distance = (elapsed_secs / 3600.0) * speed_kmh;
     player_move.distance_traveled + step_distance
+}
+
+/// Distance (en km) parcourue pendant une étape allant de `start_ts` à `end_ts` (secondes UNIX)
+/// à la vitesse `speed_kmh`. Une étape dont la fin précède le début ne fait jamais reculer le groupe.
+pub fn step_distance_km(start_ts: u64, end_ts: u64, speed_kmh: f64) -> f64 {
+    let travel_time_secs = (end_ts as i128 - start_ts as i128) as f64;
+    ((travel_time_secs / 3600.0) * speed_kmh).max(0.0)
+}
+
+/// Retourne le plus petit des deux timestamps présents (`None` si aucun n'est défini).
+///
+/// Sert à retenir le modificateur de vitesse qui expire le plus tôt parmi les membres d'un groupe.
+pub fn earliest_timestamp(current: Option<u64>, candidate: Option<u64>) -> Option<u64> {
+    match (current, candidate) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, None) => a,
+        (None, b) => b,
+    }
+}
+
+/// Résultat du calcul du prochain segment d'un voyage (voir [`plan_step`]).
+#[derive(Debug, Clone, PartialEq)]
+pub enum StepPlan {
+    /// Il ne reste plus aucune distance à parcourir.
+    Arrived,
+    /// Il reste de la distance : prochain segment à parcourir.
+    Step {
+        /// Distance restante jusqu'à la fin de la route, en km.
+        remaining_distance_km: f64,
+        /// Temps nécessaire pour finir la route à la vitesse actuelle, en secondes (arrondi au supérieur).
+        full_time_needed_secs: u64,
+        /// Durée du segment, en secondes : raccourcie si un modificateur de vitesse expire avant l'arrivée.
+        time_to_wait_secs: u64,
+        /// `true` si ce segment mène jusqu'à l'arrivée.
+        is_end: bool,
+    },
+}
+
+/// Calcule le prochain segment d'un voyage, sans accès à la base de données.
+///
+/// - `road_distance_km` : longueur totale de la route.
+/// - `distance_traveled_km` : distance déjà parcourue sur cette route.
+/// - `speed_kmh` : vitesse actuelle du groupe (celle du membre le plus lent).
+/// - `modifier_end_ts` : fin (timestamp absolu) du modificateur de vitesse qui expire le plus tôt, s'il y en a un.
+/// - `now` : instant courant (timestamp UNIX, secondes).
+///
+/// Un modificateur déjà expiré (`modifier_end_ts <= now`) est ignoré. Si le modificateur expire avant
+/// l'arrivée, le segment est raccourci pour recalculer la vitesse à ce moment-là.
+///
+/// # Errors
+/// Erreur si la vitesse n'est pas strictement positive (ou pas un nombre fini).
+pub fn plan_step(
+    road_distance_km: f64,
+    distance_traveled_km: f64,
+    speed_kmh: f64,
+    modifier_end_ts: Option<u64>,
+    now: u64,
+) -> Result<StepPlan, anyhow::Error> {
+    if !speed_kmh.is_finite() || speed_kmh <= 0.0 {
+        bail!("final_speed must be > 0");
+    }
+
+    let remaining_distance_km = (road_distance_km - distance_traveled_km).max(0.0);
+    if remaining_distance_km <= f64::EPSILON {
+        return Ok(StepPlan::Arrived);
+    }
+
+    // remaining_distance_km / speed_kmh => heures ; *3600 => secondes
+    let full_time_needed_secs = ((remaining_distance_km / speed_kmh) * 3600.0).ceil() as u64;
+
+    let mut time_to_wait_secs = full_time_needed_secs;
+    if let Some(mod_end_ts) = modifier_end_ts {
+        // un modificateur qui se termine avant `now` est expiré : pas d'effet
+        if mod_end_ts > now {
+            time_to_wait_secs = time_to_wait_secs.min(mod_end_ts - now);
+        }
+    }
+
+    Ok(StepPlan::Step {
+        remaining_distance_km,
+        full_time_needed_secs,
+        time_to_wait_secs,
+        is_end: time_to_wait_secs >= full_time_needed_secs,
+    })
+}
+
+/// Applique à un groupe l'état d'arrivée à destination (avant sa sauvegarde en base).
+///
+/// Les informations de route/destination ne sont pas effacées ici : voir [`clear_route`].
+fn apply_arrival(group: &mut TravelGroup) {
+    group.actual_space_id = group.destination_id.unwrap_or(group.actual_space_id);
+    group.actual_space_type = SpaceType::Place;
+    group.step_end_timestamp = None;
+    group.step_start_timestamp = None;
+    group.is_in_move = false;
+    group.is_end = false;
+    group.distance_traveled = 0.0; // Reset distance at arrival
+}
+
+/// Efface les informations de route et de destination d'un groupe arrivé.
+fn clear_route(group: &mut TravelGroup) {
+    group.road_id = None;
+    group.road_role_id = None;
+    group.destination_id = None;
+    group.destination_role_id = None;
 }
 
 /// Arrête immédiatement le voyage d'un groupe et met à jour sa position finale.
@@ -1151,4 +1170,269 @@ pub async fn stop_travel(user_id: u64) -> Result<TravelGroup, anyhow::Error> {
     }
 
     Ok(player_move)
+}
+
+#[cfg(test)]
+mod travel_pure_tests {
+    use super::*;
+
+    fn group() -> TravelGroup {
+        TravelGroup::default()
+    }
+
+    fn ending_at(end: Option<u64>) -> TravelGroup {
+        TravelGroup { step_end_timestamp: end, ..TravelGroup::default() }
+    }
+
+    #[test]
+    fn an_empty_queue_needs_no_wake_up() {
+        assert_eq!(first_move_delay(&[], 100), None);
+    }
+
+    #[test]
+    fn a_group_is_not_processed_before_its_step_ends() {
+        // Réveil en avance (ancien minuteur, groupe retiré) : on attend encore 50 s.
+        assert_eq!(first_move_delay(&[ending_at(Some(150)), ending_at(Some(10))], 100), Some(50));
+    }
+
+    #[test]
+    fn a_group_is_due_at_or_after_its_step_end() {
+        assert_eq!(first_move_delay(&[ending_at(Some(100))], 100), Some(0));
+        assert_eq!(first_move_delay(&[ending_at(Some(40))], 100), Some(0));
+    }
+
+    #[test]
+    fn a_group_without_step_end_is_due() {
+        assert_eq!(first_move_delay(&[ending_at(None)], 100), Some(0));
+    }
+
+    #[test]
+    fn threshold_grows_with_the_time_modifier() {
+        assert_eq!(get_travel_threshold(0), 100.0);
+        assert_eq!(get_travel_threshold(100), 110.0);
+        assert_eq!(get_travel_threshold(1000), 200.0);
+    }
+
+    #[test]
+    fn step_distance_is_speed_times_duration() {
+        assert_eq!(step_distance_km(0, 3600, 5.0), 5.0);
+        assert_eq!(step_distance_km(1000, 2800, 10.0), 5.0);
+        assert_eq!(step_distance_km(500, 500, 12.0), 0.0);
+    }
+
+    #[test]
+    fn step_distance_never_goes_backwards() {
+        assert_eq!(step_distance_km(5000, 1000, 10.0), 0.0);
+    }
+
+    #[test]
+    fn earliest_timestamp_keeps_the_smallest_defined_value() {
+        assert_eq!(earliest_timestamp(None, None), None);
+        assert_eq!(earliest_timestamp(Some(5), None), Some(5));
+        assert_eq!(earliest_timestamp(None, Some(7)), Some(7));
+        assert_eq!(earliest_timestamp(Some(9), Some(4)), Some(4));
+        assert_eq!(earliest_timestamp(Some(4), Some(9)), Some(4));
+    }
+
+    #[test]
+    fn plan_step_rejects_invalid_speeds() {
+        assert!(plan_step(10.0, 0.0, 0.0, None, 0).is_err());
+        assert!(plan_step(10.0, 0.0, -3.0, None, 0).is_err());
+        assert!(plan_step(10.0, 0.0, f64::NAN, None, 0).is_err());
+        assert!(plan_step(10.0, 0.0, f64::INFINITY, None, 0).is_err());
+    }
+
+    #[test]
+    fn plan_step_detects_arrival() {
+        assert_eq!(plan_step(10.0, 10.0, 5.0, None, 0).unwrap(), StepPlan::Arrived);
+        // dépassement de la distance (arrondis) : toujours "arrivé", jamais de distance négative
+        assert_eq!(plan_step(10.0, 10.4, 5.0, None, 0).unwrap(), StepPlan::Arrived);
+    }
+
+    #[test]
+    fn plan_step_without_modifier_goes_to_the_end() {
+        // 10 km à 5 km/h = 2 h
+        assert_eq!(
+            plan_step(10.0, 0.0, 5.0, None, 1_000).unwrap(),
+            StepPlan::Step { remaining_distance_km: 10.0, full_time_needed_secs: 7200, time_to_wait_secs: 7200, is_end: true }
+        );
+    }
+
+    #[test]
+    fn plan_step_only_counts_the_remaining_distance() {
+        // 10 km de route, 5 déjà faits, 5 km/h => 1 h
+        assert_eq!(
+            plan_step(10.0, 5.0, 5.0, None, 0).unwrap(),
+            StepPlan::Step { remaining_distance_km: 5.0, full_time_needed_secs: 3600, time_to_wait_secs: 3600, is_end: true }
+        );
+    }
+
+    #[test]
+    fn plan_step_rounds_the_remaining_time_up() {
+        // 1 km à 7 km/h = 514,28... s => 515 s
+        match plan_step(1.0, 0.0, 7.0, None, 0).unwrap() {
+            StepPlan::Step { full_time_needed_secs, .. } => assert_eq!(full_time_needed_secs, 515),
+            other => panic!("unexpected plan: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plan_step_is_cut_short_by_a_modifier_ending_before_arrival() {
+        // il reste 7200 s mais le modificateur expire dans 600 s : on recalcule à ce moment-là
+        assert_eq!(
+            plan_step(10.0, 0.0, 5.0, Some(1_600), 1_000).unwrap(),
+            StepPlan::Step { remaining_distance_km: 10.0, full_time_needed_secs: 7200, time_to_wait_secs: 600, is_end: false }
+        );
+    }
+
+    #[test]
+    fn plan_step_ignores_expired_modifiers() {
+        for end_ts in [500, 1_000] {
+            match plan_step(10.0, 0.0, 5.0, Some(end_ts), 1_000).unwrap() {
+                StepPlan::Step { time_to_wait_secs, is_end, .. } => {
+                    assert_eq!(time_to_wait_secs, 7200);
+                    assert!(is_end);
+                }
+                other => panic!("unexpected plan: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn plan_step_ignores_modifiers_ending_after_arrival() {
+        match plan_step(10.0, 0.0, 5.0, Some(1_000 + 99_999), 1_000).unwrap() {
+            StepPlan::Step { time_to_wait_secs, is_end, .. } => {
+                assert_eq!(time_to_wait_secs, 7200);
+                assert!(is_end);
+            }
+            other => panic!("unexpected plan: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plan_step_modifier_ending_exactly_at_arrival_finishes_the_trip() {
+        match plan_step(10.0, 0.0, 5.0, Some(1_000 + 7_200), 1_000).unwrap() {
+            StepPlan::Step { time_to_wait_secs, is_end, .. } => {
+                assert_eq!(time_to_wait_secs, 7200);
+                assert!(is_end);
+            }
+            other => panic!("unexpected plan: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_trip_with_a_speed_change_ends_with_the_right_total_time() {
+        // Route de 20 km. Premier segment : 10 km/h, un modificateur expire au bout d'1 h.
+        let road_km = 20.0;
+        let mut traveled = 0.0;
+        let mut now = 0u64;
+
+        let first = plan_step(road_km, traveled, 10.0, Some(3_600), now).unwrap();
+        let StepPlan::Step { time_to_wait_secs, is_end, .. } = first else { panic!("expected a step") };
+        assert_eq!(time_to_wait_secs, 3_600);
+        assert!(!is_end);
+        traveled += step_distance_km(now, now + time_to_wait_secs, 10.0);
+        now += time_to_wait_secs;
+        assert_eq!(traveled, 10.0);
+
+        // Deuxième segment : plus de modificateur, la vitesse tombe à 5 km/h => 10 km restants = 2 h
+        let second = plan_step(road_km, traveled, 5.0, None, now).unwrap();
+        let StepPlan::Step { time_to_wait_secs, is_end, .. } = second else { panic!("expected a step") };
+        assert_eq!(time_to_wait_secs, 7_200);
+        assert!(is_end);
+        traveled += step_distance_km(now, now + time_to_wait_secs, 5.0);
+        now += time_to_wait_secs;
+
+        assert_eq!(now, 10_800); // 3 h au total
+        assert_eq!(plan_step(road_km, traveled, 5.0, None, now).unwrap(), StepPlan::Arrived);
+    }
+
+    #[test]
+    fn current_distance_is_interpolated_inside_the_step() {
+        let mut g = group();
+        g.distance_traveled = 2.0;
+        g.modified_speed = 4.0;
+        g.step_start_timestamp = Some(1_000);
+        g.step_end_timestamp = Some(1_000 + 3_600);
+
+        assert_eq!(calculate_distance_at(&g, 1_000), 2.0);
+        assert_eq!(calculate_distance_at(&g, 1_000 + 1_800), 4.0);
+    }
+
+    #[test]
+    fn current_distance_is_capped_at_the_end_of_the_step() {
+        let mut g = group();
+        g.distance_traveled = 2.0;
+        g.modified_speed = 4.0;
+        g.step_start_timestamp = Some(1_000);
+        g.step_end_timestamp = Some(1_000 + 3_600);
+
+        assert_eq!(calculate_distance_at(&g, 1_000 + 7_200), 6.0);
+    }
+
+    #[test]
+    fn current_distance_without_a_running_step_is_the_stored_distance() {
+        let mut g = group();
+        g.distance_traveled = 3.5;
+        g.modified_speed = 10.0;
+        assert_eq!(calculate_distance_at(&g, 50_000), 3.5);
+    }
+
+    #[test]
+    fn current_distance_before_the_step_starts_does_not_go_backwards() {
+        let mut g = group();
+        g.distance_traveled = 1.0;
+        g.modified_speed = 10.0;
+        g.step_start_timestamp = Some(2_000);
+        g.step_end_timestamp = Some(5_000);
+        assert_eq!(calculate_distance_at(&g, 1_000), 1.0);
+    }
+
+    #[test]
+    fn arrival_moves_the_group_to_its_destination_and_resets_the_trip() {
+        let mut g = group();
+        g.actual_space_id = 1;
+        g.actual_space_type = SpaceType::Road;
+        g.destination_id = Some(42);
+        g.is_in_move = true;
+        g.is_end = true;
+        g.step_start_timestamp = Some(10);
+        g.step_end_timestamp = Some(20);
+        g.distance_traveled = 19.7;
+
+        apply_arrival(&mut g);
+
+        assert_eq!(g.actual_space_id, 42);
+        assert_eq!(g.actual_space_type, SpaceType::Place);
+        assert!(!g.is_in_move);
+        assert!(!g.is_end);
+        assert_eq!(g.step_start_timestamp, None);
+        assert_eq!(g.step_end_timestamp, None);
+        assert_eq!(g.distance_traveled, 0.0);
+    }
+
+    #[test]
+    fn arrival_without_destination_keeps_the_current_space() {
+        let mut g = group();
+        g.actual_space_id = 7;
+        g.destination_id = None;
+        apply_arrival(&mut g);
+        assert_eq!(g.actual_space_id, 7);
+    }
+
+    #[test]
+    fn clearing_the_route_keeps_the_server_ids() {
+        let mut g = group();
+        g.road_id = Some(1);
+        g.road_role_id = Some(2);
+        g.destination_id = Some(3);
+        g.destination_role_id = Some(4);
+        g.road_server_id = Some(5);
+        g.destination_server_id = Some(6);
+
+        clear_route(&mut g);
+
+        assert_eq!((g.road_id, g.road_role_id, g.destination_id, g.destination_role_id), (None, None, None, None));
+        assert_eq!((g.road_server_id, g.destination_server_id), (Some(5), Some(6)));
+    }
 }

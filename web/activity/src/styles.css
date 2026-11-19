@@ -1,0 +1,177 @@
+/*
+ * Direction artistique alignée sur le client Discord (thème sombre) : mêmes couleurs, mêmes
+ * composants (profil, pastilles de rôle, embeds, boutons). La carte a ses propres couleurs.
+ * Police : « gg sans » est celle de Discord mais elle n'est pas redistribuable ; on la nomme
+ * en premier au cas où elle serait installée, puis des équivalents libres ou système.
+ */
+:root {
+  --bg-tertiary: #1e1f22;      /* barre des serveurs, séparateurs */
+  --bg-secondary: #2b2d31;     /* barres latérales */
+  --bg-primary: #313338;       /* zone principale */
+  --bg-floating: #111214;      /* fenêtres flottantes, profils */
+  --bg-card: #232428;          /* cartes dans un profil */
+  --bg-hover: rgb(78 80 88 / .3);
+  --text-normal: #dbdee1;
+  --header-primary: #f2f3f5;
+  --header-secondary: #b5bac1;
+  --text-muted: #949ba4;
+  --brand: #5865f2;
+  --brand-hover: #4752c4;
+  --secondary: #4e5058;
+  --secondary-hover: #6d6f78;
+  --danger: #da373c;
+  --danger-hover: #a12828;
+  --green: #23a55a;
+  --yellow: #f0b232;
+  --red: #f23f43;
+  --divider: rgb(78 80 88 / .48);
+  --radius: 8px;
+  color-scheme: dark;
+  font-family: "gg sans", "Noto Sans", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.375;
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; background: var(--bg-primary); color: var(--text-normal); }
+.center { height: 100%; display: grid; place-content: center; gap: 12px; text-align: center; padding: 16px; color: var(--header-secondary); }
+.muted { color: var(--text-muted); }
+
+/* ---------- Boutons (Discord) ---------- */
+button {
+  font: inherit; font-size: 14px; font-weight: 500; line-height: 16px;
+  min-height: 32px; padding: 2px 16px; border: 0; border-radius: 4px;
+  background: var(--brand); color: #fff; cursor: pointer;
+  transition: background-color .17s ease, color .17s ease;
+}
+button:hover { background: var(--brand-hover); }
+button:focus-visible { outline: 2px solid #00a8fc; outline-offset: 2px; }
+button:disabled, button:disabled:hover { opacity: .5; cursor: not-allowed; background: var(--brand); }
+button.secondary { background: var(--secondary); }
+button.secondary:hover { background: var(--secondary-hover); }
+button.secondary:disabled { background: var(--secondary); }
+button.danger { background: var(--danger); }
+button.danger:hover { background: var(--danger-hover); }
+button.small { min-height: 28px; padding: 2px 12px; }
+.icon-button {
+  display: inline-grid; place-items: center; width: 32px; height: 32px; min-height: 0; padding: 0;
+  border-radius: 4px; background: transparent; color: var(--header-secondary);
+}
+.icon-button:hover { background: var(--bg-hover); color: var(--text-normal); }
+.icon-button.active { color: var(--yellow); background: rgb(240 178 50 / .14); }
+
+/* ---------- Mise en page ---------- */
+.layout { display: grid; grid-template-columns: minmax(260px, 320px) 1fr; height: 100%; }
+.map-area { position: relative; display: flex; flex-direction: column; min-width: 0; background: var(--bg-primary); }
+
+/* ---------- Fiche du personnage : profil Discord ---------- */
+.side-panel { background: var(--bg-secondary); overflow-y: auto; display: flex; flex-direction: column; }
+.profile { margin: 12px; border-radius: var(--radius); background: var(--bg-floating); overflow: hidden; flex: none; }
+.profile-banner { height: 60px; background: linear-gradient(135deg, #5865f2, #3c45a5); }
+.identity { position: relative; display: flex; align-items: flex-end; gap: 12px; padding: 0 16px; margin-top: -36px; }
+.portrait { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; flex: none; border: 6px solid var(--bg-floating); background: var(--bg-floating); }
+.portrait.placeholder { background: var(--secondary); }
+.identity h1 { font-size: 20px; line-height: 24px; font-weight: 700; color: var(--header-primary); margin: 0 0 8px; overflow-wrap: anywhere; }
+.profile-body { margin: 12px; padding: 12px; border-radius: var(--radius); background: var(--bg-card); display: grid; gap: 12px; }
+.profile-body section + section { border-top: 1px solid var(--divider); padding-top: 12px; }
+section h2, .dialog h3 {
+  font-size: 12px; line-height: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
+  color: var(--header-secondary); margin: 0 0 6px;
+}
+section p { margin: 0; font-size: 14px; line-height: 18px; }
+.description { white-space: pre-wrap; }
+.countdown { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--header-primary); }
+/* Effets actifs : pastilles comme les rôles Discord. */
+.statuses { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.statuses li {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 4px;
+  background: var(--bg-secondary); font-size: 12px; line-height: 16px; font-weight: 500; color: var(--text-normal);
+}
+.statuses li::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--green); flex: none; }
+.statuses li.negative::before { background: var(--red); }
+.statuses strong { font-weight: 600; color: var(--header-primary); }
+.statuses li .muted { white-space: nowrap; }
+.actions { margin: auto 12px 12px; display: grid; gap: 8px; }
+.actions button { min-height: 38px; }
+
+/* ---------- Barre du haut : en-tête de salon ---------- */
+.toolbar {
+  display: flex; align-items: center; gap: 8px; padding: 0 8px 0 16px; min-height: 48px;
+  background: var(--bg-primary); box-shadow: 0 1px 0 rgb(2 2 2 / .2), 0 1.5px 0 rgb(6 6 7 / .05), 0 2px 0 rgb(2 2 2 / .05);
+  position: relative; z-index: 1;
+}
+.universe-name { font-size: 16px; font-weight: 600; color: var(--header-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toolbar-right { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.universe-clock {
+  display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; height: 32px; border-radius: 4px;
+  background: var(--bg-tertiary); color: var(--header-secondary); font-size: 14px; font-variant-numeric: tabular-nums;
+}
+.universe-clock .time { font-weight: 600; color: var(--header-primary); }
+.admin-badge {
+  font-size: 12px; font-weight: 700; line-height: 16px; text-transform: uppercase; color: #1e1f22;
+  background: var(--yellow); border-radius: 4px; padding: 2px 6px; white-space: nowrap;
+}
+
+/* ---------- Fenêtre (paramètres) : modale Discord ---------- */
+.dialog-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / .7); display: grid; place-items: center; padding: 16px; z-index: 10; }
+.dialog {
+  width: min(440px, 100%); background: var(--bg-primary); border-radius: var(--radius); padding: 16px;
+  display: grid; gap: 16px; box-shadow: 0 8px 16px rgb(0 0 0 / .24);
+}
+.dialog header { display: flex; align-items: center; justify-content: space-between; }
+.dialog h2 { margin: 0; font-size: 20px; line-height: 24px; font-weight: 700; color: var(--header-primary); }
+.dialog section { display: grid; gap: 8px; justify-items: start; }
+.dialog section p { font-size: 14px; }
+
+/* ---------- Carte ---------- */
+.map-placeholder { flex: 1; display: grid; place-content: center; color: var(--text-muted); }
+.map-view { position: relative; flex: 1; min-height: 0; }
+.map-view canvas, .map-2d { position: absolute; inset: 0; width: 100%; height: 100%; }
+.map-2d { touch-action: none; cursor: grab; background: #16324f; user-select: none; }
+.map-2d:active { cursor: grabbing; }
+.map-2d.with-background { background: var(--bg-tertiary); }
+.map-label { fill: #f2f3f5; font-weight: 600; pointer-events: none; }
+.map-place { cursor: pointer; }
+.map-pin, .map-progress { pointer-events: none; }
+
+/* ---------- Panneau de voyage : embed Discord ---------- */
+.travel-panel {
+  position: absolute; right: 16px; bottom: 16px; width: min(360px, calc(100% - 32px)); max-height: 60%; overflow-y: auto;
+  background: var(--bg-secondary); border-left: 4px solid var(--brand); border-radius: 4px; padding: 12px 16px;
+  display: grid; gap: 10px; box-shadow: 0 8px 16px rgb(0 0 0 / .24); font-size: 14px; line-height: 18px;
+}
+.travel-panel h2 { margin: 0; }
+.travel-panel .eta { margin: 0; color: var(--text-normal); }
+.destinations { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.destinations li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px; margin: 0 -8px; border-radius: 4px; }
+.destinations li:hover { background: var(--bg-hover); }
+.destinations li.selected { background: rgb(88 101 242 / .16); }
+.destinations .name { color: var(--header-primary); font-weight: 500; }
+.travel-panel .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.travel-message { margin: 0; padding: 8px 10px; border-radius: 4px; background: var(--bg-tertiary); color: var(--text-normal); }
+
+/* ---------- Téléphone : fiche qui se déroule depuis le haut ---------- */
+.layout.phone { grid-template-columns: 1fr; }
+.character-button {
+  width: 32px; height: 32px; min-height: 0; padding: 0; border-radius: 50%; overflow: hidden; flex: none;
+  background: var(--secondary); display: grid; place-items: center; box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--brand);
+}
+.character-button img { width: 100%; height: 100%; object-fit: cover; }
+.toolbar { touch-action: pan-x; }
+.sheet {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 20; max-height: 88vh; display: flex; flex-direction: column;
+  background: var(--bg-secondary); border-radius: 0 0 12px 12px; box-shadow: 0 8px 24px rgb(0 0 0 / .45);
+  transform: translateY(-105%); transition: transform .25s ease; visibility: hidden;
+}
+.sheet.open { transform: none; visibility: visible; }
+.sheet .side-panel { overflow-y: auto; flex: 1; min-height: 0; }
+.sheet-handle { min-height: 0; height: 28px; padding: 0; border-radius: 0 0 12px 12px; background: transparent; display: grid; place-items: center; touch-action: none; }
+.sheet-handle:hover { background: var(--bg-hover); }
+.sheet-handle span { width: 40px; height: 5px; border-radius: 3px; background: var(--secondary-hover); }
+.sheet-backdrop { position: fixed; inset: 0; z-index: 19; background: rgb(0 0 0 / .5); }
+@media (max-width: 640px) {
+  .travel-panel { left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 45%; }
+  .universe-clock { padding: 0 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

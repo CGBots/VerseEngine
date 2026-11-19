@@ -13,3 +13,5 @@ pub static PLACED_ITEMS_COLLECTION_NAME: &str = "placed_items";
 pub static LOOT_TABLES_COLLECTION_NAME: &str = "loot_tables";
 pub static INVENTORY_COLLECTION_NAME: &str = "inventory";
 pub static AREAS_COLLECTION_NAME: &str = "areas";
+pub static KNOWN_ROADS_COLLECTION_NAME: &str = "known_roads";
+pub static UNIVERSE_MAPS_COLLECTION_NAME: &str = "universe_maps";

@@ -125,7 +125,8 @@ pub async fn connect_bot() -> Result<Client, ()>{
         })
         .setup(|ctx, _ready, framework| {
             Box::pin(async move {
-                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                // Conserve la commande « Launch » de l'activité (voir commands_registration).
+                crate::discord::commands_registration::register_globally(&ctx.http, &framework.options().commands).await?;
                 Ok(Data {translations})
             })
         })
@@ -180,6 +181,9 @@ pub async fn connect_bot() -> Result<Client, ()>{
             *http_client = Some(client.http.clone());
         }
 
+        // API de l'activité Discord (no-op si ACTIVITY_ENABLED n'est pas défini).
+        crate::activity::spawn(client.http.clone());
+
         if let Err(why) = client.start_shards(SHARD_NUMBER).await {
             println!("Client error: {why:?}");
         }
@@ -192,6 +196,7 @@ mod test {
     use crate::discord::connect_bot::{connect_bot, TEST_PASSED};
 
     #[tokio::test]
+    #[ignore = "integration test: needs DISCORD_TOKEN and MongoDB; run with --ignored"]
     async fn test_discord_bot_connection(){
         let _ = connect_bot().await;
         assert_eq!(TEST_PASSED.try_lock().unwrap().pop_front().unwrap(), true);
