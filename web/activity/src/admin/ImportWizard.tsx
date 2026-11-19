@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, importApi, uploadMapFile, type ImportPlan, type JobState, type PlanResponse, type RemovalInfo, type ServerList, type UploadedMap } from '../api';
 import { openExternal } from '../discord';
 import type { Translator } from '../i18n';
+import { GenerateEditor } from './GenerateEditor';
 import { ImportPreview } from './ImportPreview';
 import {
   blocker, estimatedMinutes, initialChoices, missingServers, nameConfirmed, optionsForSlot, percent, planRequest, removalChoices, serverColor, setSlot, slotCount, summary,
@@ -24,7 +25,7 @@ const PHASE_LABEL = {
   RollbackIncomplete: 'activity_ui__import_phase_rollback_incomplete_phase',
 } as const;
 
-type Step = 'intro' | 'upload' | 'options' | 'confirm' | 'running' | 'finished';
+type Step = 'intro' | 'upload' | 'generate' | 'options' | 'confirm' | 'running' | 'finished';
 
 interface Props {
   t: Translator;
@@ -151,7 +152,7 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
       {step === 'intro' && (
         <div className="import-choices">
           <button type="button" onClick={() => setStep('upload')}>{t('activity_ui__import_map')}</button>
-          <button type="button" className="secondary" disabled title={t('activity_ui__soon')}>{t('activity_ui__generate_map')}</button>
+          <button type="button" className="secondary" onClick={() => setStep('generate')}>{t('activity_ui__generate_map')}</button>
         </div>
       )}
 
@@ -174,11 +175,24 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
         </div>
       )}
 
+      {step === 'generate' && (
+        <GenerateEditor
+          t={t}
+          onBack={() => setStep('intro')}
+          onReady={(generated) => {
+            setMap(generated);
+            setChoices(initialChoices(generated));
+            setPlan(null);
+            setStep('options');
+          }}
+        />
+      )}
+
       {step === 'options' && map && choices && (
         <div className="import-options">
           <ImportPreview map={map} plan={p} secret={choices.secret} onToggleSecret={(a, b) => update((c) => ({ ...c, secret: toggleSecret(c.secret, a, b) }))} t={t} />
           <aside className="import-settings">
-            <p className="muted">{t('activity_ui__import_map_info', { name: map.name ?? '—', burgs: map.burgs.length })}</p>
+            <p className="muted">{t('activity_ui__import_map_info', { name: map.generated ? t('activity_ui__generate_map_name') : map.name ?? '—', burgs: map.burgs.length })}</p>
             {map.has_universe && (
               <fieldset>
                 <legend>{t('activity_ui__import_mode')}</legend>
@@ -260,7 +274,7 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
             {p && removal && <RemovalSection plan={p} removal={removal} choices={choices} update={update} t={t} />}
             {p && <PlanSummary plan={plan!} t={t} />}
             <div className="import-nav">
-              <button type="button" className="secondary" onClick={() => setStep('upload')}>{t('activity_ui__back')}</button>
+              <button type="button" className="secondary" onClick={() => setStep(map.generated ? 'generate' : 'upload')}>{t('activity_ui__back')}</button>
               <button type="button" disabled={planning || !!blockKey} title={blockKey ? t(blockKey) : undefined} onClick={() => setStep('confirm')}>
                 {planning ? t('activity_ui__loading') : t('activity_ui__import_next')}
               </button>

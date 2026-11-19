@@ -218,4 +218,11 @@ select, input[type="text"], input:not([type]), input[type="number"] {
   .import-preview { height: 55vh; position: static; }
 }
 .import-progress button, .import-confirm .import-nav button { justify-self: start; }
-label:has(> input[type="checkbox"]) { flex-wrap: nowrap; align-items: flex-start; }
+label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { flex-wrap: nowrap; align-items: flex-start; }
+.generate-canvas { min-height: 360px; height: min(72vh, 720px); border-radius: var(--radius); overflow: hidden; background: var(--bg-tertiary); }
+.generate-canvas .import-preview { height: 100%; position: static; }
+.generate-add_place { cursor: crosshair; }
+.generate-delete .map-place, .generate-delete .preview-road { cursor: not-allowed; }
+.road-handle { fill: #f0b232; stroke: #111214; stroke-width: 2; cursor: move; }
+@media (max-width: 700px) { .generate-canvas { height: 55vh; } }
+.import-preview text, .import-preview .map-label { user-select: none; -webkit-user-select: none; }

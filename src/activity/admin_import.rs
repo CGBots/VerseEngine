@@ -608,6 +608,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("upload.json"), upload.to_string()).unwrap();
         std::fs::write(dir.join("plan.json"), plan.to_string()).unwrap();
+        // Carte générée (E7), pour l'éditeur.
+        std::fs::write(dir.join("generated.json"), serde_json::to_string(&crate::activity::map::generate::generate(4242, 40)).unwrap()).unwrap();
     }
 
     /// Bout en bout à travers le routeur, contre MongoDB, avec un faux Discord.

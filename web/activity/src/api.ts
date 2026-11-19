@@ -162,6 +162,18 @@ export interface UploadedMap {
   terrain: { cols: number; rows: number; heights: number[] } | null;
   suggestions: { place_id: string; place_name: string; status: 'exact' | 'ambiguous' | 'partial' | 'none'; burgs: number[] }[];
   has_universe: boolean;
+  /** Carte générée par l'activité (« Générer une map »). */
+  generated?: boolean;
+}
+
+/** Carte générée (E7) : mêmes champs que côté serveur (`activity/map/generate.rs`). */
+export interface GeneratedMap {
+  seed: number;
+  width: number;
+  height: number;
+  km_per_unit: number;
+  places: { id: number; name: string; x: number; y: number; capital: boolean }[];
+  roads: { a: number; b: number; control: [number, number] }[];
 }
 
 export type PlaceAction = { kind: 'create' } | { kind: 'keep'; category_id: string } | { kind: 'attach'; category_id: string };
@@ -238,6 +250,9 @@ export async function uploadMapFile(bytes: ArrayBuffer): Promise<UploadedMap> {
 }
 
 export const importApi = {
+  generate: (seed: number | null, count: number) =>
+    api<GeneratedMap>('/admin/import/generate', { method: 'POST', body: JSON.stringify(seed === null ? { count } : { seed, count }) }),
+  useGenerated: (map: GeneratedMap) => api<UploadedMap>('/admin/import/generated', { method: 'POST', body: JSON.stringify(map) }),
   servers: () => api<ServerList>('/admin/import/servers'),
   plan: (req: PlanRequest) => api<PlanResponse>('/admin/import/plan', { method: 'POST', body: JSON.stringify(req) }),
   execute: (req: ExecuteRequest) => api<{ job_id: string; total: number }>('/admin/import/execute', { method: 'POST', body: JSON.stringify(req) }),

@@ -81,7 +81,7 @@ export function ImportPreview({ map, plan, secret, onToggleSecret, t }: Props) {
       }}
       onPointerUp={() => (drag.current = null)}
     >
-      <rect x={0} y={0} width={map.width} height={map.height} fill="#14324a" />
+      <rect x={0} y={0} width={map.width} height={map.height} fill={map.generated ? '#2f4a33' : '#14324a'} />
       {terrain && <image href={terrain} x={0} y={0} width={map.width} height={map.height} preserveAspectRatio="none" />}
       {plan?.roads.map((r) => {
         const k = roadKey(r.burg_a, r.burg_b);
