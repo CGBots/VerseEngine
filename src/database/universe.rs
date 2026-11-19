@@ -23,7 +23,17 @@ use crate::discord::poise_structs::Error;
 
 pub static FREE_LIMIT_UNIVERSE: usize = 2;
 
-pub static FREE_LIMIT_SERVERS_PER_UNIVERSE: usize = 2;
+/// Nombre maximal de serveurs par univers. `None` : pas de limite.
+///
+/// Supprimée le 19/11/2026 (la répartition d'une carte importée peut demander beaucoup de
+/// serveurs, 60 lieux au plus par serveur). **À réintroduire plus tard comme fonctionnalité
+/// premium**, dans le dépôt privé : c'était 2 serveurs par univers.
+pub static MAX_SERVERS_PER_UNIVERSE: Option<usize> = None;
+
+/// Vrai si un univers qui a déjà `count` serveurs peut en recevoir un de plus.
+pub fn within_server_limit(count: u64, limit: Option<usize>) -> bool {
+    limit.is_none_or(|max| count < max as u64)
+}
 
 /// Represents a Universe entity with associated metadata.
 ///
@@ -520,7 +530,7 @@ impl Universe {
     ///   `SERVER_COLLECTION_NAME`.
     ///
     /// # Notes
-    /// - The limit for the number of servers per universe is defined by the constant `FREE_LIMIT_UNIVERSE`.
+    /// - The limit for the number of servers per universe is [`MAX_SERVERS_PER_UNIVERSE`] (none for now).
     /// - This function clones the database client for use in querying.
     ///
     /// # Example
@@ -540,6 +550,9 @@ impl Universe {
     /// }
     /// ```
     pub async fn check_server_limit(self) -> Result<bool, &'static str> {
+        if MAX_SERVERS_PER_UNIVERSE.is_none() {
+            return Ok(true);
+        }
         let db_client = get_db_client().await;
         let filter = doc!{"universe_id": self.universe_id};
         let servers_result_request = db_client
@@ -550,7 +563,7 @@ impl Universe {
 
         match servers_result_request {
             Ok(server_count) => {
-                Ok(server_count < FREE_LIMIT_SERVERS_PER_UNIVERSE as u64)
+                Ok(within_server_limit(server_count, MAX_SERVERS_PER_UNIVERSE))
             }
             Err(e) => { println!("{:?}", e); return Err("universe__check_server_limit_failed".into()) }
         }
@@ -760,6 +773,14 @@ mod test {
     //! Tests d'intégration : ils écrivent dans le MongoDB désigné par `MONGODB_*`.
     //! Chaque test utilise des identifiants aléatoires et nettoie ce qu'il crée : ils peuvent
     //! tourner en parallèle et sur une base qui contient déjà des données.
+
+    #[test]
+    fn there_is_no_server_limit_for_now() {
+        assert_eq!(super::MAX_SERVERS_PER_UNIVERSE, None);
+        assert!(super::within_server_limit(1_000, None));
+        assert!(super::within_server_limit(1, Some(2)));
+        assert!(!super::within_server_limit(2, Some(2)));
+    }
     use crate::database::db_client::get_db_client;
     use crate::database::db_namespace::{SERVERS_COLLECTION_NAME, UNIVERSES_COLLECTION_NAME, VERSEENGINE_DB_NAME};
     use crate::database::server::Server;

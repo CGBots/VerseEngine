@@ -54,7 +54,7 @@ PR #12 (`feature/discord-activity`) :
 
 ## Import et génération de carte (branche `feature/map-import`, en cours)
 - Vérifications du § 6 faites, résultats dans `IMPORT_SPEC.md` § 7 : quota de 250 créations de rôles par serveur (≈ 6 h), 2 000 pour les salons, permission individuelle testée (204 ; non-membre 10009 ; retrait idempotent), algorithme de répartition retenu. Azgaar dans l'iframe : non vérifiable depuis le cloud, on livre d'abord le repli.
-- Découpage E1–E9 validé (`IMPORT_SPEC.md` § 8, décisions Q6–Q8 au § 9). **E1 livrée** (routes sans rôle, migration, `IMPORT_SPEC.md` § 10). **E2 livrée** (exécuteur de création avec journal et retour en arrière, services lieu, route, univers et installation de serveur, partagés avec les commandes slash, `IMPORT_SPEC.md` § 11). Prochaine étape : **E3, plan d'import**. Point ouvert : limite de 2 serveurs par univers.
+- Découpage E1–E9 validé (`IMPORT_SPEC.md` § 8, décisions Q6–Q8 au § 9). **E1 livrée** (routes sans rôle, migration, `IMPORT_SPEC.md` § 10). **E2 livrée** (exécuteur de création avec journal et retour en arrière, services lieu, route, univers et installation de serveur, partagés avec les commandes slash, `IMPORT_SPEC.md` § 11). Prochaine étape : **E3, plan d'import**. Limite de serveurs par univers supprimée (Q10), **à réintroduire plus tard comme fonctionnalité premium**.
 - Fichiers Moria redéposés : les deux tests réels passent. 60 lieux au plus par serveur (Q9).
 - `cargo test --locked` : 221 réussis ; intégration (`--ignored --skip test_discord_bot_connection --test-threads=1`, avec `AZGAAR_MAP_FILE` et `AZGAAR_FULL_JSON`) : 27 réussis, sur les deux serveurs de test. `--test-threads=1` : les tests d'installation utilisent le même serveur Discord ; `npm test` : 39 réussis.
 
@@ -62,6 +62,7 @@ PR #12 (`feature/discord-activity`) :
 Cahier des charges complet et validé : **`docs/activity/IMPORT_SPEC.md`** (décisions I1–I17, Q1–Q5). À traiter dans une session dédiée. Points marquants : répartition de l'univers sur plusieurs serveurs (150 lieux au plus par serveur, création des serveurs par l'admin), plus de rôle par route (permissions individuelles), brouillard optionnel par univers, double vérification par le nom de l'univers, retour en arrière complet en cas d'erreur.
 
 ## Points ouverts
+- **Premium (plus tard, dépôt privé)** : réintroduire une limite de serveurs par univers (`MAX_SERVERS_PER_UNIVERSE`, `database/universe.rs`), supprimée le 19/11/2026 (Q10).
 - Déploiement : option 2 choisie (redirection d'un port vers le bot, HTTPS servi par le bot). À valider d'abord : Discord accepte-t-il un port dans le mapping (`activity.home.knifetail.eu:8484` s'enregistre ; le chargement réel n'est pas encore testé). Puis certificat par validation DNS (hébergeur DNS à connaître) et HTTPS dans le bot.
 - Mise en page téléphone : la fiche prend le haut de l'écran et le panneau de voyage couvre la carte. À revoir (onglets ou panneau à tirer, choix à faire).
 

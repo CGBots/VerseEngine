@@ -129,6 +129,7 @@ Chaque étape est testée, poussée sur `feature/map-import`, et met à jour `PR
 | Q6 | Découpage | Ordre E1 → E9 validé. |
 | Q7 | Anciens rôles de route | La migration **supprime** chaque rôle de route une fois les permissions individuelles posées. |
 | Q8 | Quota de 250 créations de rôles | **Temporiser** la création pour l'étaler, plutôt qu'annuler. Selon l'utilisateur, atteindre 250 créations revient de toute façon à atteindre la limite dure de 250 rôles présents. Nuance retenue pour la mise en œuvre : le quota compte aussi les rôles créés puis supprimés (retour en arrière, nouvel essai). L'exécuteur espace donc les créations de rôles, ne recrée jamais un rôle existant (I10), et affiche l'attente dans la barre de progression quand Discord en impose une. |
+| Q10 | Serveurs par univers | Plus de limite pour l'instant ; elle reviendra comme fonctionnalité premium (§ 11). |
 | Q9 | Lieux par serveur | **60 au plus** (au lieu de 150). Raison donnée par l'utilisateur : avec 2,5 routes par lieu en moyenne, 60 lieux + 150 extrémités de routes restent sous 250. Mesuré sur Moria (`a_real_map_save_is_read`) : 656 routes terrestres pour 532 bourgs desservis, soit **2,47 routes par bourg** (2,97 avec les routes maritimes). Budget d'un serveur de 60 lieux : 64 rôles, environ 9 + 120 + 75 à 100 routes ≈ 210 à 230 salons. Le quota de 250 créations de rôles permet ainsi plusieurs essais. Moria entière (538 bourgs) demanderait 9 serveurs. |
 
 ## 10. E1 livrée : routes sans rôle (19/11/2026)
@@ -156,5 +157,5 @@ Chaque étape est testée, poussée sur `feature/map-import`, et met à jour `PR
 - Tests contre Discord, sur les deux serveurs de test : univers avec installation complète, rôles dans le bon ordre, puis retour en arrière complet (Discord et base) ; installation partielle puis complète sans recréer de rôle ; paramètres invalides sans aucun appel à Discord.
 - CI : les tests Discord portent `discord` dans leur nom et les tests sur une vraie carte commencent par `a_real_` ; le job d'intégration les saute (`--skip discord --skip a_real_`). Les tests Moria faisaient échouer ce job sur la PR #12.
 
-### Point ouvert : limite de serveurs par univers
-`FREE_LIMIT_SERVERS_PER_UNIVERSE = 2` (`database/universe.rs`). À 60 lieux par serveur, l'import est donc limité à 120 lieux ; Moria entière en demanderait 9. Décision de l'utilisateur à prendre avant E4.
+### Limite de serveurs par univers (Q10)
+Elle était de 2 (`FREE_LIMIT_SERVERS_PER_UNIVERSE`), ce qui plafonnait l'import à 120 lieux. **Décision : supprimée pour l'instant** (`MAX_SERVERS_PER_UNIVERSE = None`), pour l'import comme pour `/universe_add_server`. **À réintroduire plus tard comme fonctionnalité premium** (dépôt privé). La limite de 2 univers par créateur est inchangée.
