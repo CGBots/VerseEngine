@@ -509,12 +509,36 @@ async fn plan(State(state): State<AppState>, Authed(s): Authed, Json(req): Json<
     })))
 }
 
+// ---------------------------------------------------------------------------
+// POST /api/admin/universe/fog (E8)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FogRequest {
+    pub enabled: bool,
+}
+
+/// I17 : le brouillard est le choix du **créateur** de l'univers (vérifié en base).
+async fn set_fog(State(state): State<AppState>, Authed(s): Authed, Json(req): Json<FogRequest>) -> ApiResult<Json<serde_json::Value>> {
+    check_write(&state, &s)?;
+    let universe = get_universe_by_id(s.universe()?).await?.ok_or_else(|| ApiError::not_found("activity__universe_not_found"))?;
+    if universe.creator_id != s.user_id {
+        return Err(ApiError::forbidden("activity__fog_creator_only"));
+    }
+    crate::database::universe::set_fog_enabled(universe.universe_id, req.enabled).await?;
+    // Les cartes ouvertes se rechargent (avec ou sans brouillard).
+    state.hub.publish(crate::activity::events::Event { kind: crate::activity::events::EventKind::MapUpdated, universe_id: Some(universe.universe_id), users: vec![] });
+    Ok(Json(serde_json::json!({ "fog_enabled": req.enabled })))
+}
+
 /// Routes admin de l'import. L'envoi de la carte a sa propre limite de taille.
 pub fn routes() -> (Router<AppState>, Router<AppState>) {
     let standard = Router::new()
         .route("/admin/import/servers", get(list_servers))
         .route("/admin/import/plan", post(plan))
-        .route("/admin/import/generate", post(generate_map));
+        .route("/admin/import/generate", post(generate_map))
+        .route("/admin/universe/fog", post(set_fog));
     // Une carte générée de 600 lieux, renvoyée après modification, dépasse 64 Kio.
     let upload = Router::new()
         .route("/admin/import/map", post(upload_map))
@@ -528,7 +552,7 @@ mod tests {
     use super::*;
 
     fn universe(creator: u64) -> Universe {
-        Universe { universe_id: ObjectId::new(), name: "U".into(), creator_id: creator, global_time_modifier: 100, time_origin_timestamp: 0, creation_timestamp: 0 }
+        Universe { universe_id: ObjectId::new(), name: "U".into(), creator_id: creator, global_time_modifier: 100, time_origin_timestamp: 0, creation_timestamp: 0, fog_enabled: false }
     }
 
     #[test]

@@ -113,6 +113,7 @@ pub async fn _create_universe(
         setup: setup_type,
         time_modifier: None,
         locale: &locale,
+        fog: false,
     };
     match create_universe_service(&mut provisioner, new).await {
         Ok(_) => {

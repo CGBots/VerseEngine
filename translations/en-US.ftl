@@ -1390,3 +1390,4 @@ activity_ui__generate_counts = { $places } places, { $roads } roads
 activity_ui__generate_use = Use this map
 activity_ui__generate_empty_name = A place has no name.
 activity_ui__generate_map_name = generated map
+activity__fog_creator_only = Only the universe creator can turn the fog on or off.

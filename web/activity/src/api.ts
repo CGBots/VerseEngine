@@ -51,6 +51,9 @@ export interface SessionInfo {
   access: 'player' | 'moderator' | 'admin';
   /** Import et génération de carte permis (créateur de l'univers ou administrateur). */
   can_import: boolean;
+  /** Créateur de l'univers : lui seul règle le brouillard (I17). */
+  is_creator: boolean;
+  fog_enabled: boolean;
   admin_mode_available: boolean;
   /** `null` si le temps de l'univers est à l'arrêt. */
   universe_clock: { origin: number; phase_duration_secs: number } | null;
@@ -67,7 +70,19 @@ export interface MapView {
   zone: { polygon: [number, number][]; outside: 'crop' | 'grey' | 'remove' } | null;
   /** Image exportée par Azgaar (mêmes coordonnées que les lieux). */
   background: { url: string; width: number; height: number } | null;
+  /** Brouillard (E8) : zones à dégager ; absent s'il est désactivé ou pour un modérateur. */
+  fog?: FogView | null;
   server_time: number;
+}
+
+export interface FogView {
+  /** Rayon d'une zone découverte (unités de carte). */
+  radius: number;
+  discovered: string[];
+  /** Destinations possibles pas encore découvertes : zone plus petite. */
+  glimpsed: string[];
+  /** Routes empruntées : couloir dégagé. */
+  roads: string[];
 }
 
 export interface TravelState {
@@ -224,7 +239,7 @@ export interface PlanRequest {
 export interface ExecuteRequest {
   plan: PlanRequest;
   confirm_name: string;
-  new_universe?: { name: string; time_modifier?: number };
+  new_universe?: { name: string; time_modifier?: number; fog?: boolean };
   removal?: RemovalChoices;
 }
 
@@ -248,6 +263,10 @@ export async function uploadMapFile(bytes: ArrayBuffer): Promise<UploadedMap> {
   if (!res.ok) throw new ApiError(res.status, typeof body.error === 'string' ? body.error : 'activity__internal_error');
   return body as UploadedMap;
 }
+
+export const universeApi = {
+  setFog: (enabled: boolean) => api<{ fog_enabled: boolean }>('/admin/universe/fog', { method: 'POST', body: JSON.stringify({ enabled }) }),
+};
 
 export const importApi = {
   generate: (seed: number | null, count: number) =>

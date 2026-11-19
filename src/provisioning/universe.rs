@@ -27,6 +27,8 @@ pub struct NewUniverse<'a> {
     pub time_modifier: Option<u32>,
     /// Langue des noms de salons et de rôles.
     pub locale: &'a str,
+    /// Brouillard sur la carte des joueurs (I17).
+    pub fog: bool,
 }
 
 /// Valide le nom d'un univers : non vide, 100 caractères au plus.
@@ -67,7 +69,7 @@ pub async fn create_universe(p: &mut Provisioner, new: NewUniverse<'_>) -> Resul
         creator_id: new.creator_id,
         global_time_modifier: time_modifier,
         time_origin_timestamp: time_origin_ms(now),
-        creation_timestamp: now.timestamp_millis() as u128,
+        creation_timestamp: now.timestamp_millis() as u128, fog_enabled: new.fog
     };
     let mut server = Server::default().universe_id(universe.universe_id).server_id(new.guild_id).clone();
     server._id = ObjectId::new();
@@ -198,7 +200,7 @@ mod tests {
                 let guild = required_env_u64("VERSEENGINE_TEST_GUILD_ID");
                 let before = channel_names(&http, guild).await.len();
                 let mut p = Provisioner::new(http.clone());
-                let new = NewUniverse { name: "Test Moria", creator_id: random_id(), guild_id: guild, setup: SetupType::FullSetup, time_modifier: Some(200), locale: "fr" };
+                let new = NewUniverse { name: "Test Moria", creator_id: random_id(), guild_id: guild, setup: SetupType::FullSetup, time_modifier: Some(200), locale: "fr", fog: false };
                 let (universe, server) = create_universe(&mut p, new).await.expect("the universe is created");
 
                 assert_eq!(universe.global_time_modifier, 200);
@@ -241,7 +243,7 @@ mod tests {
                 let http = discord_http();
                 let guild = required_env_u64("VERSEENGINE_TEST_GUILD_ID");
                 let mut first = Provisioner::new(http.clone());
-                let new = NewUniverse { name: "Test reuse", creator_id: random_id(), guild_id: guild, setup: SetupType::PartialSetup, time_modifier: None, locale: "en-US" };
+                let new = NewUniverse { name: "Test reuse", creator_id: random_id(), guild_id: guild, setup: SetupType::PartialSetup, time_modifier: None, locale: "en-US", fog: false };
                 let (universe, mut server) = create_universe(&mut first, new).await.expect("partial setup");
                 assert_eq!(universe.global_time_modifier, DEFAULT_TIME_MODIFIER);
                 let roles_before = server.player_role_id.unwrap().id;
@@ -275,7 +277,7 @@ mod tests {
                 let mut p = Provisioner::new(discord_http());
                 let guild = required_env_u64("VERSEENGINE_TEST_GUILD_ID");
                 for (name, speed, key) in [(" ", None, "create_universe__invalid_name"), ("Ok", Some(0), "create_universe__invalid_time_modifier")] {
-                    let new = NewUniverse { name, creator_id: random_id(), guild_id: guild, setup: SetupType::PartialSetup, time_modifier: speed, locale: "fr" };
+                    let new = NewUniverse { name, creator_id: random_id(), guild_id: guild, setup: SetupType::PartialSetup, time_modifier: speed, locale: "fr", fog: false };
                     let err = create_universe(&mut p, new).await.err().expect("refused");
                     assert_eq!(err.key, key);
                 }

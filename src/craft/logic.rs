@@ -464,7 +464,7 @@ mod reconnect_integration {
                 creator_id: random_id(),
                 global_time_modifier: 100,
                 time_origin_timestamp: 0,
-                creation_timestamp: 0,
+                creation_timestamp: 0, fog_enabled: false
             };
             universe.insert_universe().await.unwrap();
             Recipe {

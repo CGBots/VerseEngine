@@ -263,6 +263,8 @@ async fn auth_token(State(state): State<AppState>, body: Result<Json<TokenReques
     tracing::info!(user = user.id, guild = guild_id, ?access, "activity: session ouverte");
     // I1 : import et génération réservés au créateur de l'univers et aux administrateurs.
     let can_import = crate::activity::admin_import::may_import(access, universe.as_ref(), user.id);
+    let universe_creator = universe.as_ref().is_some_and(|u| u.creator_id == user.id);
+    let universe_fog = universe.as_ref().is_some_and(|u| u.fog_enabled);
 
     Ok(Json(json!({
         "access_token": grant.access_token,
@@ -273,6 +275,8 @@ async fn auth_token(State(state): State<AppState>, body: Result<Json<TokenReques
         "universe_clock": universe.as_ref().map(universe_clock).unwrap_or(serde_json::Value::Null),
         "universe": universe.map(|u| UniverseDto { id: u.universe_id.to_hex(), name: u.name }),
         "can_import": can_import,
+        "is_creator": universe_creator,
+        "fog_enabled": universe_fog,
         "access": access,
         "admin_mode_available": access.can_use_admin_mode(),
         "server_time": now_secs(),
@@ -435,7 +439,27 @@ async fn map(Authed(s): Authed) -> ApiResult<Json<MapDto>> {
         })
         .flatten()
         .collect();
-    Ok(Json(build_map_dto(&universe_map, &places, &roads, &visible, &always, now_secs())))
+    let dto = build_map_dto(&universe_map, &places, &roads, &visible, &always, now_secs());
+    // Brouillard (E8) : les joueurs ne reçoivent que ce qu'ils ont découvert.
+    if fog_applies(&s).await? {
+        let discovery = crate::activity::fog::Discovery {
+            here: group.as_ref().filter(|g| g.actual_space_type == SpaceType::Place).map(|g| g.actual_space_id),
+            trip: group.as_ref().filter(|g| g.actual_space_type == SpaceType::Road).map(|g| [g.source_id, g.destination_id].into_iter().flatten().collect()).unwrap_or_default(),
+            current_road,
+            known_roads: known,
+        };
+        return Ok(Json(crate::activity::fog::apply_fog(dto, &discovery)));
+    }
+    Ok(Json(dto))
+}
+
+/// Le brouillard s'applique-t-il à cette session ? Option de l'univers, pour les joueurs
+/// seulement (les modérateurs et les administrateurs voient toute la carte).
+async fn fog_applies(s: &Session) -> ApiResult<bool> {
+    if s.access >= AccessLevel::Moderator {
+        return Ok(false);
+    }
+    Ok(crate::database::universe::get_universe_by_id(s.universe()?).await?.is_some_and(|u| u.fog_enabled))
 }
 
 /// Image de fond (export Azgaar) de l'univers de la session.
@@ -443,6 +467,10 @@ async fn map(Authed(s): Authed) -> ApiResult<Json<MapDto>> {
 /// Servie avec `Content-Security-Policy: sandbox` : même ouverte directement, elle ne peut rien
 /// exécuter. Mise en cache côté client : l'URL change avec l'image (`?v=<empreinte>`).
 async fn map_background(Authed(s): Authed) -> ApiResult<Response> {
+    // Sous brouillard, l'image entière dévoilerait la carte : jamais servie aux joueurs.
+    if fog_applies(&s).await? {
+        return Err(ApiError::not_found("activity__map_not_found"));
+    }
     let background = crate::database::universe_maps::get_universe_map(s.universe()?)
         .await?
         .and_then(|m| m.background)
@@ -1033,7 +1061,7 @@ mod tests {
     fn the_universe_clock_matches_the_bot() {
         let mut u = crate::database::universe::Universe {
             universe_id: Default::default(), name: "u".into(), creator_id: 1,
-            global_time_modifier: 200, time_origin_timestamp: 1_700_000_000_000, creation_timestamp: 0,
+            global_time_modifier: 200, time_origin_timestamp: 1_700_000_000_000, creation_timestamp: 0, fog_enabled: false
         };
         assert_eq!(universe_clock(&u), json!({"origin": 1_700_000_000u64, "phase_duration_secs": 10_800u64}));
         u.global_time_modifier = 0;
@@ -1130,6 +1158,81 @@ mod tests {
             assert_eq!(other_status, StatusCode::NOT_FOUND, "another universe gets nothing");
             assert!(!old_still_there, "the replaced background is deleted");
             assert_eq!(stored.background.unwrap().width, 3000);
+        });
+    }
+
+    /// E8, bout en bout contre MongoDB : sous brouillard, un joueur ne reçoit que ce qu'il a
+    /// découvert (ni lieu lointain, ni image de fond) ; un modérateur voit tout ; seul le
+    /// créateur peut couper le brouillard, et la carte redevient alors entière.
+    #[test]
+    #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
+    fn under_fog_players_only_receive_what_they_discovered() {
+        use crate::activity::permissions::AccessLevel;
+        use crate::database::places::Place;
+        use crate::test_support::{block_on, random_id};
+        use mongodb::bson::{doc, oid::ObjectId};
+        block_on(async {
+            let universe_id = ObjectId::new();
+            let creator = 9;
+            let universe = crate::database::universe::Universe {
+                universe_id, name: "Brume".into(), creator_id: creator, global_time_modifier: 100,
+                time_origin_timestamp: 0, creation_timestamp: 0, fog_enabled: true,
+            };
+            universe.insert_universe().await.unwrap();
+            let (a, b, c, d) = (random_id(), random_id(), random_id(), random_id());
+            for (id, name) in [(a, "A"), (b, "B"), (c, "C"), (d, "D")] {
+                Place { _id: ObjectId::new(), universe_id, server_id: 1, category_id: id, role: 1, name: name.into(), modifiers: vec![], central_channel_id: None }.insert().await.unwrap();
+            }
+            for (x, y) in [(a, b), (b, c), (c, d)] {
+                crate::travel::service::tests_support_road(universe_id, random_id(), x, y, false).insert().await.unwrap();
+            }
+            crate::database::travel::TravelGroup { _id: ObjectId::new(), universe_id, actual_space_id: a, members: vec![1], server_id: 1, ..Default::default() }
+                .insert().await.unwrap();
+
+            let (app, state) = app_with(Arc::default());
+            let session = |user: u64, access: AccessLevel| crate::activity::session::Session { universe_id: Some(universe_id), access, ..test_session(user) };
+            let player = state.sessions.create(session(1, AccessLevel::Player));
+            let moderator = state.sessions.create(session(3, AccessLevel::Moderator));
+            let creator_token = state.sessions.create(session(creator, AccessLevel::Player));
+            let names = |v: &serde_json::Value| {
+                let mut n: Vec<String> = v["places"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap().to_string()).collect();
+                n.sort();
+                n
+            };
+
+            let (st, full, _) = call(app.clone(), authed("GET", "/api/map", &moderator, None)).await;
+            assert_eq!(st, StatusCode::OK);
+            assert_eq!(names(&full), vec!["A", "B", "C", "D"], "a moderator sees everything");
+            assert!(full["fog"].is_null());
+            let png = crate::database::map_backgrounds::tests::png(30, 20);
+            let bg = crate::database::map_backgrounds::set_map_background(universe_id, &png).await.unwrap();
+
+            let (_, fogged, _) = call(app.clone(), authed("GET", "/api/map", &player, None)).await;
+            assert_eq!(names(&fogged), vec!["A", "B"], "here and the next place only");
+            assert_eq!(fogged["fog"]["discovered"], serde_json::json!([a.to_string()]));
+            assert_eq!(fogged["fog"]["glimpsed"], serde_json::json!([b.to_string()]));
+            assert!(fogged["background"].is_null());
+            let (st, _, _) = call(app.clone(), authed("GET", "/api/map/background", &player, None)).await;
+            assert_eq!(st, StatusCode::NOT_FOUND, "the whole image would reveal the map");
+            let (st, _, _) = call(app.clone(), authed("GET", "/api/map/background", &moderator, None)).await;
+            assert_eq!(st, StatusCode::OK);
+
+            // Seul le créateur décide (I17).
+            let (st, body, _) = call(app.clone(), authed("POST", "/api/admin/universe/fog", &player, Some(r#"{"enabled":false}"#))).await;
+            assert_eq!((st, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("activity__fog_creator_only")));
+            let (st, _, _) = call(app.clone(), authed("POST", "/api/admin/universe/fog", &creator_token, Some(r#"{"enabled":false}"#))).await;
+            assert_eq!(st, StatusCode::OK);
+            let (_, clear, _) = call(app.clone(), authed("GET", "/api/map", &player, None)).await;
+            assert_eq!(names(&clear), vec!["A", "B", "C", "D"]);
+            assert!(clear["fog"].is_null());
+
+            let db = crate::database::db_client::get_db_client().await.database(crate::database::db_namespace::VERSEENGINE_DB_NAME);
+            for name in ["places", "roads", "travels", "universe_maps"] {
+                db.collection::<mongodb::bson::Document>(name).delete_many(doc! {"universe_id": universe_id}).await.unwrap();
+            }
+            db.collection::<mongodb::bson::Document>("universes").delete_one(doc! {"_id": universe_id}).await.unwrap();
+            let _ = db.gridfs_bucket(mongodb::options::GridFsBucketOptions::builder().bucket_name("map_backgrounds".to_string()).build())
+                .delete(mongodb::bson::Bson::ObjectId(bg.file_id)).await;
         });
     }
 

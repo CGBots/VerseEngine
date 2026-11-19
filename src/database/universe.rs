@@ -83,6 +83,11 @@ pub struct Universe {
 
     #[serde_as(as = "DisplayFromStr")]
     pub creation_timestamp: u128,
+
+    /// Brouillard sur la carte des joueurs (I17, au choix du créateur). Absent des univers
+    /// créés avant : désactivé.
+    #[serde(default)]
+    pub fog_enabled: bool,
 }
 
 impl Universe {
@@ -332,6 +337,7 @@ impl Universe {
             global_time_modifier: self.global_time_modifier.clone(),
             time_origin_timestamp: self.time_origin_timestamp.clone(),
             creation_timestamp: self.creation_timestamp.clone(),
+            fog_enabled: self.fog_enabled,
         }
     }
 
@@ -802,7 +808,7 @@ mod test {
             creator_id,
             global_time_modifier: 100,
             time_origin_timestamp: now_ms(),
-            creation_timestamp: now_ms(),
+            creation_timestamp: now_ms(), fog_enabled: false
         };
         universe.insert_universe().await.expect("insert the test universe");
         universe.universe_id
@@ -887,4 +893,15 @@ mod test {
             assert!(unknown.unwrap().is_none());
         });
     }
+}
+
+/// Active ou coupe le brouillard d'un univers (E8).
+pub async fn set_fog_enabled(universe_id: ObjectId, enabled: bool) -> mongodb::error::Result<()> {
+    get_db_client()
+        .await
+        .database(VERSEENGINE_DB_NAME)
+        .collection::<Universe>(UNIVERSES_COLLECTION_NAME)
+        .update_one(doc! {"_id": universe_id}, doc! {"$set": {"fog_enabled": enabled}})
+        .await?;
+    Ok(())
 }

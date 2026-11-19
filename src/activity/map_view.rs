@@ -139,6 +139,8 @@ pub struct MapDto {
     pub zone: Option<MapZone>,
     pub background: Option<MapBackgroundDto>,
     pub server_time: u64,
+    /// Brouillard (E8) : `None` s'il est désactivé ou pour un modérateur ou un administrateur.
+    pub fog: Option<crate::activity::fog::FogDto>,
 }
 
 /// Assemble la carte envoyée au joueur. `visible_roads` : `channel_id` des routes qu'il peut voir
@@ -184,6 +186,7 @@ pub fn build_map_dto(map: &UniverseMap, places: &[Place], roads: &[Road], visibl
             height: b.height,
         }),
         server_time: now,
+        fog: None,
     }
 }
 

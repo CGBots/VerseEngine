@@ -58,6 +58,9 @@ pub struct NewUniverseDto {
     /// Vitesse du temps en %, facultative (temps réel par défaut, I14).
     #[serde(default)]
     pub time_modifier: Option<u32>,
+    /// Brouillard sur la carte des joueurs (I17).
+    #[serde(default)]
+    pub fog: bool,
 }
 
 #[derive(Deserialize)]
@@ -128,7 +131,7 @@ pub struct Execution {
     pub user_id: u64,
     pub guild_id: u64,
     pub universe: Option<crate::database::universe::Universe>,
-    pub new_universe: Option<(String, Option<u32>)>,
+    pub new_universe: Option<(String, Option<u32>, bool)>,
     pub setup: SetupType,
     pub plan: ImportPlan,
     pub map: Arc<AzgaarMap>,
@@ -211,9 +214,9 @@ async fn run(p: &mut Provisioner, exec: &Execution) -> Result<ObjectId, &'static
     // 1. Univers.
     let universe_id = match (&exec.universe, &exec.new_universe) {
         (Some(u), _) => u.universe_id,
-        (None, Some((name, time_modifier))) => {
+        (None, Some((name, time_modifier, fog))) => {
             let locale = guild_locale(&http, exec.guild_id).await;
-            let new = NewUniverse { name, creator_id: exec.user_id, guild_id: exec.guild_id, setup: exec.setup, time_modifier: *time_modifier, locale: &locale };
+            let new = NewUniverse { name, creator_id: exec.user_id, guild_id: exec.guild_id, setup: exec.setup, time_modifier: *time_modifier, locale: &locale, fog: *fog };
             create_universe(p, new).await.map_err(|e| e.key)?.0.universe_id
         }
         (None, None) => return Err("activity__import_universe_required"),
@@ -447,7 +450,7 @@ async fn execute_route(State(state): State<AppState>, Authed(s): Authed, Json(re
             if !name_confirmed(&name, &req.confirm_name) {
                 return Err(ApiError::bad_request("activity__import_name_mismatch"));
             }
-            Some((name, n.time_modifier))
+            Some((name, n.time_modifier, n.fog))
         }
         (None, None) => return Err(ApiError::bad_request("activity__import_universe_required")),
     };
@@ -855,7 +858,7 @@ mod tests {
                     user_id: 42,
                     guild_id: guild,
                     universe: None,
-                    new_universe: Some(("Test rollback".into(), None)),
+                    new_universe: Some(("Test rollback".into(), None, false)),
                     setup: SetupType::PartialSetup,
                     plan,
                     map: Arc::new(map),

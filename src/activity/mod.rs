@@ -10,6 +10,7 @@ pub mod discord_api;
 pub mod dto;
 pub mod error;
 pub mod events;
+pub mod fog;
 pub mod http;
 pub mod images;
 pub mod import_exec;

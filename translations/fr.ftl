@@ -1401,3 +1401,4 @@ activity_ui__generate_counts = { $places } lieux, { $roads } routes
 activity_ui__generate_use = Utiliser cette carte
 activity_ui__generate_empty_name = Un lieu n'a pas de nom.
 activity_ui__generate_map_name = carte générée
+activity__fog_creator_only = Seul le créateur de l'univers peut activer ou couper le brouillard.
