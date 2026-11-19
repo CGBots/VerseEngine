@@ -30,6 +30,9 @@ pub struct TravelGroup {
     pub step_start_timestamp: Option<u64>,
     pub step_end_timestamp: Option<u64>,
 
+    /// Ancien rôle de la route : plus jamais renseigné (Q1), conservé pour relire les anciens
+    /// documents. L'accès au salon se fait par permission individuelle.
+    #[serde(default)]
     pub road_role_id: Option<u64>,
     pub road_id: Option<u64>,
     pub road_server_id: Option<u64>,

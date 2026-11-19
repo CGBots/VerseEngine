@@ -1,6 +1,5 @@
 use mongodb::bson::oid::ObjectId;
 use serenity::all::{CreateChannel, PermissionOverwrite, PermissionOverwriteType, Permissions, RoleId};
-use serenity::builder::EditRole;
 use tokio::join;
 use crate::database::places::{check_existing_place};
 use crate::database::road::{Road, count_non_secret_roads_for_place};
@@ -37,7 +36,7 @@ pub async fn create_road(
 }
 
 ///  Asynchronously creates a "road" between two places in a server's universe, represented by channels in a Discord guild.
-///  The road creation involves setting up a role, permissions, a channel, and storing metadata in the database.
+///  The road creation sets up a channel and stores metadata in the database.
 ///
 ///  # Arguments
 ///
@@ -58,21 +57,18 @@ pub async fn create_road(
 ///  * `"create_road__database_error"`: A database operation failed.
 ///  * `"create_place__place_one_not_found"`: The first place does not exist in the universe.
 ///  * `"create_place__place_two_not_found"`: The second place does not exist in the universe.
-///  * `"create_road__role_creation_failed"`: Failed to create the role for this road.
-///  * `"create_road__create_channel_failed_rollback_success"`: Channel creation failed, but role deletion succeeded.
-///  * `"create_road__create_channel_failed_rollback_failed"`: Both channel creation and role deletion failed.
+///  * `"create_road__create_channel_failed"`: Failed to create the road channel.
 ///  * `"create_road__insert_road_failed_rollback_success"`: Database insertion of the road failed, but created resources were successfully rolled back.
 ///  * `"create_road__insert_road_failed_rollback_channel_failed"`: Database insertion failed, and the created channel could not be rolled back.
-///  * `"create_road__insert_road_failed_rollback_role_failed"`: Database insertion failed, and the created role could not be rolled back.
 ///
 ///  # Process
 ///
 ///  1. Fetches the server from the database using the guild ID.
 ///  2. Verifies the existence of `place_one` and `place_two` in the server's universe.
-///  3. Creates a role in the guild for the road.
-///  4. Sets up permission overwrites and creates a corresponding channel in the appropriate category.
-///  5. Inserts metadata related to the new road into the database.
-///  6. Rolls back created resources (role and/or channel) in case of failures.
+///  3. Creates the road channel, hidden from @everyone (no road role any more, Q1: travellers get
+///     an individual permission when they set off).
+///  4. Inserts metadata related to the new road into the database.
+///  5. Deletes the channel if the insertion fails.
 ///
 ///  # Example
 ///
@@ -147,41 +143,15 @@ pub async fn _create_road(ctx: &Context<'_>, place_one_str : String, place_two_s
     let name = format!("{}-{}", place_one.name, place_two.name);
     let name = if name.len() > 100 { name[..100].to_string() } else { name };
 
-    let role = EditRole::new()
-        .name(name.clone())
-        .audit_log_reason("create new road");
-
-    let new_role_result = ctx.guild_id().unwrap().create_role(ctx, role).await;
-    let mut new_role = match new_role_result {
-        Ok(role) => {role}
-        Err(_) => {return Err("create_road__role_creation_failed".into())}
-    };
-
-    let permissions = vec![PermissionOverwrite {
-        allow: Permissions::VIEW_CHANNEL
-            | Permissions::SEND_MESSAGES
-            | Permissions::READ_MESSAGE_HISTORY,
-        deny: Permissions::empty(),
-        kind: PermissionOverwriteType::Role(new_role.id),
-    }, PermissionOverwrite {
-        allow: Permissions::empty(),
-        deny: Permissions::VIEW_CHANNEL,
-        kind: PermissionOverwriteType::Role(RoleId::new(guild_id.get())),
-    }];
-
+    // Plus de rôle par route (Q1) : le salon est fermé à @everyone, chaque voyageur reçoit une
+    // permission individuelle au départ (`travel::logic::grant_road_access`).
     let channel = CreateChannel::new(name.clone())
-        .permissions(permissions)
+        .permissions(road_channel_permissions(guild_id.get()))
         .category(server.road_category_id.unwrap().id);
 
-    let channel_result = ctx.guild_id().unwrap().create_channel(ctx, channel ).await;
-    let channel = match channel_result {
-        Ok(channel) => { channel }
-        Err(_) => {
-            return match new_role.delete(ctx).await {
-                Ok(_) => { Err("create_road__create_channel_failed_rollback_success".into()) }
-                Err(_) => { Err("create_road__create_channel_failed_rollback_failed".into()) }
-            };
-        }
+    let channel = match ctx.guild_id().unwrap().create_channel(ctx, channel).await {
+        Ok(channel) => channel,
+        Err(_) => return Err("create_road__create_channel_failed".into()),
     };
 
     let road = Road{
@@ -192,7 +162,7 @@ pub async fn _create_road(ctx: &Context<'_>, place_one_str : String, place_two_s
             if place_one.server_id == server.server_id { Some(place_two.server_id.to_string()) } else { Some(place_one.server_id.to_string()) }
         } else { None },
         road_name: name,
-        role_id: new_role.id.get(),
+        role_id: None,
         channel_id: channel.id.get(),
         place_one_id: place_one.category_id,
         place_two_id: place_two.category_id,
@@ -211,14 +181,33 @@ pub async fn _create_road(ctx: &Context<'_>, place_one_str : String, place_two_s
         }
         Err(_) => {
             session.abort_transaction().await?;
-            match new_role.delete(ctx).await {
-                Ok(_) => {}
-                Err(_) => { return Err("create_road__insert_road_failed_rollback_role_failed".into()) }
-            };
             match channel.delete(ctx).await {
                 Ok(_) => { Err("create_road__insert_road_failed_rollback_success".into()) }
                 Err(_) => { Err("create_road__insert_road_failed_rollback_channel_failed".into()) }
             }
         }
+    }
+}
+
+/// Permissions du salon d'une route : invisible pour @everyone. Les voyageurs reçoivent une
+/// permission individuelle (Q1).
+pub fn road_channel_permissions(guild_id: u64) -> Vec<PermissionOverwrite> {
+    vec![PermissionOverwrite {
+        allow: Permissions::empty(),
+        deny: Permissions::VIEW_CHANNEL,
+        kind: PermissionOverwriteType::Role(RoleId::new(guild_id)),
+    }]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_road_channel_is_hidden_from_everyone_and_has_no_role() {
+        let p = road_channel_permissions(42);
+        assert_eq!(p.len(), 1);
+        assert_eq!(p[0].kind, PermissionOverwriteType::Role(RoleId::new(42)));
+        assert_eq!(p[0].deny, Permissions::VIEW_CHANNEL);
     }
 }

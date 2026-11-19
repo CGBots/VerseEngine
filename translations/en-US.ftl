@@ -521,18 +521,10 @@ create_place__place_two_not_found = Second place not found
     .title = Second place not found
     .message = The second specified place was not found in the universe.
                         Please try again or contact support if the problem persists: {support}
-create_road__role_creation_failed = Role creation error
-    .title = Role creation error
-    .message = The road role could not be created correctly.
-                        Please try again or contact support if the problem persists: {support}
-create_road__create_channel_failed_rollback_success = Channel creation error
+create_road__create_channel_failed = Channel creation error
     .title = Channel creation error
-    .message = The channel could not be created, but the changes have been rolled back.
+    .message = The road channel could not be created. Nothing was changed.
                         Please try again or contact support if the problem persists: {support}
-create_road__create_channel_failed_rollback_failed = Critical error
-    .title = Critical error
-    .message = Channel creation failed and the rollback could not be performed.
-                        Please contact support: {support}
 create_road__insert_road_failed_rollback_success = Insertion error
     .title = Insertion error
     .message = The road could not be saved, but the changes have been rolled back.
@@ -540,10 +532,6 @@ create_road__insert_road_failed_rollback_success = Insertion error
 create_road__insert_road_failed_rollback_channel_failed = Critical error
     .title = Critical error
     .message = The road registration failed and the channel rollback failed.
-                        Please contact support: {support}
-create_road__insert_road_failed_rollback_role_failed = Critical error
-    .title = Critical error
-    .message = The road registration failed and the role rollback failed.
                         Please contact support: {support}
 create_road__success = Road created
     .title = Road created

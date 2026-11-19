@@ -19,8 +19,12 @@ pub struct Road{
     pub server_id: u64,
     pub server_two_id: Option<String>,
     pub road_name: String,
-    #[serde_as(as = "DisplayFromStr")]
-    pub role_id: u64,
+    /// Ancien rôle d'accès au salon de la route. Les nouvelles routes n'en ont plus : l'accès se
+    /// donne par une permission individuelle sur le salon (Q1). Seule la migration
+    /// ([`crate::roads::migration`]) lit encore ce champ, puis le retire.
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_id: Option<u64>,
     #[serde_as(as = "DisplayFromStr")]
     pub channel_id: u64,
     #[serde_as(as = "DisplayFromStr")]

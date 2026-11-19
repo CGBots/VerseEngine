@@ -86,8 +86,12 @@ impl EventHandler for Handler {
     }
 
     #[cfg(not(test))]
-    async fn ready(&self, _ctx: Context, ready: Ready) {
+    async fn ready(&self, ctx: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
+        // Routes à rôle → permissions individuelles (Q1, Q7). Idempotent, reprise au démarrage.
+        if let Err(e) = crate::roads::migration::migrate_road_roles(&ctx.http).await {
+            eprintln!("[road migration] failed: {e:?}");
+        }
         let _ = crate::travel::logic::setup().await;
         let _ = crate::craft::logic::setup().await;
         let _ = crate::loot::logic::setup().await;
@@ -290,9 +294,7 @@ impl EventHandler for Handler {
                         // On vérifie si la route actuelle est bien sur ce serveur ou si c'est le road_server_id
                         let road_server_id = player_move.road_server_id.unwrap_or(player_move.server_id);
                         if road_server_id == guild_id {
-                            if let Some(road_role) = player_move.road_role_id {
-                                manage_roles(ctx.http.clone(), guild_id, user_id, Some(road_role), None).await;
-                            }
+                            crate::travel::logic::grant_road_access(&ctx.http, player_move.actual_space_id, user_id).await;
                         }
                     }
                 }

@@ -12,7 +12,7 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use serenity::all::{Http, GuildId, UserId, RoleId, ChannelId, CreateMessage, CreateEmbed, Color};
+use serenity::all::{Http, GuildId, UserId, RoleId, ChannelId, CreateMessage, CreateEmbed, Color, PermissionOverwrite, PermissionOverwriteType, Permissions};
 use anyhow::bail;
 use once_cell::sync::Lazy;
 use tokio::sync::{Mutex};
@@ -135,6 +135,8 @@ async fn process_due_move() -> Option<u64> {
         let mut next_id: Option<String> = None;
 
         let mut role_updates: Vec<(u64, u64, Option<u64>, Option<u64>)> = Vec::new();
+        // (salon de la route, joueur) : accès individuel à retirer à l'arrivée.
+        let mut road_access_updates: Vec<(u64, u64)> = Vec::new();
 
         {
             let mut moves = MOVES.lock().await;
@@ -227,16 +229,15 @@ async fn process_due_move() -> Option<u64> {
                         }
 
                         // Déclenche le retrait du rôle de la route et l'ajout du rôle du lieu de destination
-                        println!("[{date}] Trip for group {} finished. Destination role: {:?}, Road role: {:?}", current_move._id, current_move.destination_role_id, current_move.road_role_id);
+                        println!("[{date}] Trip for group {} finished. Destination role: {:?}, road: {:?}", current_move._id, current_move.destination_role_id, current_move.road_id);
                         
-                        // Récupère la route pour savoir sur quel serveur est le salon de la route
-                        let road_guild_id = current_move.road_server_id.unwrap_or(current_move.server_id);
-
                         // La destination finale est sur le serveur spécifié dans le PlayerMove (plus fiable que de recalculer)
                         let target_guild_id = current_move.destination_server_id.unwrap_or(current_move.server_id);
 
                         for &user_id in &current_move.members {
-                            role_updates.push((road_guild_id, user_id, None, current_move.road_role_id));
+                            if let Some(road_id) = current_move.road_id {
+                                road_access_updates.push((road_id, user_id));
+                            }
                             role_updates.push((target_guild_id, user_id, current_move.destination_role_id, None));
                         }
                     } else {
@@ -269,14 +270,17 @@ async fn process_due_move() -> Option<u64> {
             println!("[{date}] Next move process for group {id} in {delay}s");
         }
 
-        // Exécute les changements de rôles si nécessaire
-        if !role_updates.is_empty() {
+        // Exécute les changements de rôles et d'accès aux routes si nécessaire
+        if !role_updates.is_empty() || !road_access_updates.is_empty() {
             let http_opt = {
                 let lock = HTTP_CLIENT.lock().await;
                 lock.clone()
             };
 
             if let Some(http) = http_opt {
+                for (road_id, user_id) in road_access_updates {
+                    revoke_road_access(&http, road_id, user_id).await;
+                }
                 for (guild_id, user_id, add, remove) in role_updates {
                     manage_roles(http.clone(), guild_id, user_id, add, remove).await;
                 }
@@ -360,7 +364,7 @@ pub async fn next_step_logic(actual_move: &TravelGroup) -> Result<TravelGroup, a
 
         // Si le move est déjà marqué comme terminé, on applique la logique d'arrivée
         if actual_move.is_end {
-            println!("[Arrival DB Update] Members: {:?}, DestRole: {:?}, RoadRole: {:?}", new_move.members, new_move.destination_role_id, new_move.road_role_id);
+            println!("[Arrival DB Update] Members: {:?}, DestRole: {:?}, road: {:?}", new_move.members, new_move.destination_role_id, new_move.road_id);
             apply_arrival(&mut new_move);
 
             // Sauvegarde en base de données pour la persistance de l'arrivée
@@ -545,7 +549,6 @@ pub async fn setup(){
                             let dest_id = m.destination_id;
                             let universe_id = m.universe_id;
                             let dest_role = m.destination_role_id;
-                            let road_role = m.road_role_id;
                             let members = m.members.clone();
                             let destination_server_id = m.destination_server_id;
 
@@ -599,7 +602,9 @@ pub async fn setup(){
                                     }
                                     // Gestion des rôles pour chaque membre
                                     manage_roles(http_arc.clone(), destination_server_id.unwrap_or(guild_id), user_id, dest_role, None).await;
-                                    manage_roles(http_arc.clone(), guild_id, user_id, None, road_role).await;
+                                    if let Some(rid) = road_id {
+                                        revoke_road_access(&http_arc, rid, user_id).await;
+                                    }
                                 }
                             });
                         }
@@ -668,6 +673,41 @@ pub async fn manage_roles(http: Arc<Http>, guild_id: u64, user_id: u64, role_to_
         } else {
             println!("[{date}] Role {} does not exist on guild {}, skipping addition.", role_id, guild_id);
         }
+    }
+}
+
+/// Permissions données à un voyageur sur le salon de la route qu'il emprunte.
+pub fn road_access_permissions() -> Permissions {
+    Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES | Permissions::READ_MESSAGE_HISTORY
+}
+
+/// Permission individuelle d'un voyageur sur le salon d'une route (remplace l'ancien rôle de
+/// route, décision Q1).
+pub fn road_access_overwrite(user_id: u64) -> PermissionOverwrite {
+    PermissionOverwrite {
+        allow: road_access_permissions(),
+        deny: Permissions::empty(),
+        kind: PermissionOverwriteType::Member(UserId::new(user_id)),
+    }
+}
+
+/// Donne au joueur l'accès au salon de la route. Idempotent. Un joueur absent du serveur de la
+/// route est ignoré (Discord répond 10009) : l'accès lui est donné quand il rejoint ce serveur
+/// (`guild_member_addition`).
+pub async fn grant_road_access(http: &Http, road_channel_id: u64, user_id: u64) {
+    if let Err(e) = ChannelId::new(road_channel_id).create_permission(http, road_access_overwrite(user_id)).await {
+        println!("Road access not granted to {user_id} on road {road_channel_id} (not a member of its server?): {e:?}");
+    }
+}
+
+/// Retire au joueur l'accès au salon de la route. Idempotent : retirer une permission absente
+/// réussit (vérifié contre l'API REST).
+pub async fn revoke_road_access(http: &Http, road_channel_id: u64, user_id: u64) {
+    if let Err(e) = ChannelId::new(road_channel_id)
+        .delete_permission(http, PermissionOverwriteType::Member(UserId::new(user_id)))
+        .await
+    {
+        eprintln!("Failed to revoke road access of {user_id} on road {road_channel_id}: {e:?}");
     }
 }
 
@@ -867,9 +907,10 @@ pub async fn add_travel(http: Arc<Http>, guild_id: u64, mut player_move: TravelG
         }
     }
 
-    let road_guild_id = player_move.road_server_id.unwrap_or(start_guild_id);
-    for &user_id in &player_move.members {
-        manage_roles(http.clone(), road_guild_id, user_id, player_move.road_role_id, None).await;
+    if let Some(road_id) = player_move.road_id {
+        for &user_id in &player_move.members {
+            grant_road_access(&http, road_id, user_id).await;
+        }
     }
 
     // Calcule la première étape réelle (avec la vraie vitesse et le premier modifier)
@@ -1086,7 +1127,7 @@ fn apply_arrival(group: &mut TravelGroup) {
 /// Efface les informations de route et de destination d'un groupe arrivé.
 fn clear_route(group: &mut TravelGroup) {
     group.road_id = None;
-    group.road_role_id = None;
+    group.road_role_id = None; // ancien champ (Q1), toujours vidé
     group.destination_id = None;
     group.destination_role_id = None;
 }

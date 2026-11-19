@@ -237,7 +237,7 @@ async fn move_from_place(http: &Arc<Http>, destination_id: u64, server: &Server,
     group.actual_space_type = SpaceType::Road;
     group.is_in_move = true;
     group.road_id = Some(road.channel_id);
-    group.road_role_id = Some(road.role_id);
+    group.road_role_id = None;
     group.road_server_id = Some(road.server_id);
     group.source_id = Some(source_place_id);
     group.source_role_id = Some(source.role);
@@ -516,6 +516,82 @@ mod integration {
             assert_eq!(names(&after.unwrap()), vec!["B", "C"], "a road already taken is shown");
         });
     }
+
+    /// Voyage réel par le service partagé (commandes slash et activité) : au départ, le voyageur
+    /// reçoit une permission individuelle sur le salon de la route ; à l'arrivée, elle est retirée.
+    /// Aucun rôle de route n'est utilisé (Q1). Le serveur VerseEngine est fictif ; seul le salon de
+    /// la route est réel, dans le serveur de test, et le voyageur est le propriétaire de ce serveur.
+    #[test]
+    #[ignore = "integration test: needs MongoDB, DISCORD_TOKEN and VERSEENGINE_TEST_GUILD_ID; run with --ignored"]
+    fn a_trip_grants_then_revokes_the_road_access() {
+        use crate::database::characters::Character;
+        use crate::database::stats::{Stat, StatValue, SPEED_STAT};
+        use crate::test_support::{discord_http, required_env_u64, TempChannel};
+        use serenity::all::{GuildId, PermissionOverwriteType, UserId};
+        block_on(async {
+            let http = discord_http();
+            *crate::travel::logic::HTTP_CLIENT.lock().await = Some(http.clone());
+            let test_guild = GuildId::new(required_env_u64("VERSEENGINE_TEST_GUILD_ID"));
+            let owner = http.get_guild(test_guild).await.unwrap().owner_id.get();
+            let road_channel = TempChannel::create(&http, "test-road-access").await;
+
+            let universe_id = ObjectId::new();
+            let guild_id = random_id();
+            let (a, b) = (random_id(), random_id());
+            let mut server = Server::default();
+            server.server_id(guild_id).universe_id(universe_id);
+            server.insert_server().await.unwrap();
+            for mut p in [place(universe_id, a, "A"), place(universe_id, b, "B")] {
+                p.server_id = guild_id;
+                p.insert().await.unwrap();
+            }
+            let mut road = super::tests_support_road(universe_id, road_channel.id.get(), a, b, false);
+            road.server_id = guild_id;
+            road.distance = 1;
+            road.insert().await.unwrap();
+            let db = get_db_client().await.database(VERSEENGINE_DB_NAME);
+            // 1 km à 600 km/h : 6 s de trajet.
+            let speed = Stat { _id: ObjectId::new(), universe_id, name: SPEED_STAT.into(), base_value: StatValue::F64(600.0), formula: None, min: None, max: None, modifiers: vec![] };
+            db.collection::<Stat>(STATS_COLLECTION_NAME).insert_one(&speed).await.unwrap();
+            let character = Character { _id: ObjectId::new(), user_id: owner, universe_id, name: "Testeur".into(), stats: vec![], description: None, image: None };
+            db.collection::<Character>(CHARACTERS_COLLECTION_NAME).insert_one(&character).await.unwrap();
+            TravelGroup { _id: ObjectId::new(), universe_id, actual_space_id: a, members: vec![owner], server_id: guild_id, ..Default::default() }
+                .insert()
+                .await
+                .unwrap();
+
+            let has_access = || async {
+                let c = http.get_channel(road_channel.id).await.unwrap().guild().unwrap();
+                c.permission_overwrites.iter().any(|o| o.kind == PermissionOverwriteType::Member(UserId::new(owner)))
+            };
+            let actor = Actor { user_id: owner, fallback_name: "Testeur", locale: "fr" };
+            let started = start(&http, guild_id, actor, b, Announce::In(road_channel.id)).await;
+            let access_during_trip = has_access().await;
+            let group_during_trip = crate::database::travel::get_group_of_user(universe_id, owner).await.unwrap().unwrap();
+
+            let mut arrived = None;
+            for _ in 0..40 {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                let g = crate::database::travel::get_group_of_user(universe_id, owner).await.unwrap().unwrap();
+                if g.actual_space_type == SpaceType::Place && !has_access().await {
+                    arrived = Some(g);
+                    break;
+                }
+            }
+
+            for name in [PLACES_COLLECTION_NAME, ROADS_COLLECTION_NAME, TRAVELS_COLLECTION_NAME, KNOWN_ROADS_COLLECTION_NAME, STATS_COLLECTION_NAME, CHARACTERS_COLLECTION_NAME] {
+                db.collection::<mongodb::bson::Document>(name).delete_many(doc! {"universe_id": universe_id}).await.unwrap();
+            }
+            db.collection::<mongodb::bson::Document>(SERVERS_COLLECTION_NAME).delete_one(doc! {"server_id": guild_id.to_string()}).await.unwrap();
+            road_channel.delete(&http).await;
+
+            assert_eq!(started.unwrap(), "travel__started");
+            assert!(access_during_trip, "the traveller can see the road channel");
+            assert_eq!(group_during_trip.road_role_id, None, "no road role any more");
+            let arrived = arrived.expect("the group arrives and loses the road access");
+            assert_eq!(arrived.actual_space_id, b);
+        });
+    }
 }
 
 #[cfg(test)]
@@ -526,7 +602,7 @@ pub(crate) fn tests_support_road(universe_id: mongodb::bson::oid::ObjectId, chan
         server_id: 1,
         server_two_id: None,
         road_name: "road".into(),
-        role_id: 2,
+        role_id: None,
         channel_id,
         place_one_id,
         place_two_id,

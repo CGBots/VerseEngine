@@ -21,7 +21,7 @@ Hors périmètre : abonnements (seulement l'emplacement du bouton), PNJ IA, tout
 - **Ordonnanceurs en mémoire** : `travel::logic::{MOVES, SLEEPER}`, idem `craft::logic`, `loot::logic`, rechargés depuis Mongo dans `Handler::ready`. Toute action de voyage doit passer par `add_travel` / `stop_travel` / `remove_move` **dans le même processus**.
 - **La logique slash est mêlée au `poise::Context`** : `travel/start.rs::move_from_place/move_from_road` prennent un `&serenity::Context` mais n'utilisent que `ctx.http` ; `join.rs`/`leave.rs` construisent la logique directement dans la commande. → En phase b, ces fonctions seront extraites dans `travel/service.rs` (signature `Arc<Http>` + ids), appelées à la fois par les commandes slash et par l'API. **Aucune duplication.**
 - Les **routes référencent les lieux par `category_id` Discord** (`place_one_id`, `place_two_id` = `u64`), pas par `ObjectId`. Toute l'API carte utilise donc `category_id` comme identifiant de lieu (sérialisé en chaîne, cf. § 5).
-- `Place` : aucune coordonnée. `Road` : `distance` (km), `secret`.
+- `Place` : aucune coordonnée. `Road` : `distance` (km), `secret`. Depuis Q1 (`IMPORT_SPEC.md`), une route n'a plus de rôle : l'accès à son salon est une permission individuelle posée au départ et retirée à l'arrivée.
 - `Character` : ni description ni image. La description n'existe que dans l'embed de la fiche (champ n°0). Les fiches **en attente** ne sont **pas en base** : elles n'existent que comme messages Discord avec boutons (`create_character__accept_character`…). L'acceptation lit l'embed (titre = nom, footer = user id).
 - `ItemUsage::Wearable` existe, sans état « équipé ».
 - Logs : uniquement des messages dans `log_channel_id`.

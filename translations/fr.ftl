@@ -521,18 +521,10 @@ create_place__place_two_not_found = Second lieu introuvable
     .title = Second lieu introuvable
     .message = Le second lieu spécifié n'a pas été trouvé dans l'univers.
             Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
-create_road__role_creation_failed = Erreur de création de rôle
-    .title = Erreur de création de rôle
-    .message = Le rôle de la route n'a pas pu être créé correctement.
-            Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
-create_road__create_channel_failed_rollback_success = Erreur de création de salon
+create_road__create_channel_failed = Erreur de création de salon
     .title = Erreur de création de salon
-    .message = Le salon n'a pas pu être créé, mais les modifications ont été annulées.
+    .message = Le salon de la route n'a pas pu être créé. Aucune modification n'a été faite.
             Veuillez réessayer ou contacter le support si le problème persiste : {support_link}
-create_road__create_channel_failed_rollback_failed = Erreur critique
-    .title = Erreur critique
-    .message = La création du salon a échoué et le rollback n'a pas pu être effectué.
-            Veuillez contacter le support : {support_link}
 create_road__insert_road_failed_rollback_success = Erreur d'insertion
     .title = Erreur d'insertion
     .message = La route n'a pas pu être sauvegardée, mais les modifications ont été annulées.
@@ -540,10 +532,6 @@ create_road__insert_road_failed_rollback_success = Erreur d'insertion
 create_road__insert_road_failed_rollback_channel_failed = Erreur critique
     .title = Erreur critique
     .message = L'enregistrement de la route a échoué et l'annulation du salon a échoué.
-            Veuillez contacter le support : {support_link}
-create_road__insert_road_failed_rollback_role_failed = Erreur critique
-    .title = Erreur critique
-    .message = L'enregistrement de la route a échoué et l'annulation du rôle a échoué.
             Veuillez contacter le support : {support_link}
 create_road__invalid_place_one = Identifiant du premier lieu invalide
     .title = Premier lieu invalide
