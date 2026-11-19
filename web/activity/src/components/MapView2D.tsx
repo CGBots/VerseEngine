@@ -4,6 +4,7 @@ import { initialBox, roadPath, splitAlong, type MapPoint, type PlayerMotion } fr
 import { useAnimatedPosition } from '../map/useMotion';
 import { initials, pinPath } from '../map/player';
 import { Fog2D } from './Fog2D';
+import { fitRect, fogFocus } from '../map/fog';
 
 interface Props {
   map: MapView;
@@ -55,17 +56,21 @@ export function MapView2D({ map, currentPlaceId, reachable, motion, playerPictur
   const [imageFailed, setImageFailed] = useState(false);
 
   // Cadrage de départ (une fois par carte, quand la taille de la vue est connue) : la carte remplit
-  // la vue, centrée sur le personnage. Ensuite, c'est le joueur qui déplace et zoome.
+  // la vue, centrée sur le personnage. Ensuite, c'est le joueur qui déplace et zoome. Sous
+  // brouillard, la vue cadre la zone découverte (sur une grande carte, ce ne serait qu'un point).
   const framed = useRef<string>('');
+  const focus = fogFocus(map);
+  const focusKey = focus ? `${focus.x},${focus.y},${focus.w},${focus.h}` : '';
   useEffect(() => {
     const el = ref.current;
-    const key = `${map.width}x${map.height}`;
+    const key = `${map.width}x${map.height}|${focusKey}`;
     if (!el || framed.current === key || !el.clientWidth || !el.clientHeight) return;
     // Le joueur a une position : on attend qu'elle soit calculée pour centrer dessus.
-    if (motion && !player) return;
+    if (motion && !player && !focus) return;
     framed.current = key;
-    setBox(initialBox(map.width, map.height, el.clientWidth, el.clientHeight, player));
-  }, [map.width, map.height, px, player, motion]);
+    setBox(focus ? fitRect(focus, el.clientWidth, el.clientHeight) : initialBox(map.width, map.height, el.clientWidth, el.clientHeight, player));
+    // `focus` est recalculé à chaque rendu : `focusKey` suffit.
+  }, [map.width, map.height, px, player, motion, focusKey]);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;

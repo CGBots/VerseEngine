@@ -531,6 +531,62 @@ pub fn routes() -> Router<AppState> {
 mod tests {
     use super::*;
 
+    /// Carte Moria telle qu'un joueur la reçoit sous brouillard, après deux routes depuis la
+    /// capitale la mieux reliée, écrite dans `IMPORT_FIXTURE_DIR/fog-moria.json` pour
+    /// `web/activity/fog-harness.html`.
+    #[test]
+    #[ignore = "integration test: needs AZGAAR_MAP_FILE and IMPORT_FIXTURE_DIR"]
+    fn a_real_map_fog_fixture_is_written() {
+        use crate::activity::fog::{apply_fog, Discovery};
+        use crate::database::road::Road;
+        use crate::activity::map::import_plan::{build_plan, ImportOptions};
+        let path = std::env::var("AZGAAR_MAP_FILE").expect("set AZGAAR_MAP_FILE");
+        let dir = std::path::PathBuf::from(std::env::var("IMPORT_FIXTURE_DIR").expect("set IMPORT_FIXTURE_DIR"));
+        let f = crate::activity::map::azgaar_file::parse_map_file(&std::fs::read(&path).unwrap()).unwrap();
+        let plan = build_plan(&f.map, &ImportOptions::default(), &[], &[]).unwrap();
+        let universe_id = ObjectId::new();
+        // Identifiants Discord fictifs : catégorie = identifiant du bourg, salon = 10⁶ + rang.
+        let place_of_burg: HashMap<u64, Place> = plan
+            .places
+            .iter()
+            .map(|p| (p.burg_id, Place { _id: ObjectId::new(), universe_id, server_id: 1, category_id: p.burg_id, role: 0, name: p.name.clone(), modifiers: vec![], central_channel_id: None }))
+            .collect();
+        let roads: Vec<Road> = plan
+            .roads
+            .iter()
+            .enumerate()
+            .map(|(i, r)| Road {
+                _id: ObjectId::new(),
+                universe_id,
+                server_id: 1,
+                server_two_id: None,
+                road_name: String::new(),
+                role_id: None,
+                channel_id: 1_000_000 + i as u64,
+                place_one_id: r.burg_a,
+                place_two_id: r.burg_b,
+                distance: r.distance,
+                secret: false,
+                modifiers: vec![],
+            })
+            .collect();
+        let places: Vec<Place> = place_of_burg.values().cloned().collect();
+        let map = universe_map(universe_id, &f.map, &plan, &place_of_burg, &[]);
+        let all: std::collections::HashSet<u64> = roads.iter().map(|r| r.channel_id).collect();
+        let dto = crate::activity::map_view::build_map_dto(&map, &places, &roads, &all, &[], 0);
+        let degree = |b: u64| roads.iter().filter(|r| r.place_one_id == b || r.place_two_id == b).count();
+        let other = |r: &Road, b: u64| if r.place_one_id == b { r.place_two_id } else { r.place_one_id };
+        let start = plan.places.iter().filter(|p| p.capital).max_by_key(|p| degree(p.burg_id)).unwrap().burg_id;
+        let r1 = roads.iter().find(|r| r.place_one_id == start || r.place_two_id == start).unwrap();
+        let mid = other(r1, start);
+        let r2 = roads.iter().filter(|r| r.channel_id != r1.channel_id).find(|r| (r.place_one_id == mid || r.place_two_id == mid) && other(r, mid) != start).unwrap();
+        let here = other(r2, mid);
+        let d = Discovery { here: Some(here), known_roads: [r1.channel_id, r2.channel_id].into_iter().collect(), ..Default::default() };
+        let out = apply_fog(dto, &d);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("fog-moria.json"), serde_json::to_string(&out).unwrap()).unwrap();
+    }
+
     #[test]
     fn the_universe_name_must_be_typed_exactly() {
         assert!(name_confirmed("Moria", " Moria "));

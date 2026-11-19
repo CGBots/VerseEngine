@@ -2,11 +2,12 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import type { MapView } from '../api';
-import { drawFogMask, fogShapes } from '../map/fog';
+import { drawFogMask, fogFocus, fogShapes } from '../map/fog';
 import { SCENE_SIZE } from '../map/geometry';
 
-/** Taille du masque (pixels du plus grand côté). */
-const MASK_SIZE = 512;
+/** Taille du masque (pixels du plus grand côté). Il ne couvre que la zone dégagée (`fogFocus`),
+ * le reste est dans la brume : même sur une grande carte Azgaar, les bords restent nets. */
+const MASK_SIZE = 1024;
 /** La brume déborde largement de la carte : les bords de la vue restent dans la brume. */
 const OVERSCAN = 3;
 /** Ordre de rendu de la brume : routes empruntées, lieux et noms sont dessinés après. */
@@ -30,6 +31,8 @@ const fragment = /* glsl */ `
   uniform sampler2D uMask;
   uniform float uTime;
   uniform vec2 uMaskScale;
+  uniform vec4 uMaskRect; // coin et taille du masque, en UV de la carte
+  uniform float uNoise; // fréquence du bruit
   varying vec2 vUv;
 
   float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -47,9 +50,10 @@ const fragment = /* glsl */ `
   void main() {
     // UV de la carte dans le plan agrandi.
     vec2 mapUv = (vUv - 0.5) * uMaskScale + 0.5;
-    float inside = step(0.0, mapUv.x) * step(mapUv.x, 1.0) * step(0.0, mapUv.y) * step(mapUv.y, 1.0);
-    float clear = texture2D(uMask, mapUv).r * inside;
-    vec2 p = vUv * 18.0;
+    vec2 maskUv = (mapUv - uMaskRect.xy) / uMaskRect.zw;
+    float inside = step(0.0, maskUv.x) * step(maskUv.x, 1.0) * step(0.0, maskUv.y) * step(maskUv.y, 1.0);
+    float clear = texture2D(uMask, maskUv).r * inside;
+    vec2 p = vUv * uNoise;
     float n1 = fbm(p + vec2(uTime * 0.05, uTime * 0.03));
     float n2 = fbm(p * 2.1 - vec2(uTime * 0.08, -uTime * 0.02));
     // Le bord des zones découvertes ondule avec la brume.
@@ -69,34 +73,46 @@ export function FogLayer({ map, height }: { map: MapView; height: number }) {
   const sceneW = (map.width / side) * SCENE_SIZE;
   const sceneH = (map.height / side) * SCENE_SIZE;
 
+  // Zone couverte par le masque (repère de la carte) ; hors de cette zone, tout est dans la brume.
+  const rect = useMemo(() => fogFocus(map, shapes) ?? { x: 0, y: 0, w: map.width || 1, h: map.height || 1 }, [map, shapes]);
+  // Grain de la brume : à l'échelle de la zone découverte, sinon, zoomé sur une petite zone d'une
+  // grande carte, on ne verrait qu'une seule nappe uniforme.
+  const noise = useMemo(() => {
+    const size = (Math.max(rect.w, rect.h) / side) * SCENE_SIZE;
+    return Math.min(200, Math.max(18, (18 * 40) / Math.max(size, 1)));
+  }, [rect, side]);
   const texture = useMemo(() => {
     if (!shapes) return null;
     const canvas = document.createElement('canvas');
-    const scale = MASK_SIZE / side;
-    canvas.width = Math.max(2, Math.round(map.width * scale));
-    canvas.height = Math.max(2, Math.round(map.height * scale));
+    const scale = MASK_SIZE / Math.max(rect.w, rect.h);
+    canvas.width = Math.max(2, Math.round(rect.w * scale));
+    canvas.height = Math.max(2, Math.round(rect.h * scale));
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
     // Bords adoucis (ignoré par les navigateurs sans `filter` : les dégradés suffisent).
-    ctx.filter = 'blur(6px)';
-    drawFogMask(ctx, shapes, scale, canvas.width, canvas.height);
+    ctx.filter = 'blur(10px)';
+    drawFogMask(ctx, shapes, scale, canvas.width, canvas.height, rect);
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.NoColorSpace;
     return tex;
-  }, [shapes, map.width, map.height, side]);
+  }, [shapes, rect]);
   useEffect(() => () => texture?.dispose(), [texture]);
 
   const material = useMemo(
     () =>
       texture &&
       new THREE.ShaderMaterial({
-        uniforms: { uMask: { value: texture }, uTime: { value: 0 }, uMaskScale: { value: new THREE.Vector2(OVERSCAN * SCENE_SIZE / sceneW, OVERSCAN * SCENE_SIZE / sceneH) } },
+        uniforms: { uMask: { value: texture }, uTime: { value: 0 }, uMaskScale: { value: new THREE.Vector2(OVERSCAN * SCENE_SIZE / sceneW, OVERSCAN * SCENE_SIZE / sceneH) },
+          // En UV, v monte vers le nord (haut du canevas = y de carte le plus petit).
+          uMaskRect: { value: new THREE.Vector4(rect.x / (map.width || 1), 1 - (rect.y + rect.h) / (map.height || 1), rect.w / (map.width || 1), rect.h / (map.height || 1)) },
+          uNoise: { value: noise },
+        },
         vertexShader: vertex,
         fragmentShader: fragment,
         transparent: true,
         depthWrite: false,
       }),
-    [texture, sceneW, sceneH],
+    [texture, sceneW, sceneH, rect, map.width, map.height, noise],
   );
   useEffect(() => () => material?.dispose(), [material]);
 
