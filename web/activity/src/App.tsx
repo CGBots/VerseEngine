@@ -20,6 +20,8 @@ type State =
 const fallbackT: Translator = (k) => k;
 // three.js est volumineux : chargé à part, après le panneau du personnage.
 const MapScene = lazy(() => import('./components/MapScene').then((m) => ({ default: m.MapScene })));
+// Import de carte (vue admin) : chargé seulement quand il est ouvert.
+const ImportWizard = lazy(() => import('./admin/ImportWizard').then((m) => ({ default: m.ImportWizard })));
 const errorKey = (e: unknown) => (e instanceof ApiError ? e.key : 'activity__internal_error');
 
 /** Description du mouvement du joueur ; l'animation est faite par la carte (`useAnimatedPosition`). */
@@ -64,6 +66,9 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  /** Incrémenté quand le bot rejoint ou quitte un serveur : l'écran d'import relit la liste. */
+  const [serversVersion, setServersVersion] = useState(0);
   const use3d = useRef(webglAvailable()).current;
 
   const loadCharacter = useCallback(async () => {
@@ -118,6 +123,7 @@ export function App() {
       if (event === 'travel_updated') void Promise.all([loadTravel(), loadCharacter()]);
       else if (event === 'character_updated') void loadCharacter();
       else if (event === 'map_updated') void Promise.all([loadMap(), loadTravel()]);
+      else if (event === 'servers_updated') setServersVersion((v) => v + 1);
       else void reloadAll();
     });
   }, [ready, loadTravel, loadCharacter, loadMap, reloadAll]);
@@ -154,8 +160,20 @@ export function App() {
     );
 
   const { session } = state;
+  // Fin d'un import : nouvelle connexion silencieuse, la session est alors reliée à l'univers.
+  const afterImport = () => {
+    setImportOpen(false);
+    void start();
+  };
   if (!session.universe)
-    return (
+    return session.can_import ? (
+      <div className="import-page">
+        <p className="muted">{t('activity_ui__no_universe_admin')}</p>
+        <Suspense fallback={<div className="center">{t('activity_ui__loading')}</div>}>
+          <ImportWizard t={t} universeName={null} serversVersion={serversVersion} onDone={afterImport} />
+        </Suspense>
+      </div>
+    ) : (
       <div className="center">
         <p>{t('activity_ui__no_universe_yet')}</p>
       </div>
@@ -251,6 +269,18 @@ export function App() {
           )}
         </div>
       </main>
+      {adminMode && session.can_import && !importOpen && (
+        <button type="button" className="import-open" onClick={() => setImportOpen(true)}>{t('activity_ui__import_title')}</button>
+      )}
+      {importOpen && (
+        <div className="dialog-backdrop">
+          <div className="dialog import-dialog">
+            <Suspense fallback={<p>{t('activity_ui__loading')}</p>}>
+              <ImportWizard t={t} universeName={universe.name} serversVersion={serversVersion} onClose={() => setImportOpen(false)} onDone={afterImport} />
+            </Suspense>
+          </div>
+        </div>
+      )}
       {settingsOpen && <SettingsPanel t={t} onClose={() => setSettingsOpen(false)} />}
     </div>
   );

@@ -129,3 +129,102 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (typeof body.server_time === 'number') clock.sync(body.server_time);
   return body as T;
 }
+
+// ---------------------------------------------------------------------------
+// Import de carte (vue admin)
+// ---------------------------------------------------------------------------
+
+export type ImportMode = 'replace' | 'merge' | 'reimport';
+export type SetupType = 'FullSetup' | 'PartialSetup';
+
+export interface ServerChoice {
+  guild_id: string;
+  name: string;
+  linked: 'none' | 'this' | 'other';
+  eligible: boolean;
+  current: boolean;
+}
+
+export interface ServerList {
+  servers: ServerChoice[];
+  max_places_per_server: number;
+  invite_url: string | null;
+}
+
+export interface UploadedMap {
+  name: string | null;
+  version: string;
+  width: number;
+  height: number;
+  distance_unit: string | null;
+  route_count: number;
+  burgs: { id: number; name: string; x: number; y: number; capital: boolean }[];
+  terrain: { cols: number; rows: number; heights: number[] } | null;
+  suggestions: { place_id: string; place_name: string; status: 'exact' | 'ambiguous' | 'partial' | 'none'; burgs: number[] }[];
+  has_universe: boolean;
+}
+
+export type PlaceAction = { kind: 'create' } | { kind: 'keep'; category_id: string } | { kind: 'attach'; category_id: string };
+export type RoadAction = { kind: 'create' } | { kind: 'keep'; channel_id: string } | { kind: 'update'; channel_id: string };
+
+export interface ServerBudget {
+  places: number;
+  roads_hosted: number;
+  road_categories: number;
+  channels: number;
+  roles: number;
+}
+
+export interface ImportPlan {
+  places: { burg_id: number; name: string; x: number; y: number; capital: boolean; action: PlaceAction; server: number }[];
+  roads: { burg_a: number; burg_b: number; distance: number; uses_sea: boolean; secret: boolean; path: [number, number][]; action: RoadAction; host: number }[];
+  remove_places: string[];
+  remove_roads: string[];
+  servers: { guild_id: string | null; budget: ServerBudget }[];
+  cut_roads: number;
+  isolated: number[];
+}
+
+export interface PlanResponse {
+  plan: ImportPlan;
+  servers_to_create: number;
+  discord_objects: number;
+  universe_name: string | null;
+}
+
+export interface PlanRequest {
+  mode: ImportMode;
+  include_sea: boolean;
+  secret: [number, number][];
+  attach: { burg_id: number; place_id: string }[];
+  servers: string[];
+  setup: SetupType;
+}
+
+export interface ExecuteRequest {
+  plan: PlanRequest;
+  confirm_name: string;
+  new_universe?: { name: string; time_modifier?: number };
+}
+
+export interface JobState {
+  progress: { phase: 'Creating' | 'Waiting' | 'RollingBack' | 'Done' | 'RolledBack' | 'RollbackIncomplete'; done: number; total: number };
+  outcome: { status: 'running' } | { status: 'done'; universe_id: string } | { status: 'failed'; error: string; rolled_back: boolean };
+}
+
+/** Envoi brut d'une sauvegarde `.map` (le serveur la lit lui-même, 32 Mio au plus). */
+export async function uploadMapFile(bytes: ArrayBuffer): Promise<UploadedMap> {
+  const headers = new Headers({ Accept: 'application/json', 'Content-Type': 'application/octet-stream' });
+  if (sessionToken) headers.set('Authorization', `Bearer ${sessionToken}`);
+  const res = await fetch('/api/admin/import/map', { method: 'POST', headers, body: bytes });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(res.status, typeof body.error === 'string' ? body.error : 'activity__internal_error');
+  return body as UploadedMap;
+}
+
+export const importApi = {
+  servers: () => api<ServerList>('/admin/import/servers'),
+  plan: (req: PlanRequest) => api<PlanResponse>('/admin/import/plan', { method: 'POST', body: JSON.stringify(req) }),
+  execute: (req: ExecuteRequest) => api<{ job_id: string; total: number }>('/admin/import/execute', { method: 'POST', body: JSON.stringify(req) }),
+  job: (id: string) => api<JobState>(`/admin/import/jobs/${encodeURIComponent(id)}`),
+};

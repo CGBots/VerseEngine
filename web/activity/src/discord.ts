@@ -3,6 +3,14 @@ import { api, setSessionToken, type SessionInfo } from './api';
 
 const CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID;
 
+let activeSdk: DiscordSDK | null = null;
+
+/** Ouvre un lien dans le navigateur (Discord demande confirmation à l'utilisateur). */
+export async function openExternal(url: string): Promise<void> {
+  if (activeSdk) await activeSdk.commands.openExternalLink({ url });
+  else window.open(url, '_blank', 'noopener');
+}
+
 /**
  * Flux OAuth2 de l'Embedded App SDK :
  * authorize (code) → échange côté serveur (secret) → authenticate (access_token).
@@ -13,6 +21,7 @@ export async function connect(): Promise<{ sdk: DiscordSDK; session: SessionInfo
   const sdk = new DiscordSDK(CLIENT_ID);
   const instanceId = sdk.instanceId;
   await sdk.ready();
+  activeSdk = sdk;
 
   const { code } = await sdk.commands.authorize({
     client_id: CLIENT_ID,

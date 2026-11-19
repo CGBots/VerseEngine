@@ -493,6 +493,32 @@ mod tests {
         assert!(d.get(1, MAX_DRAFTS as u64 + 2).is_none());
     }
 
+    /// Réponses `map` et `plan` calculées sur une vraie carte (`AZGAAR_MAP_FILE`), écrites dans
+    /// `IMPORT_FIXTURE_DIR` : la page de test du front (`web/activity/import-harness.html`) les
+    /// sert à la place de l'API pour vérifier l'écran d'import dans un vrai navigateur.
+    #[test]
+    #[ignore = "integration test: needs AZGAAR_MAP_FILE and IMPORT_FIXTURE_DIR"]
+    fn a_real_map_preview_fixture_is_written() {
+        use crate::activity::map::import_plan::{build_plan, ImportOptions, KnownServer};
+        let path = std::env::var("AZGAAR_MAP_FILE").expect("set AZGAAR_MAP_FILE");
+        let dir = std::path::PathBuf::from(std::env::var("IMPORT_FIXTURE_DIR").expect("set IMPORT_FIXTURE_DIR"));
+        let f = crate::activity::map::azgaar_file::parse_map_file(&std::fs::read(&path).unwrap()).unwrap();
+        let terrain = resample_terrain(&f.map, crate::activity::map::azgaar::MAX_TERRAIN_SIDE);
+        let upload = serde_json::json!({
+            "name": f.map.name, "version": f.version, "width": f.map.width, "height": f.map.height,
+            "distance_unit": f.map.distance_unit, "route_count": f.map.routes.len(),
+            "burgs": f.map.burgs.iter().map(|b| BurgDto { id: b.id, name: b.name.clone(), x: b.x, y: b.y, capital: b.capital }).collect::<Vec<_>>(),
+            "terrain": terrain.as_ref().map(|t| serde_json::json!({ "cols": t.cols, "rows": t.rows, "heights": t.heights })),
+            "suggestions": [], "has_universe": false,
+        });
+        let options = ImportOptions { servers: vec![KnownServer { guild_id: 1100433828931194931, load: ServerLoad { channels: 14, roles: 8 } }], ..Default::default() };
+        let plan = build_plan(&f.map, &options, &[], &[]).unwrap();
+        let plan = serde_json::json!({ "plan": plan, "servers_to_create": plan.servers_to_create(), "discord_objects": plan.discord_objects_to_create(), "universe_name": null });
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("upload.json"), upload.to_string()).unwrap();
+        std::fs::write(dir.join("plan.json"), plan.to_string()).unwrap();
+    }
+
     /// Bout en bout à travers le routeur, contre MongoDB, avec un faux Discord.
     mod routes_integration {
         use super::*;

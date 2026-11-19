@@ -202,3 +202,16 @@ Décision : **l'import reste bloqué tant que tous les serveurs nécessaires ne 
 - L'écran (E5) montre un emplacement par serveur nécessaire : le serveur courant, puis un menu par emplacement. Un bouton ouvre le lien d'invitation (`openExternalLink` du SDK, Discord demande confirmation) ; l'admin crée le serveur dans Discord puis y invite le bot.
 - **Mise à jour sans interroger Discord en boucle** : quand le bot rejoint ou quitte un serveur (`guild_create`, `guild_delete` ; intent `GUILDS` ajouté), l'évènement `servers_updated` est poussé par WebSocket aux administrateurs, et l'écran relit la liste.
 - « Valider » reste grisé tant qu'un emplacement est vide ; le serveur refuse aussi (`activity__import_servers_missing`).
+
+## 14. E5 livrée : écrans de l'activité (19/11/2026)
+
+- `web/activity/src/admin/` : `ImportWizard` (chargé à la demande), `ImportPreview`, `importModel` (logique testée).
+- **Serveur sans univers** : l'admin arrive directement sur l'assistant ; un joueur voit un message d'attente. **Univers existant** : en mode admin, bouton « Carte de l'univers » (créateur ou administrateur seulement).
+- Étapes : choix « Importer une carte » / « Générer une map » (E7, grisé) → instructions Azgaar (lien vers azgaar.github.io par `openExternalLink`, « Save » puis « Save to machine ») et choix du `.map` → aperçu et réglages → récapitulatif et saisie du nom (I12) → progression (création puis, en cas d'erreur, retour en arrière en rouge) → « Ouvrir l'univers » (nouvelle connexion silencieuse).
+- **Aperçu** (Q3, rendu de l'activité) : relief Azgaar lissé, lieux colorés par serveur, routes (jaune : entre deux serveurs ; tirets : maritimes ; rouge en tirets : secrètes). **Clic sur une route : secrète ou publique** (I7). Molette : zoom ; glisser : déplacer.
+- **Réglages** : mode (si un univers existe : créer en plus, ré-import, remplacer), routes maritimes (décochées), type d'installation des nouveaux serveurs, rattachements proposés par nom (créer en plus).
+- **Serveurs (Q11)** : un emplacement par serveur nécessaire avec son budget (lieux, salons) ; menus limités aux serveurs utilisables et pas déjà pris ; bouton d'invitation du bot ; liste relue à l'évènement `servers_updated`. « Suivant » et « Créer » restent grisés tant qu'un emplacement est vide (et le serveur refuse aussi).
+- Nouvel univers : nom (prérempli avec celui de la carte) et vitesse du temps facultative (I14).
+- Aperçu recalculé 1,2 s après le dernier changement (le serveur limite à 1 par seconde).
+- **Vérifié dans un vrai navigateur** (Chromium, Playwright) avec Moria : page `web/activity/import-harness.html` (développement seulement, absente du build) et scénario `web/activity/e2e/import-harness.cjs`, sur des réponses calculées par le code Rust (`a_real_map_preview_fixture_is_written`). Bureau et téléphone ; aucune erreur dans la console.
+- Limites : pas encore de zoom à deux doigts sur l'aperçu (le glisser marche) ; pas de sélection manuelle des bourgs ni de zone explorable dans l'écran (l'API les accepte déjà) ; l'estimation de durée ne compte pas l'installation des nouveaux serveurs.
