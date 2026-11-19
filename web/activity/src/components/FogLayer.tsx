@@ -9,6 +9,8 @@ import { SCENE_SIZE } from '../map/geometry';
 const MASK_SIZE = 512;
 /** La brume déborde largement de la carte : les bords de la vue restent dans la brume. */
 const OVERSCAN = 3;
+/** Ordre de rendu de la brume : routes empruntées, lieux et noms sont dessinés après. */
+export const FOG_ORDER = 5;
 /** Images par seconde de l'animation (la scène est rendue à la demande). */
 const FPS = 30;
 
@@ -110,7 +112,7 @@ export function FogLayer({ map, height }: { map: MapView; height: number }) {
 
   if (!material) return null;
   return (
-    <mesh position={[0, height, 0]} rotation={[-Math.PI / 2, 0, 0]} material={material} renderOrder={5}>
+    <mesh position={[0, height, 0]} rotation={[-Math.PI / 2, 0, 0]} material={material} renderOrder={FOG_ORDER}>
       <planeGeometry args={[OVERSCAN * SCENE_SIZE, OVERSCAN * SCENE_SIZE]} />
     </mesh>
   );

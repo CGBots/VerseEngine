@@ -7,9 +7,11 @@ import { pointAlong, roadPath, SCENE_SIZE, toScene, type MapPoint, type PlayerMo
 import { useAnimatedPosition } from '../map/useMotion';
 import { biomeColor, LAND, proceduralTerrain, type Heightmap } from '../map/procedural';
 import { labelTexture, PIN_ASPECT, pinTexture } from '../map/sprites';
-import { FogLayer } from './FogLayer';
+import { FOG_ORDER, FogLayer } from './FogLayer';
 
 const RELIEF = 7; // hauteur maximale du relief (unités de scène)
+/** Ordre de rendu de ce qui passe au-dessus de la brume (la brume est à `FOG_ORDER`). */
+const ABOVE_FOG = FOG_ORDER + 1;
 
 interface Props {
   map: MapView;
@@ -100,30 +102,38 @@ function Roads({ map, hm }: { map: MapView; hm: Heightmap }) {
   useEffect(() => () => tubes.forEach((t) => t.geometry.dispose()), [tubes]);
   return (
     <>
-      {tubes.map((t) => (
-        <mesh key={t.id} geometry={t.geometry}>
-          <meshLambertMaterial color={t.secret ? '#d4a72c' : '#efe6d2'} />
-        </mesh>
-      ))}
+      {tubes.map((t) => {
+        // Sous brouillard, les routes envoyées (empruntées, ou qui partent d'ici vers une
+        // destination) sont dessinées après la brume, qui n'écrit pas la profondeur : visibles
+        // par-dessus, mais toujours cachées par le relief.
+        const above = !!map.fog;
+        return (
+          <mesh key={t.id} geometry={t.geometry} renderOrder={above ? ABOVE_FOG : 0}>
+            <meshLambertMaterial color={t.secret ? '#d4a72c' : '#efe6d2'} transparent={above} />
+          </mesh>
+        );
+      })}
     </>
   );
 }
 
 /** Lieu : cercle à plat (pastille + contour) et son nom. */
-function Place({ x, y, z, name, color, onClick }: { x: number; y: number; z: number; name: string; color: string; onClick: () => void }) {
+function Place({ x, y, z, name, color, aboveFog, onClick }: { x: number; y: number; z: number; name: string; color: string; aboveFog: boolean; onClick: () => void }) {
   const label = useMemo(() => labelTexture(name), [name]);
   useEffect(() => () => label.texture.dispose(), [label]);
+  // Sous brouillard, la pastille et le nom sont dessinés après la brume : toujours lisibles.
+  const order = aboveFog ? ABOVE_FOG + 1 : 0;
   return (
     <group position={[x, y, z]}>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]} onClick={(e) => { e.stopPropagation(); onClick(); }}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]} renderOrder={order} onClick={(e) => { e.stopPropagation(); onClick(); }}>
         <circleGeometry args={[1.25, 32]} />
-        <meshBasicMaterial color={color} />
+        <meshBasicMaterial color={color} transparent={aboveFog} />
       </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.08, 0]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.08, 0]} renderOrder={order}>
         <ringGeometry args={[1.25, 1.6, 32]} />
-        <meshBasicMaterial color="#141518" />
+        <meshBasicMaterial color="#141518" transparent={aboveFog} />
       </mesh>
-      <sprite position={[0, 2.4, 0]} scale={[0.035 * label.aspect, 0.035, 1]}>
+      <sprite position={[0, 2.4, 0]} scale={[0.035 * label.aspect, 0.035, 1]} renderOrder={aboveFog ? ABOVE_FOG + 2 : 0}>
         <spriteMaterial map={label.texture} sizeAttenuation={false} depthTest={false} transparent />
       </sprite>
     </group>
@@ -203,7 +213,7 @@ export function MapScene({ map, currentPlaceId, reachable, motion, playerPicture
       {map.places.map((p) => {
         const s = toScene(p.x, p.y, map.width, map.height);
         const color = p.id === currentPlaceId ? '#57f287' : reachable.has(p.id) ? '#5865f2' : '#f2f3f5';
-        return <Place key={p.id} x={s.x} y={elevation(hm, map, p.x, p.y)} z={s.z} name={p.name} color={color} onClick={() => onSelectPlace(p.id)} />;
+        return <Place key={p.id} x={s.x} y={elevation(hm, map, p.x, p.y)} z={s.z} name={p.name} color={color} aboveFog={!!map.fog} onClick={() => onSelectPlace(p.id)} />;
       })}
       {motion && <Player map={map} hm={hm} motion={motion} picture={playerPicture} name={playerName} />}
       {/* Brouillard (E8) : au-dessus du plus haut relief. */}

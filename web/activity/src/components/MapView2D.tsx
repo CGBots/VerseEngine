@@ -127,6 +127,20 @@ export function MapView2D({ map, currentPlaceId, reachable, motion, playerPictur
   const pinR = 17 * unit;
   const pinH = 50 * unit;
   const showImage = background && !imageFailed;
+  // Sous brouillard, les routes envoyées (empruntées, ou vers une destination) sont dessinées
+  // par-dessus la brume : le serveur n'envoie que celles-là.
+  const aboveFog = (road: MapView['roads'][number]) => !!map.fog && !!road;
+  const drawRoad = (road: MapView['roads'][number]) => {
+    // Avec Azgaar, les routes sont déjà dessinées sur la carte : seule la route secrète connue est marquée.
+    if (showImage && !road.secret) return null;
+    const pts = roadPath(map, road.from, road.to);
+    if (pts.length < 2) return null;
+    return (
+      <polyline key={road.id} points={toAttr(pts)} fill="none"
+        stroke={road.secret ? '#d4a72c' : '#d9d9d9'} strokeWidth={3 * unit} strokeDasharray={road.secret ? `${6 * unit} ${4 * unit}` : undefined}
+        strokeLinecap="round" strokeLinejoin="round" />
+    );
+  };
   return (
     <svg
       ref={ref}
@@ -147,17 +161,7 @@ export function MapView2D({ map, currentPlaceId, reachable, motion, playerPictur
       {showImage && (
         <image href={background} x={0} y={0} width={map.width} height={map.height} preserveAspectRatio="none" onError={() => setImageFailed(true)} />
       )}
-      {map.roads.map((road) => {
-        // Avec Azgaar, les routes sont déjà dessinées sur la carte : seule la route secrète connue est marquée.
-        if (showImage && !road.secret) return null;
-        const pts = roadPath(map, road.from, road.to);
-        if (pts.length < 2) return null;
-        return (
-          <polyline key={road.id} points={toAttr(pts)} fill="none"
-            stroke={road.secret ? '#d4a72c' : '#d9d9d9'} strokeWidth={3 * unit} strokeDasharray={road.secret ? `${6 * unit} ${4 * unit}` : undefined}
-            strokeLinecap="round" strokeLinejoin="round" />
-        );
-      })}
+      {map.roads.filter((road) => !aboveFog(road)).map(drawRoad)}
       {motion?.kind === 'road' && animated?.progress != null && (() => {
         // Trajet le long du tracé de la route : parcouru en plein, restant en pointillés.
         const { traveled, remaining } = splitAlong(motion.path, animated.progress);
@@ -169,8 +173,9 @@ export function MapView2D({ map, currentPlaceId, reachable, motion, playerPictur
           </g>
         );
       })()}
-      {/* Brouillard (E8) : sous les lieux, qui sont tous découverts ou entrevus. */}
+      {/* Brouillard (E8) : sous les routes et les lieux envoyés, qui restent lisibles. */}
       <Fog2D map={map} />
+      {map.roads.filter(aboveFog).map(drawRoad)}
       {map.places.map((p) => {
         const fill = p.id === currentPlaceId ? '#57f287' : reachable.has(p.id) ? '#5865f2' : '#f2f3f5';
         return (
