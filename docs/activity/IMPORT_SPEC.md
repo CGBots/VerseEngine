@@ -17,7 +17,7 @@ Dans les deux cas, on peut **valider** (double vérification) ou **annuler**. Ap
 | I1 | Accès | Seuls le **créateur de l'univers** et les **administrateurs** voient et utilisent l'import et la génération. |
 | I2 | Serveur sans univers | L'activité **doit se lancer** sur un serveur non relié à un univers. Les administrateurs du serveur peuvent alors créer l'univers par l'import ou la génération. |
 | I3 | Azgaar dans Discord | On tente de faire tourner Azgaar dans l'activité (version figée, MIT, polices servies depuis notre domaine). **Si ce n'est pas possible** : redirection vers **azgaar.github.io**, puis import du `.map` sauvegardé. |
-| I4 | Répartition sur plusieurs serveurs | **150 lieux au plus par serveur**, et respect des limites de Discord (§ 4). L'univers est **réparti sur plusieurs serveurs** en **minimisant les routes entre serveurs**. Avant la validation, l'admin voit **combien de serveurs** sont nécessaires, pour les créer. |
+| I4 | Répartition sur plusieurs serveurs | **60 lieux au plus par serveur** (150 à l'origine, réduit par Q9), et respect des limites de Discord (§ 4). L'univers est **réparti sur plusieurs serveurs** en **minimisant les routes entre serveurs**. Avant la validation, l'admin voit **combien de serveurs** sont nécessaires, pour les créer. |
 | I5 | Lieu | Comme `/place_create_place` (rôle + catégorie), **plus un salon textuel générique** valable pour tout type de lieu, par exemple `#place-centrale`. |
 | I6 | États, provinces, régions d'Azgaar | **Ignorés** pour l'instant. |
 | I7 | Routes | Une route par paire de lieux voisins, distance calculée sur le tracé Azgaar. **Routes maritimes : case « inclure »**, décochée par défaut. **Routes secrètes : un clic sur la route dans l'aperçu, puis une case « secrète »**. Les deux réglages sont indépendants. |
@@ -53,13 +53,13 @@ L'admin doit donc **créer lui-même les serveurs** et y inviter le bot. L'impor
 
 **Budget d'un serveur** avec le modèle actuel : un lieu = 1 rôle + 1 catégorie + 1 salon ; une route = 1 rôle + 1 salon, dans des catégories de routes d'au plus 50 salons. L'installation de base consomme aussi quelques rôles et salons.
 
-Avec 150 lieux, il reste environ 95 rôles pour les routes (250 − 150 − environ 5 rôles de base). Or un réseau de 150 lieux compte généralement 1,3 à 2 routes par lieu, soit environ 200 à 300 routes. **C'est la limite des rôles qui bloque, pas celle de 150 lieux** (voir la question Q1).
+Avec 150 lieux, il reste environ 95 rôles pour les routes (250 − 150 − environ 5 rôles de base). Or un réseau de 150 lieux compte généralement 1,3 à 2 routes par lieu, soit environ 200 à 300 routes. **C'est la limite des rôles qui bloque, pas celle de 150 lieux** (voir la question Q1). *Historique : la limite est passée à 60 lieux (Q9).*
 
 ## 5. Réponses aux dernières questions (19/11/2026)
 
 | # | Sujet | Décision |
 |---|-------|----------|
-| Q1 | Rôles des routes | **Option (b)** : plus de rôle par route. L'accès au salon d'une route se donne par une **permission individuelle** sur ce salon, posée au départ du voyage et retirée à l'arrivée ou à l'arrêt. Le voyage du bot (`travel/logic.rs`, `manage_roles`, `travel/service.rs`) change en conséquence, pour les commandes slash comme pour l'activité. Une migration des routes existantes (rôle → permissions) est à prévoir. Budget : environ 150 lieux par serveur (1 rôle + 1 catégorie + 1 salon chacun), routes limitées par le nombre de salons (500 par serveur, 50 par catégorie) et par les permissions (1 000 par salon, code d'erreur 30060). |
+| Q1 | Rôles des routes | **Option (b)** : plus de rôle par route. L'accès au salon d'une route se donne par une **permission individuelle** sur ce salon, posée au départ du voyage et retirée à l'arrivée ou à l'arrêt. Le voyage du bot (`travel/logic.rs`, `manage_roles`, `travel/service.rs`) change en conséquence, pour les commandes slash comme pour l'activité. Une migration des routes existantes (rôle → permissions) est à prévoir. Budget : 60 lieux par serveur depuis Q9 (1 rôle + 1 catégorie + 1 salon chacun), routes limitées par le nombre de salons (500 par serveur, 50 par catégorie) et par les permissions (1 000 par salon, code d'erreur 30060). |
 | Q2 | Objets posés sans propriétaire | Avant la validation, l'admin est **alerté** de la liste des objets qui seront **détruits**, et **doit confirmer**. |
 | Q3 | Visuels sans Azgaar dans Discord | La solution la plus durable : **le rendu 2D/3D de l'activité**. Le SVG de la ligne 5 du `.map` n'est pas utilisé. |
 | Q4 | Brouillard | **Un vrai effet de brouillard** (brume animée et opaque) qui empêche toute lecture de la carte hors des zones découvertes. Ni masquage, ni assombrissement, ni noircissement. |
@@ -69,7 +69,7 @@ Avec 150 lieux, il reste environ 95 rôles pour les routes (250 − 150 − envi
 
 - Faisabilité d'Azgaar dans l'iframe de l'activité (I3) : CSP de Discord, iframe imbriquée, polices servies depuis notre domaine. Sinon, redirection vers azgaar.github.io (instructions), puis import du `.map` et rendu par l'activité (Q3).
 - Limites de débit de Discord lors de la création en masse de salons et de rôles (respect de `Retry-After`, barre de progression).
-- Partition des lieux entre serveurs (I4) : graphe pondéré par les routes, au plus 150 lieux et dans le budget de salons par serveur, en minimisant les routes entre serveurs.
+- Partition des lieux entre serveurs (I4) : graphe pondéré par les routes, au plus 60 lieux (Q9) et dans le budget de salons par serveur, en minimisant les routes entre serveurs.
 
 ## 7. Résultats des vérifications (19/11/2026, session « import de carte »)
 
@@ -88,8 +88,8 @@ Script : 30 salons puis 30 rôles créés à la suite, puis supprimés.
 | Suppressions | — | ne consomment pas les quotas ci-dessus | — |
 
 Conséquences :
-- **Quota de 250 créations de rôles par serveur sur plusieurs heures**, indépendant de la limite de 250 rôles présents. 150 lieux + 4 rôles de base passent, mais **un import raté puis relancé** peut épuiser le quota. Confirme Q1 (plus de rôle par route) et impose : (1) ne jamais recréer un rôle existant (I10), (2) si Discord demande d'attendre plus de quelques secondes, **arrêter et revenir en arrière** au lieu d'attendre des heures (serenity dort sur `Retry-After` sans plafond : il faut intercepter via le callback du `Ratelimiter` ou un délai maximal).
-- Durée estimée d'un serveur complet (150 lieux = 450 objets Discord + ~200 routes) : **4 à 5 minutes**, d'où la barre de progression (I13).
+- **Quota de 250 créations de rôles par serveur sur plusieurs heures**, indépendant de la limite de 250 rôles présents. 60 lieux + 4 rôles de base passent (Q9), mais **un import raté puis relancé** consomme à nouveau le quota. Confirme Q1 (plus de rôle par route) et impose : (1) ne jamais recréer un rôle existant (I10), (2) **espacer les créations de rôles** et afficher l'attente imposée par Discord dans la progression (Q8 ; serenity dort déjà sur `Retry-After`).
+- Durée estimée d'un serveur complet (60 lieux = 180 objets Discord + ~90 routes) : **environ 2 minutes**, d'où la barre de progression (I13).
 - serenity 0.12 respecte déjà `Retry-After` et la limite globale (`http/ratelimiting.rs`).
 
 ### 7.3 Permissions individuelles sur un salon de route (Q1)
@@ -98,10 +98,10 @@ Essai `PUT /channels/{id}/permissions/{user_id}` (type membre) sur un salon temp
 - `DELETE` d'une permission absente : **204** (idempotent, donc sûr pour l'arrêt et l'arrivée rejoués après un redémarrage).
 
 ### 7.4 Répartition des lieux entre serveurs (I4)
-Budget d'un serveur : rôles `lieux + 4 ≤ 250` ; salons `base + 2 × lieux + routes hébergées + ⌈routes hébergées / 50⌉ ≤ 500` (base : 9 salons en installation complète, 1 en partielle) ; lieux ≤ 150. Une route entre deux serveurs est hébergée par l'un des deux (celui qui a le plus de marge) ; ses voyageurs doivent être membres des deux serveurs, comme aujourd'hui (`server_two_id`).
+Budget d'un serveur : lieux ≤ **60** (Q9) ; rôles `lieux + 4 ≤ 250` ; salons `base + 2 × lieux + routes hébergées + ⌈routes hébergées / 50⌉ ≤ 500` (base : 9 salons en installation complète, 1 en partielle). Une route entre deux serveurs est hébergée par l'un des deux (celui qui a le plus de marge) ; ses voyageurs doivent être membres des deux serveurs, comme aujourd'hui (`server_two_id`).
 
 Algorithme retenu (pur, déterministe, testé hors Discord) :
-1. `k` = nombre minimal de serveurs, d'abord `⌈lieux / 150⌉`, augmenté tant qu'aucune répartition ne respecte les budgets ;
+1. `k` = nombre minimal de serveurs, d'abord `⌈lieux / 60⌉`, augmenté tant qu'aucune répartition ne respecte les budgets ;
 2. graines éloignées (point le plus loin du précédent, distance par les routes), puis **croissance de régions** par Dijkstra multi-source, en respectant la capacité ;
 3. **raffinement Fiduccia–Mattheyses** : déplacer un lieu de bordure si cela réduit le nombre de routes entre serveurs sans dépasser un budget ;
 4. résultat : affectation lieu → serveur, nombre de routes coupées, budget restant de chaque serveur (affiché à l'admin avant validation).
@@ -129,3 +129,4 @@ Chaque étape est testée, poussée sur `feature/map-import`, et met à jour `PR
 | Q6 | Découpage | Ordre E1 → E9 validé. |
 | Q7 | Anciens rôles de route | La migration **supprime** chaque rôle de route une fois les permissions individuelles posées. |
 | Q8 | Quota de 250 créations de rôles | **Temporiser** la création pour l'étaler, plutôt qu'annuler. Selon l'utilisateur, atteindre 250 créations revient de toute façon à atteindre la limite dure de 250 rôles présents. Nuance retenue pour la mise en œuvre : le quota compte aussi les rôles créés puis supprimés (retour en arrière, nouvel essai). L'exécuteur espace donc les créations de rôles, ne recrée jamais un rôle existant (I10), et affiche l'attente dans la barre de progression quand Discord en impose une. |
+| Q9 | Lieux par serveur | **60 au plus** (au lieu de 150). Raison donnée par l'utilisateur : avec 2,5 routes par lieu en moyenne, 60 lieux + 150 extrémités de routes restent sous 250. Mesuré sur Moria (`a_real_map_save_is_read`) : 656 routes terrestres pour 532 bourgs desservis, soit **2,47 routes par bourg** (2,97 avec les routes maritimes). Budget d'un serveur de 60 lieux : 64 rôles, environ 9 + 120 + 75 à 100 routes ≈ 210 à 230 salons. Le quota de 250 créations de rôles permet ainsi plusieurs essais. Moria entière (538 bourgs) demanderait 9 serveurs. |

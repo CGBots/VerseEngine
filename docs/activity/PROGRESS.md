@@ -55,7 +55,7 @@ PR #12 (`feature/discord-activity`) :
 ## Import et génération de carte (branche `feature/map-import`, en cours)
 - Vérifications du § 6 faites, résultats dans `IMPORT_SPEC.md` § 7 : quota de 250 créations de rôles par serveur (≈ 6 h), 2 000 pour les salons, permission individuelle testée (204 ; non-membre 10009 ; retrait idempotent), algorithme de répartition retenu. Azgaar dans l'iframe : non vérifiable depuis le cloud, on livre d'abord le repli.
 - Découpage E1–E9 validé (`IMPORT_SPEC.md` § 8, décisions Q6–Q8 au § 9). Prochaine étape : **E1, routes sans rôle**.
-- Fichiers Moria absents de cette session : à redéposer pour `a_real_map_save_is_read` et `a_real_full_export_is_parsed`.
+- Fichiers Moria redéposés : les deux tests réels passent. 60 lieux au plus par serveur (Q9).
 - Base : `cargo test --locked` 207 réussis ; intégration 17 réussis (les 2 tests Moria échouent faute de fichiers) ; `npm test` 39 réussis.
 
 ## Cahier des charges de l'import
