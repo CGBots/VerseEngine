@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { clock } from '../api';
-import { lerpPoint, roadProgress, smoothToward, type MapPoint, type PlayerMotion } from './geometry';
+import { pointAlong, roadProgress, smoothToward, type MapPoint, type PlayerMotion } from './geometry';
 
 export interface AnimatedPosition {
   at: MapPoint;
@@ -41,7 +41,7 @@ export function useAnimatedPosition(motion: PlayerMotion | null): AnimatedPositi
       const target = roadProgress(motion, clock.now());
       shown.current = reduce ? target : smoothToward(shown.current, target, (t - last) / 1000);
       last = t;
-      setPos({ at: lerpPoint(motion.from, motion.to, shown.current), progress: shown.current });
+      setPos({ at: pointAlong(motion.path, shown.current), progress: shown.current });
     };
     step();
     if (reduce) {

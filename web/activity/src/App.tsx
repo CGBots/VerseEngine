@@ -7,7 +7,7 @@ import { MapView2D } from './components/MapView2D';
 import { TravelPanel } from './components/TravelPanel';
 import { TopBar } from './components/TopBar';
 import { SettingsPanel } from './components/SettingsPanel';
-import { webglAvailable, type PlayerMotion } from './map/geometry';
+import { roadPath, webglAvailable, type PlayerMotion } from './map/geometry';
 import { playerPictureUrl } from './map/player';
 import { connectRealtime } from './realtime';
 
@@ -38,6 +38,8 @@ function usePlayerMotion(map: MapView | null, travel: TravelState | null): Playe
       kind: 'road',
       from: { x: from.x, y: from.y },
       to: { x: to.x, y: to.y },
+      // Tracé réel de la route (import Azgaar), sinon ligne droite.
+      path: roadPath(map, from.id, to.id),
       traveledKm: v.traveled_km,
       roadKm: v.traveled_km + (v.remaining_km ?? 0),
       speedKmh: v.speed_kmh,

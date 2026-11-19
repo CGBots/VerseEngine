@@ -59,6 +59,17 @@ pub struct MapZone {
     pub outside: OutsideZone,
 }
 
+/// Tracé d'une route entre deux lieux (`category_id`, `a < b`), points de `a` vers `b`.
+#[serde_as]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct RoadPath {
+    #[serde_as(as = "DisplayFromStr")]
+    pub a: u64,
+    #[serde_as(as = "DisplayFromStr")]
+    pub b: u64,
+    pub points: Vec<[f64; 2]>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct UniverseMap {
     #[serde(rename = "_id", default = "ObjectId::new")]
@@ -75,6 +86,9 @@ pub struct UniverseMap {
     /// Empreinte des lieux et routes ayant servi au placement (`Computed` seulement).
     #[serde(default)]
     pub graph_hash: Option<String>,
+    /// Tracé réel des routes (import Azgaar) ; sans tracé, une route est une ligne droite.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub road_paths: Vec<RoadPath>,
     /// Image exportée par Azgaar, affichée telle quelle (`map_backgrounds`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<crate::database::map_backgrounds::MapBackground>,
@@ -134,6 +148,7 @@ mod tests {
             terrain: Some(MapTerrain { cols: 2, rows: 1, heights: vec![0, 255] }),
             zone: Some(MapZone { polygon: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]], outside: OutsideZone::Grey }),
             graph_hash: Some("abc".into()),
+            road_paths: vec![RoadPath { a: 12_345_678_901_234_567, b: 2, points: vec![[1.0, 2.0], [3.0, 4.0]] }],
             background: None,
             updated_at: 1,
         }

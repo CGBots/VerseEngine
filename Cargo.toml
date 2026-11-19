@@ -33,6 +33,10 @@ axum = { version = "0.8", features = ["ws"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs", "set-header", "limit"] }
 sha2 = "0.10"
+# Lecture des sauvegardes Azgaar (.map) : gzip et ancien encodage base64. Déjà présents dans le
+# graphe de dépendances (versions identiques).
+flate2 = "1.1.11"
+base64 = "0.22.1"
 
 [dev-dependencies]
 # Horloge virtuelle (`start_paused`) pour tester les minuteurs sans attendre.

@@ -100,6 +100,8 @@ pub struct RoadCandidate {
     pub uses_sea: bool,
     /// Identifiants des routes Azgaar empruntées (bifurcations comprises).
     pub azgaar_routes: Vec<u64>,
+    /// Tracé de la route (points de la carte Azgaar), de `burg_a` vers `burg_b`.
+    pub path: Vec<(f64, f64)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -210,14 +212,20 @@ pub fn road_candidates(map: &AzgaarMap, burg_ids: &[u64], zone: &Zone, include_s
                     if other != src_burg {
                         // Burg voisin atteint : on remonte le chemin, sans traverser ce burg.
                         let (mut sea, mut routes, mut cur) = (false, vec![], u);
+                        let mut path = vec![coords[u]];
                         while let Some((p, arc)) = prev[cur] {
                             sea |= arc.sea;
                             if let Some(r) = arc.route { if !routes.contains(&r) { routes.push(r); } }
                             cur = p;
+                            path.push(coords[cur]);
                         }
                         routes.sort_unstable();
+                        // `path` va de `other` vers `src_burg` : on l'oriente de burg_a vers burg_b.
+                        if src_burg < other {
+                            path.reverse();
+                        }
                         let pair = (src_burg.min(other), src_burg.max(other));
-                        let cand = RoadCandidate { burg_a: pair.0, burg_b: pair.1, distance_km: d, uses_sea: sea, azgaar_routes: routes };
+                        let cand = RoadCandidate { burg_a: pair.0, burg_b: pair.1, distance_km: d, uses_sea: sea, azgaar_routes: routes, path };
                         best.entry(pair).and_modify(|c| if d < c.distance_km { *c = cand.clone() }).or_insert(cand);
                     }
                     continue;
@@ -311,6 +319,8 @@ mod tests {
         // A–C passe par la bifurcation X : 10 px (route 0) + 10 px (route 1), ×2 km/px.
         let ac = find(&c, 1, 3).unwrap();
         assert!((ac.distance_km - 40.0).abs() < 1e-9);
+        // Le tracé suit la route : A, la bifurcation X, puis C (et non la ligne droite A–C).
+        assert_eq!(ac.path, vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)]);
         assert_eq!(ac.azgaar_routes, vec![0, 1]);
         assert!((find(&c, 1, 2).unwrap().distance_km - 40.0).abs() < 1e-9);
         assert!((find(&c, 2, 4).unwrap().distance_km - 20.0).abs() < 1e-9);
@@ -321,7 +331,7 @@ mod tests {
     }
 
     fn cand(a: u64, b: u64, km: f64) -> RoadCandidate {
-        RoadCandidate { burg_a: a.min(b), burg_b: a.max(b), distance_km: km, uses_sea: false, azgaar_routes: vec![] }
+        RoadCandidate { burg_a: a.min(b), burg_b: a.max(b), distance_km: km, uses_sea: false, azgaar_routes: vec![], path: vec![] }
     }
 
     #[test]

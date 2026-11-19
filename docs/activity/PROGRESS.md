@@ -47,6 +47,11 @@ PR #12 (`feature/discord-activity`) :
 - Sans export : vue 3D plus détaillée (terrain généré, déterministe, biomes, côtes irrégulières, routes posées sur le relief).
 - Lieux en cercles avec leur nom ; joueur représenté par une épingle « goutte inversée » avec sa photo de profil Discord (sinon le portrait du personnage, sinon ses initiales).
 
+## Import Azgaar : le fichier `.map` (correction du 19/11/2026)
+- L'import se fait à partir de la **sauvegarde `.map`** d'Azgaar (pas d'un PNG). Lecteur `activity/map/azgaar_file.rs` : gzip, ancien base64, lignes 0 (dimensions), 1 (unités, nom), 5 (SVG), 6–7 (relief), 15 (bourgs), 37 (routes). Format vérifié dans le code d'Azgaar 1.158 (`services/io/save.ts`, `load.ts`).
+- Le personnage **suit le tracé réel de la route** (polyligne Azgaar conservée par `road_candidates`, stockée dans `universe_maps.road_paths`, envoyée avec chaque route) ; sans tracé, ligne droite.
+- **À décider (visuels)** : la ligne 5 du `.map` contient le dessin SVG de la carte, mais Azgaar ne la lit plus et annonce sa suppression ; ses polices web ne se chargent pas sous la CSP Discord. Le fond PNG/JPEG/WebP déjà en place reste disponible.
+
 ## Points ouverts
 - Déploiement : option 2 choisie (redirection d'un port vers le bot, HTTPS servi par le bot). À valider d'abord : Discord accepte-t-il un port dans le mapping (`activity.home.knifetail.eu:8484` s'enregistre ; le chargement réel n'est pas encore testé). Puis certificat par validation DNS (hébergeur DNS à connaître) et HTTPS dans le bot.
 - Mise en page téléphone : la fiche prend le haut de l'écran et le panneau de voyage couvre la carte. À revoir (onglets ou panneau à tirer, choix à faire).

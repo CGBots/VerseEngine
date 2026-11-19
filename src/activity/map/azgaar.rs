@@ -79,7 +79,7 @@ struct RawRoot {
     pack: Option<Value>,
 }
 
-fn num(v: Option<&Value>) -> Option<f64> {
+pub(crate) fn num(v: Option<&Value>) -> Option<f64> {
     match v? {
         Value::Number(n) => n.as_f64(),
         Value::String(s) => s.trim().parse().ok(),
@@ -179,7 +179,7 @@ pub fn parse(json: &str) -> Result<AzgaarMap, AzgaarError> {
     })
 }
 
-fn parse_burg(v: &Value) -> Option<Burg> {
+pub(crate) fn parse_burg(v: &Value) -> Option<Burg> {
     let obj = v.as_object()?;
     if obj.get("removed").and_then(Value::as_bool).unwrap_or(false) {
         return None;
@@ -234,7 +234,7 @@ fn parse_cells(v: &Value) -> Vec<(f64, f64, u8)> {
     }
 }
 
-fn parse_route(v: &Value) -> Option<Route> {
+pub(crate) fn parse_route(v: &Value) -> Option<Route> {
     let points: Vec<RoutePoint> = v
         .get("points")?
         .as_array()?
@@ -507,7 +507,7 @@ mod tests {
             let summary = serde_json::json!({
                 "name": map.name, "width": map.width, "height": map.height,
                 "burgs": burgs.iter().map(|b| serde_json::json!({"id": b.id, "name": b.name, "x": b.x, "y": b.y, "capital": b.capital})).collect::<Vec<_>>(),
-                "roads": roads.iter().map(|r| serde_json::json!({"a": r.burg_a, "b": r.burg_b, "km": r.distance_km, "sea": r.uses_sea})).collect::<Vec<_>>(),
+                "roads": roads.iter().map(|r| serde_json::json!({"a": r.burg_a, "b": r.burg_b, "km": r.distance_km, "sea": r.uses_sea, "path": r.path})).collect::<Vec<_>>(),
             });
             std::fs::write(out, serde_json::to_string_pretty(&summary).unwrap()).unwrap();
         }

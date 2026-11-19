@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MapView } from '../api';
-import { lerpPoint, positionOnRoad, roadProgress, SCENE_SIZE, smoothToward, terrainHeight, toScene, traveledAt } from './geometry';
+import { lerpPoint, pointAlong, positionOnRoad, roadPath, roadProgress, SCENE_SIZE, smoothToward, splitAlong, terrainHeight, toScene, traveledAt } from './geometry';
 
 const map: MapView = {
   source: 'Computed',
@@ -55,7 +55,7 @@ describe('terrainHeight', () => {
 });
 
 describe('mouvement en temps réel', () => {
-  const m = { kind: 'road' as const, from: { x: 0, y: 0 }, to: { x: 100, y: 0 }, traveledKm: 10, roadKm: 100, speedKmh: 36, refTime: 1000, moving: true };
+  const m = { kind: 'road' as const, from: { x: 0, y: 0 }, to: { x: 100, y: 0 }, path: [{ x: 0, y: 0 }, { x: 100, y: 0 }], traveledKm: 10, roadKm: 100, speedKmh: 36, refTime: 1000, moving: true };
   it("avance à la vitesse de l'étape", () => {
     expect(roadProgress(m, 1000)).toBeCloseTo(0.1);
     expect(roadProgress(m, 1000 + 3600)).toBeCloseTo(0.46); // +36 km en 1 h
@@ -78,5 +78,38 @@ describe('mouvement en temps réel', () => {
     expect(seen[seen.length - 1]).toBeCloseTo(1, 2);
     expect(Math.max(...seen)).toBeLessThanOrEqual(1);
     expect(smoothToward(NaN, 0.7, 0.1)).toBe(0.7);
+  });
+});
+
+describe('suivi du tracé des routes', () => {
+  // Route en L : (0,0) → (10,0) → (10,10), longueur 20.
+  const L = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }];
+  it('avance le long du tracé et non en ligne droite', () => {
+    expect(pointAlong(L, 0)).toEqual({ x: 0, y: 0 });
+    expect(pointAlong(L, 0.25)).toEqual({ x: 5, y: 0 });
+    expect(pointAlong(L, 0.5)).toEqual({ x: 10, y: 0 }); // le coude, pas (5, 5)
+    expect(pointAlong(L, 0.75)).toEqual({ x: 10, y: 5 });
+    expect(pointAlong(L, 2)).toEqual({ x: 10, y: 10 });
+  });
+  it('coupe le tracé au point courant', () => {
+    const { traveled, remaining } = splitAlong(L, 0.75);
+    expect(traveled).toEqual([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 5 }]);
+    expect(remaining).toEqual([{ x: 10, y: 5 }, { x: 10, y: 10 }]);
+  });
+  const withPath: MapView = {
+    ...map,
+    roads: [{ id: '10', name: 'r', from: '1', to: '2', distance_km: 100, secret: false, path: [[0, 250], [500, 100], [1000, 250]] }],
+  };
+  it("prend le tracé Azgaar, dans le sens du voyage", () => {
+    expect(roadPath(withPath, '1', '2')).toEqual([{ x: 0, y: 250 }, { x: 500, y: 100 }, { x: 1000, y: 250 }]);
+    expect(roadPath(withPath, '2', '1')).toEqual([{ x: 1000, y: 250 }, { x: 500, y: 100 }, { x: 0, y: 250 }]);
+  });
+  it('raccorde le tracé aux lieux et se rabat sur la ligne droite', () => {
+    const shifted: MapView = { ...withPath, roads: [{ ...withPath.roads[0], path: [[3, 249], [500, 100], [998, 251]] }] };
+    const p = roadPath(shifted, '1', '2');
+    expect(p[0]).toEqual({ x: 0, y: 250 });
+    expect(p[p.length - 1]).toEqual({ x: 1000, y: 250 });
+    expect(roadPath(map, '1', '2')).toEqual([{ x: 0, y: 250 }, { x: 1000, y: 250 }]);
+    expect(roadPath(map, '1', '99')).toEqual([]);
   });
 });

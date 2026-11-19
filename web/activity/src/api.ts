@@ -59,7 +59,7 @@ export interface MapView {
   width: number;
   height: number;
   places: { id: string; name: string; x: number; y: number; z: number }[];
-  roads: { id: string; name: string; from: string; to: string; distance_km: number; secret: boolean }[];
+  roads: { id: string; name: string; from: string; to: string; distance_km: number; secret: boolean; path?: [number, number][] }[];
   terrain: { cols: number; rows: number; heights: number[] } | null;
   zone: { polygon: [number, number][]; outside: 'crop' | 'grey' | 'remove' } | null;
   /** Image exportée par Azgaar (mêmes coordonnées que les lieux). */

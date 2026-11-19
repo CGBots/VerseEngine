@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiBlobUrl, type MapView } from '../api';
-import type { PlayerMotion } from '../map/geometry';
+import { roadPath, splitAlong, type MapPoint, type PlayerMotion } from '../map/geometry';
 import { useAnimatedPosition } from '../map/useMotion';
 import { initials, pinPath } from '../map/player';
 
@@ -15,6 +15,8 @@ interface Props {
 }
 
 interface Box { x: number; y: number; w: number; h: number }
+
+const toAttr = (pts: MapPoint[]) => pts.map((p) => `${p.x},${p.y}`).join(' ');
 
 /** Image Azgaar chargée avec le jeton de session, puis affichée via une URL `blob:` locale. */
 function useBackground(url: string | null): string | null {
@@ -108,7 +110,6 @@ export function MapView2D({ map, currentPlaceId, reachable, motion, playerPictur
   };
   const onPointerUp = (e: React.PointerEvent) => pointers.current.delete(e.pointerId);
 
-  const byId = new Map(map.places.map((p) => [p.id, p]));
   const r = 7 * unit;
   const font = 13 * unit;
   const pinR = 17 * unit;
@@ -135,24 +136,27 @@ export function MapView2D({ map, currentPlaceId, reachable, motion, playerPictur
         <image href={background} x={0} y={0} width={map.width} height={map.height} preserveAspectRatio="none" onError={() => setImageFailed(true)} />
       )}
       {map.roads.map((road) => {
-        const a = byId.get(road.from);
-        const b = byId.get(road.to);
-        if (!a || !b) return null;
-        // Avec Azgaar, les routes sont déjà dessinées sur l'image : seule la route secrète connue est marquée.
+        // Avec Azgaar, les routes sont déjà dessinées sur la carte : seule la route secrète connue est marquée.
         if (showImage && !road.secret) return null;
+        const pts = roadPath(map, road.from, road.to);
+        if (pts.length < 2) return null;
         return (
-          <line key={road.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-            stroke={road.secret ? '#d4a72c' : '#d9d9d9'} strokeWidth={3 * unit} strokeDasharray={road.secret ? `${6 * unit} ${4 * unit}` : undefined} strokeLinecap="round" />
+          <polyline key={road.id} points={toAttr(pts)} fill="none"
+            stroke={road.secret ? '#d4a72c' : '#d9d9d9'} strokeWidth={3 * unit} strokeDasharray={road.secret ? `${6 * unit} ${4 * unit}` : undefined}
+            strokeLinecap="round" strokeLinejoin="round" />
         );
       })}
-      {motion?.kind === 'road' && player && (
-        // Trajet : la partie parcourue en plein, le reste en pointillés.
-        <g className="map-progress">
-          <line x1={motion.to.x} y1={motion.to.y} x2={player.x} y2={player.y} stroke="#f2f3f5" strokeWidth={3 * unit} strokeDasharray={`${2 * unit} ${6 * unit}`} strokeLinecap="round" />
-          <line x1={motion.from.x} y1={motion.from.y} x2={player.x} y2={player.y} stroke="#141518" strokeWidth={7 * unit} strokeLinecap="round" />
-          <line x1={motion.from.x} y1={motion.from.y} x2={player.x} y2={player.y} stroke="#5865f2" strokeWidth={4.5 * unit} strokeLinecap="round" />
-        </g>
-      )}
+      {motion?.kind === 'road' && animated?.progress != null && (() => {
+        // Trajet le long du tracé de la route : parcouru en plein, restant en pointillés.
+        const { traveled, remaining } = splitAlong(motion.path, animated.progress);
+        return (
+          <g className="map-progress">
+            <polyline points={toAttr(remaining)} fill="none" stroke="#f2f3f5" strokeWidth={3 * unit} strokeDasharray={`${2 * unit} ${6 * unit}`} strokeLinecap="round" strokeLinejoin="round" />
+            <polyline points={toAttr(traveled)} fill="none" stroke="#141518" strokeWidth={7 * unit} strokeLinecap="round" strokeLinejoin="round" />
+            <polyline points={toAttr(traveled)} fill="none" stroke="#5865f2" strokeWidth={4.5 * unit} strokeLinecap="round" strokeLinejoin="round" />
+          </g>
+        );
+      })()}
       {map.places.map((p) => {
         const fill = p.id === currentPlaceId ? '#57f287' : reachable.has(p.id) ? '#5865f2' : '#f2f3f5';
         return (

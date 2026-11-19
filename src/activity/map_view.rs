@@ -61,6 +61,7 @@ pub fn computed_map(universe_id: ObjectId, places: &[Place], roads: &[Road], now
         terrain: None,
         zone: None,
         graph_hash: Some(graph_hash(places, roads)),
+        road_paths: vec![],
         background: None,
         updated_at: now,
     }
@@ -97,6 +98,19 @@ pub struct MapRoadDto {
     pub distance_km: f64,
     /// Seulement pour une route secrète déjà connue du joueur.
     pub secret: bool,
+    /// Tracé de `from` vers `to` (import Azgaar). Absent : ligne droite.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<Vec<[f64; 2]>>,
+}
+
+/// Tracé d'une route orienté de `from` vers `to`.
+pub fn oriented_path(paths: &[crate::database::universe_maps::RoadPath], from: u64, to: u64) -> Option<Vec<[f64; 2]>> {
+    let p = paths.iter().find(|p| (p.a, p.b) == (from.min(to), from.max(to)))?;
+    let mut points = p.points.clone();
+    if from > to {
+        points.reverse();
+    }
+    (points.len() >= 2).then_some(points)
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -152,6 +166,7 @@ pub fn build_map_dto(map: &UniverseMap, places: &[Place], roads: &[Road], visibl
             to: r.place_two_id.to_string(),
             distance_km: r.distance as f64,
             secret: r.secret,
+            path: oriented_path(&map.road_paths, r.place_one_id, r.place_two_id),
         })
         .collect();
     road_dtos.sort_by(|a, b| a.id.cmp(&b.id));
@@ -269,6 +284,21 @@ mod tests {
         });
         let dto = build_map_dto(&map, &places, &roads, &HashSet::new(), &[], 0);
         assert_eq!(dto.background, Some(MapBackgroundDto { url: "/api/map/background?v=0123456789abcdef".into(), width: 3000, height: 2000 }));
+    }
+
+    #[test]
+    fn road_paths_are_sent_in_the_direction_of_the_road() {
+        use crate::database::universe_maps::RoadPath;
+        let (places, mut roads) = world();
+        let mut map = computed_map(ObjectId::new(), &places, &roads, 0);
+        map.road_paths = vec![RoadPath { a: 1, b: 2, points: vec![[0.0, 0.0], [5.0, 3.0], [10.0, 0.0]] }];
+        // Route enregistrée de 2 vers 1 : le tracé est inversé.
+        roads[0].place_one_id = 2;
+        roads[0].place_two_id = 1;
+        let dto = build_map_dto(&map, &places, &roads, &HashSet::from([10, 20]), &[], 0);
+        let r = dto.roads.iter().find(|r| r.id == "10").unwrap();
+        assert_eq!(r.path.as_deref(), Some(&[[10.0, 0.0], [5.0, 3.0], [0.0, 0.0]][..]));
+        assert!(dto.roads.iter().find(|r| r.id == "20").unwrap().path.is_none(), "no path: straight line");
     }
 
     #[test]

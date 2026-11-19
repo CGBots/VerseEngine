@@ -3,7 +3,7 @@ import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { MapControls } from 'three/examples/jsm/controls/MapControls.js';
 import type { MapView } from '../api';
-import { SCENE_SIZE, toScene, type PlayerMotion } from '../map/geometry';
+import { pointAlong, roadPath, SCENE_SIZE, toScene, type MapPoint, type PlayerMotion } from '../map/geometry';
 import { useAnimatedPosition } from '../map/useMotion';
 import { biomeColor, LAND, proceduralTerrain, type Heightmap } from '../map/procedural';
 import { labelTexture, PIN_ASPECT, pinTexture } from '../map/sprites';
@@ -86,27 +86,16 @@ function Terrain({ map, hm }: { map: MapView; hm: Heightmap }) {
   );
 }
 
-/** Routes : rubans qui suivent le relief (échantillonnés le long du segment). */
+/** Routes : rubans qui suivent leur tracé (Azgaar) ou la ligne droite, posés sur le relief. */
 function Roads({ map, hm }: { map: MapView; hm: Heightmap }) {
-  const tubes = useMemo(() => {
-    const byId = new Map(map.places.map((p) => [p.id, p]));
-    return map.roads.flatMap((r) => {
-      const a = byId.get(r.from);
-      const b = byId.get(r.to);
-      if (!a || !b) return [];
-      const steps = 24;
-      const pts: THREE.Vector3[] = [];
-      for (let i = 0; i <= steps; i++) {
-        const t = i / steps;
-        const x = a.x + (b.x - a.x) * t;
-        const y = a.y + (b.y - a.y) * t;
-        const s = toScene(x, y, map.width, map.height);
-        pts.push(new THREE.Vector3(s.x, elevation(hm, map, x, y) + 0.25, s.z));
-      }
-      const geometry = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), steps * 2, 0.22, 6, false);
-      return [{ id: r.id, geometry, secret: r.secret }];
-    });
-  }, [map, hm]);
+  const tubes = useMemo(
+    () =>
+      map.roads.flatMap((r) => {
+        const pts = roadPath(map, r.from, r.to);
+        return pts.length < 2 ? [] : [{ id: r.id, geometry: terrainTube(map, hm, pts, 0.22, 0.25), secret: r.secret }];
+      }),
+    [map, hm],
+  );
   useEffect(() => () => tubes.forEach((t) => t.geometry.dispose()), [tubes]);
   return (
     <>
@@ -153,16 +142,15 @@ function PlayerPin({ x, y, z, picture, name }: { x: number; y: number; z: number
   );
 }
 
-/** Tube qui suit le relief entre deux points de carte. */
-function terrainTube(map: MapView, hm: Heightmap, a: { x: number; y: number }, b: { x: number; y: number }, radius: number, lift: number, steps = 48) {
+/** Tube qui suit une polyligne de la carte, posé sur le relief (échantillonné à longueur égale). */
+function terrainTube(map: MapView, hm: Heightmap, points: MapPoint[], radius: number, lift: number, steps = 48) {
   const pts: THREE.Vector3[] = [];
   for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const x = a.x + (b.x - a.x) * t;
-    const y = a.y + (b.y - a.y) * t;
-    const s = toScene(x, y, map.width, map.height);
-    pts.push(new THREE.Vector3(s.x, elevation(hm, map, x, y) + lift, s.z));
+    const p = pointAlong(points, i / steps);
+    const s = toScene(p.x, p.y, map.width, map.height);
+    pts.push(new THREE.Vector3(s.x, elevation(hm, map, p.x, p.y) + lift, s.z));
   }
+  // `getPointAt` (longueur d'arc) : la part affichée du tube suit la part parcourue.
   return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), steps * 2, radius, 8, false);
 }
 
@@ -172,7 +160,7 @@ const RADIAL = 8;
 function Player({ map, hm, motion, picture, name }: { map: MapView; hm: Heightmap; motion: PlayerMotion; picture: string | null; name: string }) {
   const animated = useAnimatedPosition(motion);
   const traveled = useMemo(
-    () => (motion.kind === 'road' ? terrainTube(map, hm, motion.from, motion.to, 0.34, 0.3) : null),
+    () => (motion.kind === 'road' ? terrainTube(map, hm, motion.path, 0.34, 0.3) : null),
     [map, hm, motion],
   );
   useEffect(() => () => traveled?.dispose(), [traveled]);
