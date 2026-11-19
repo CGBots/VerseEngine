@@ -1,4 +1,4 @@
-import type { ImportMode, ImportPlan, JobState, PlanRequest, ServerChoice, SetupType, UploadedMap } from '../api';
+import type { ImportMode, ImportPlan, JobState, PlanRequest, RemovalChoices, RemovalInfo, ServerChoice, SetupType, UploadedMap } from '../api';
 
 /** Choix de l'admin dans l'écran d'import. */
 export interface ImportChoices {
@@ -11,6 +11,12 @@ export interface ImportChoices {
   /** Serveur choisi pour chaque emplacement après le premier (celui de la session). */
   extraServers: (string | null)[];
   setup: SetupType;
+  /** Suppression des lieux existants : lieu de départ (bourg de la nouvelle carte). */
+  startBurg: number | null;
+  /** Objets posés : action choisie (par défaut : rendre au propriétaire). */
+  itemActions: Map<string, 'destroy' | 'return'>;
+  /** Q2 : destruction des objets sans propriétaire confirmée. */
+  confirmUnowned: boolean;
 }
 
 export const roadKey = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
@@ -20,7 +26,10 @@ export const roadKey = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${
 export function initialChoices(map: UploadedMap): ImportChoices {
   const attach = new Map<number, string>();
   for (const s of map.suggestions) if (s.status === 'exact' && s.burgs.length === 1) attach.set(s.burgs[0], s.place_id);
-  return { mode: map.has_universe ? 'merge' : 'replace', includeSea: false, secret: new Set(), attach, extraServers: [], setup: 'FullSetup' };
+  return {
+    mode: map.has_universe ? 'merge' : 'replace', includeSea: false, secret: new Set(), attach, extraServers: [], setup: 'FullSetup',
+    startBurg: null, itemActions: new Map(), confirmUnowned: false,
+  };
 }
 
 export function toggleSecret(secret: Set<string>, a: number, b: number): Set<string> {
@@ -72,11 +81,22 @@ export function missingServers(plan: ImportPlan | null): number {
 }
 
 /** Ce qui empêche de valider (clé de traduction), ou `null`. */
-export function blocker(plan: ImportPlan | null): string | null {
+export function blocker(plan: ImportPlan | null, removal: RemovalInfo | null = null, c: ImportChoices | null = null): string | null {
   if (!plan) return 'activity_ui__import_wait_preview';
   if (missingServers(plan) > 0) return 'activity_ui__import_servers_missing';
-  if (plan.remove_places.length || plan.remove_roads.length) return 'activity__import_removal_not_ready';
+  if (removal && removal.characters > 0 && (c?.startBurg == null || !plan.places.some((p) => p.burg_id === c.startBurg)))
+    return 'activity__import_start_place_required';
+  if (removal && removal.items.some((i) => i.owner === null) && !c?.confirmUnowned) return 'activity__import_confirm_unowned';
   return null;
+}
+
+/** Choix de suppression envoyés au serveur (I15, Q2). */
+export function removalChoices(c: ImportChoices): RemovalChoices {
+  return {
+    start_burg: c.startBurg ?? undefined,
+    items: [...c.itemActions].map(([tool_id, action]) => ({ tool_id, action })),
+    confirm_destroy_unowned: c.confirmUnowned,
+  };
 }
 
 /** I12 : le nom saisi doit être exactement le nom attendu (espaces de bord ignorés). */

@@ -13,6 +13,7 @@ pub mod events;
 pub mod http;
 pub mod images;
 pub mod import_exec;
+pub mod import_removal;
 #[allow(dead_code)] // azgaar/network : utilisés par l'import admin (phase d)
 pub mod map;
 pub mod permissions;

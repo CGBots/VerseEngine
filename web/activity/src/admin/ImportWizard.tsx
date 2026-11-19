@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ApiError, importApi, uploadMapFile, type JobState, type PlanResponse, type ServerList, type UploadedMap } from '../api';
+import { ApiError, importApi, uploadMapFile, type ImportPlan, type JobState, type PlanResponse, type RemovalInfo, type ServerList, type UploadedMap } from '../api';
 import { openExternal } from '../discord';
 import type { Translator } from '../i18n';
 import { ImportPreview } from './ImportPreview';
 import {
-  blocker, estimatedMinutes, initialChoices, missingServers, nameConfirmed, optionsForSlot, percent, planRequest, serverColor, setSlot, slotCount, summary,
+  blocker, estimatedMinutes, initialChoices, missingServers, nameConfirmed, optionsForSlot, percent, planRequest, removalChoices, serverColor, setSlot, slotCount, summary,
   toggleSecret, type ImportChoices,
 } from './importModel';
 
@@ -123,6 +123,7 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
         plan: planRequest(choices),
         confirm_name: typedName,
         new_universe: universeName ? undefined : { name: newName.trim(), time_modifier: speed },
+        removal: plan?.removal ? removalChoices(choices) : undefined,
       });
       jobId.current = res.job_id;
       setJob({ progress: { phase: 'Creating', done: 0, total: res.total }, outcome: { status: 'running' } });
@@ -134,7 +135,8 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
 
   const update = (f: (c: ImportChoices) => ImportChoices) => setChoices((c) => (c ? f(c) : c));
   const p = plan?.plan ?? null;
-  const blockKey = blocker(p);
+  const removal = plan?.removal ?? null;
+  const blockKey = blocker(p, removal, choices);
 
   return (
     <div className="import-wizard">
@@ -255,6 +257,7 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
               </fieldset>
             )}
 
+            {p && removal && <RemovalSection plan={p} removal={removal} choices={choices} update={update} t={t} />}
             {p && <PlanSummary plan={plan!} t={t} />}
             <div className="import-nav">
               <button type="button" className="secondary" onClick={() => setStep('upload')}>{t('activity_ui__back')}</button>
@@ -270,6 +273,11 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
       {step === 'confirm' && plan && (
         <div className="import-confirm">
           <PlanSummary plan={plan} t={t} />
+          {plan.removal && (
+            <p className="import-warning">
+              {t('activity_ui__import_removal_warning', { places: plan.plan.remove_places.length, roads: plan.plan.remove_roads.length, characters: plan.removal.characters })}
+            </p>
+          )}
           {!universeName && (
             <fieldset>
               <legend>{t('activity_ui__import_new_universe')}</legend>
@@ -289,7 +297,7 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
           </label>
           <div className="import-nav">
             <button type="button" className="secondary" onClick={() => setStep('options')}>{t('activity_ui__back')}</button>
-            <button type="button" className="danger" disabled={!nameConfirmed(expectedName, typedName) || !!blocker(plan.plan)} onClick={() => void execute()}>
+            <button type="button" className="danger" disabled={!nameConfirmed(expectedName, typedName) || !!blocker(plan.plan, plan.removal, choices)} onClick={() => void execute()}>
               {t('activity_ui__import_start')}
             </button>
           </div>
@@ -332,5 +340,58 @@ function PlanSummary({ plan, t }: { plan: PlanResponse; t: Translator }) {
       {s.isolated > 0 && <li>{t('activity_ui__import_sum_isolated', { count: s.isolated })}</li>}
       <li>{t('activity_ui__import_sum_duration', { objects: plan.discord_objects, minutes: estimatedMinutes(plan.discord_objects) })}</li>
     </ul>
+  );
+}
+
+/** Suppression des lieux existants (I15) : lieu de départ et sort des objets posés (Q2). */
+function RemovalSection({ plan, removal, choices, update, t }: {
+  plan: ImportPlan;
+  removal: RemovalInfo;
+  choices: ImportChoices;
+  update: (f: (c: ImportChoices) => ImportChoices) => void;
+  t: Translator;
+}) {
+  const places = [...plan.places].sort((a, b) => a.name.localeCompare(b.name));
+  const unowned = removal.items.filter((i) => i.owner === null);
+  return (
+    <fieldset className="removal">
+      <legend>{t('activity_ui__import_removal')}</legend>
+      <p className="small-text">
+        {t('activity_ui__import_removal_counts', { places: plan.remove_places.length, roads: plan.remove_roads.length, characters: removal.characters, travelling: removal.travelling })}
+      </p>
+      {removal.characters > 0 && (
+        <label>
+          {t('activity_ui__import_start_place')}
+          <select value={choices.startBurg ?? ''} onChange={(e) => update((c) => ({ ...c, startBurg: e.target.value ? Number(e.target.value) : null }))}>
+            <option value="">{t('activity_ui__import_pick_place')}</option>
+            {places.map((p) => <option key={p.burg_id} value={p.burg_id}>{p.name}</option>)}
+          </select>
+        </label>
+      )}
+      {removal.items.filter((i) => i.owner !== null).map((i) => (
+        <label key={i.tool_id} className="attach-row">
+          <span>{t('activity_ui__import_item', { name: i.name, place: i.place_name, owner: i.owner ?? '', content: i.content })}</span>
+          <select
+            value={choices.itemActions.get(i.tool_id) ?? 'return'}
+            onChange={(e) => update((c) => ({ ...c, itemActions: new Map(c.itemActions).set(i.tool_id, e.target.value as 'destroy' | 'return') }))}
+          >
+            <option value="return">{t('activity_ui__import_item_return')}</option>
+            <option value="destroy">{t('activity_ui__import_item_destroy')}</option>
+          </select>
+        </label>
+      ))}
+      {unowned.length > 0 && (
+        <>
+          <p className="import-warning small-text">{t('activity_ui__import_unowned_list', { count: unowned.length })}</p>
+          <ul className="small-text">
+            {unowned.map((i) => <li key={i.tool_id}>{t('activity_ui__import_unowned_item', { name: i.name, place: i.place_name, content: i.content })}</li>)}
+          </ul>
+          <label>
+            <input type="checkbox" checked={choices.confirmUnowned} onChange={(e) => update((c) => ({ ...c, confirmUnowned: e.target.checked }))} />
+            {t('activity_ui__import_confirm_unowned')}
+          </label>
+        </>
+      )}
+    </fieldset>
   );
 }

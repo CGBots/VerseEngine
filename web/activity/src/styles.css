@@ -218,3 +218,4 @@ select, input[type="text"], input:not([type]), input[type="number"] {
   .import-preview { height: 55vh; position: static; }
 }
 .import-progress button, .import-confirm .import-nav button { justify-self: start; }
+label:has(> input[type="checkbox"]) { flex-wrap: nowrap; align-items: flex-start; }

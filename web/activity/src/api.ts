@@ -185,7 +185,15 @@ export interface ImportPlan {
   isolated: number[];
 }
 
+export interface RemovalInfo {
+  characters: number;
+  travelling: number;
+  items: { tool_id: string; name: string; place_name: string; owner: string | null; content: number }[];
+}
+
 export interface PlanResponse {
+  /** Ce que la suppression des lieux existants toucherait (I15), `null` s'il n'y a rien à supprimer. */
+  removal: RemovalInfo | null;
   plan: ImportPlan;
   servers_to_create: number;
   discord_objects: number;
@@ -205,6 +213,13 @@ export interface ExecuteRequest {
   plan: PlanRequest;
   confirm_name: string;
   new_universe?: { name: string; time_modifier?: number };
+  removal?: RemovalChoices;
+}
+
+export interface RemovalChoices {
+  start_burg?: number;
+  items: { tool_id: string; action: 'destroy' | 'return' }[];
+  confirm_destroy_unowned: boolean;
 }
 
 export interface JobState {

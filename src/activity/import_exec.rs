@@ -31,6 +31,7 @@ use crate::activity::admin_import::{compute_plan, plan_inputs, require_importer,
 use crate::activity::error::{ApiError, ApiResult};
 use crate::activity::http::{AppState, Authed};
 use crate::activity::map::azgaar::{burg_height, AzgaarMap};
+use crate::activity::import_removal::{apply_in_session, apply_on_discord, channels_of_places, load_removal, validate_choices, DiscordLeftovers, Removal, RemovalChoices};
 use crate::activity::map::import_plan::{ImportPlan, PlaceAction, RoadAction};
 use crate::activity::map::partition::DISCORD_MAX_CHANNELS_PER_CATEGORY;
 use crate::database::db_namespace::{ROADS_COLLECTION_NAME, UNIVERSE_MAPS_COLLECTION_NAME, VERSEENGINE_DB_NAME};
@@ -68,6 +69,9 @@ pub struct ExecuteRequest {
     /// Obligatoire si le serveur n'est relié à aucun univers.
     #[serde(default)]
     pub new_universe: Option<NewUniverseDto>,
+    /// Lieux existants supprimés (I15, ré-import) : lieu de départ et sort des objets posés.
+    #[serde(default)]
+    pub removal: RemovalChoices,
 }
 
 /// I12 : le nom saisi doit être exactement celui de l'univers (espaces de bord ignorés).
@@ -75,16 +79,14 @@ pub fn name_confirmed(expected: &str, typed: &str) -> bool {
     !expected.trim().is_empty() && expected.trim() == typed.trim()
 }
 
-/// Ce que l'exécution ne sait pas encore faire, ou qui manque : clé d'erreur, ou `None`.
+/// Ce qui manque pour exécuter le plan : clé d'erreur, ou `None` (Q11).
 pub fn blocking_reason(plan: &ImportPlan) -> Option<&'static str> {
-    if plan.servers_to_create() > 0 {
-        Some("activity__import_servers_missing")
-    } else if !plan.remove_places.is_empty() || !plan.remove_roads.is_empty() {
-        // Suppression des lieux existants : personnages, voyages et objets posés (E6).
-        Some("activity__import_removal_not_ready")
-    } else {
-        None
-    }
+    (plan.servers_to_create() > 0).then_some("activity__import_servers_missing")
+}
+
+/// Le plan supprime-t-il de l'existant ?
+pub fn removes_something(plan: &ImportPlan) -> bool {
+    !plan.remove_places.is_empty() || !plan.remove_roads.is_empty()
 }
 
 // ---------------------------------------------------------------------------
@@ -131,6 +133,8 @@ pub struct Execution {
     pub plan: ImportPlan,
     pub map: Arc<AzgaarMap>,
     pub zone: Vec<[f64; 2]>,
+    /// Lieux et routes à supprimer, avec les choix de l'admin (vérifiés).
+    pub removal: Option<(Removal, RemovalChoices)>,
     /// Tests : échec simulé après ce nombre de lieux créés.
     pub fail_after_places: Option<usize>,
 }
@@ -276,10 +280,51 @@ async fn run(p: &mut Provisioner, exec: &Execution) -> Result<ObjectId, &'static
         }
     }
 
-    // 6. Mises à jour et carte, en une transaction.
+    // 6. Mises à jour, carte et suppressions, en une transaction (point de non-retour).
     let map = universe_map(universe_id, &exec.map, plan, &place_of_burg, &exec.zone);
-    save_in_transaction(universe_id, &updates, &map).await.map_err(|_| "activity__internal_error")?;
+    let removal = match &exec.removal {
+        Some((removal, choices)) => {
+            let start = choices.start_burg.and_then(|b| place_of_burg.get(&b)).cloned();
+            if start.is_none() && removal.info.characters > 0 {
+                return Err("activity__import_start_place_required");
+            }
+            let channels = channels_of_places(&http, &removal.places).await;
+            Some((removal, choices, start, channels))
+        }
+        None => None,
+    };
+    // Les voyages annulés sortent de la file en mémoire avant l'écriture (sinon le minuteur
+    // pourrait réécrire un groupe déjà déplacé) ; ils y reviennent si l'écriture échoue.
+    let paused = match &removal {
+        Some((r, ..)) => pause_moves(&r.groups).await,
+        None => vec![],
+    };
+    let saved = save_in_transaction(universe_id, &updates, &map, removal.as_ref().map(|(r, c, s, ch)| (*r, *c, s.as_ref(), ch.as_slice()))).await;
+    if saved.is_err() {
+        for g in paused {
+            crate::travel::logic::add_move(g).await;
+        }
+        return Err("activity__internal_error");
+    }
+    if let Some((r, _, start, channels)) = &removal {
+        let left = apply_on_discord(&http, r, start.as_ref(), channels).await;
+        if left != DiscordLeftovers::default() {
+            eprintln!("[import] universe {universe_id}: left on Discord after the removal: {left:?}");
+        }
+    }
     Ok(universe_id)
+}
+
+/// Retire de la file des voyages les groupes donnés ; retourne ceux qui y étaient.
+async fn pause_moves(groups: &[crate::database::travel::TravelGroup]) -> Vec<crate::database::travel::TravelGroup> {
+    let ids: std::collections::HashSet<ObjectId> = groups.iter().map(|g| g._id).collect();
+    let paused: Vec<_> = crate::travel::logic::MOVES.lock().await.iter().filter(|m| ids.contains(&m._id)).cloned().collect();
+    for g in &paused {
+        if let Some(&first) = g.members.first() {
+            crate::travel::logic::remove_move(first).await;
+        }
+    }
+    paused
 }
 
 /// Carte de l'univers après l'import : positions (avec le bourg d'origine, pour un ré-import),
@@ -329,7 +374,12 @@ pub fn universe_map(universe_id: ObjectId, map: &AzgaarMap, plan: &ImportPlan, p
     }
 }
 
-async fn save_in_transaction(universe_id: ObjectId, updates: &[(u64, u64, bool)], map: &UniverseMap) -> mongodb::error::Result<()> {
+async fn save_in_transaction(
+    universe_id: ObjectId,
+    updates: &[(u64, u64, bool)],
+    map: &UniverseMap,
+    removal: Option<(&Removal, &RemovalChoices, Option<&Place>, &[u64])>,
+) -> mongodb::error::Result<()> {
     let client = crate::database::db_client::get_db_client().await;
     let db = client.database(VERSEENGINE_DB_NAME);
     let previous = crate::database::universe_maps::get_universe_map(universe_id).await?;
@@ -352,6 +402,9 @@ async fn save_in_transaction(universe_id: ObjectId, updates: &[(u64, u64, bool)]
             .upsert(true)
             .session(&mut session)
             .await?;
+        if let Some((removal, choices, start, channels)) = removal {
+            apply_in_session(&mut session, universe_id, removal, start, choices, channels).await?;
+        }
         Ok(())
     }
     .await;
@@ -400,6 +453,15 @@ async fn execute_route(State(state): State<AppState>, Authed(s): Authed, Json(re
     if let Some(key) = blocking_reason(&plan) {
         return Err(ApiError::new(axum::http::StatusCode::CONFLICT, key));
     }
+    // Suppressions : lues en base ici, et choix de l'admin vérifiés (I15, Q2).
+    let removal = match (&ctx.universe, removes_something(&plan)) {
+        (Some(u), true) => {
+            let removal = load_removal(u.universe_id, req.plan.mode, &plan).await?;
+            validate_choices(&removal.info, &req.removal, &plan).map_err(ApiError::bad_request)?;
+            Some((removal, req.removal.clone()))
+        }
+        _ => None,
+    };
 
     let universe_id = ctx.universe.as_ref().map(|u| u.universe_id);
     let total = plan.discord_objects_to_create();
@@ -417,6 +479,7 @@ async fn execute_route(State(state): State<AppState>, Authed(s): Authed, Json(re
         plan,
         map: inputs.map,
         zone: req.plan.zone.clone(),
+        removal,
         fail_after_places: None,
     };
     let (sessions, drafts, guild_id, user_id) = (state.sessions.clone(), state.import_drafts.clone(), s.guild_id, s.user_id);
@@ -468,7 +531,7 @@ mod tests {
     }
 
     #[test]
-    fn removals_and_missing_servers_block_the_execution() {
+    fn missing_servers_block_the_execution() {
         use crate::activity::map::import_plan::PlannedServer;
         use crate::activity::map::partition::{budget, ServerLoad};
         let server = |g: Option<u64>| PlannedServer { guild_id: g, budget: budget(ServerLoad::default(), 0, 0) };
@@ -478,7 +541,8 @@ mod tests {
         assert_eq!(blocking_reason(&plan), Some("activity__import_servers_missing"));
         plan.servers.pop();
         plan.remove_roads.push(9);
-        assert_eq!(blocking_reason(&plan), Some("activity__import_removal_not_ready"));
+        assert_eq!(blocking_reason(&plan), None, "removals are handled (E6)");
+        assert!(removes_something(&plan));
     }
 
     /// Import réel sur `VERSEENGINE_TEST_GUILD_ID` (qui ne doit être relié à aucun univers), à
@@ -605,6 +669,125 @@ mod tests {
             });
         }
 
+        async fn wait_job(app: &Router, token: &str, job: &str) -> serde_json::Value {
+            let mut last = serde_json::Value::Null;
+            for _ in 0..240 {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                let (_, b) = call(app, "GET", &format!("/api/admin/import/jobs/{job}"), token, Body::empty()).await;
+                last = b;
+                if last["outcome"]["status"] != "running" {
+                    break;
+                }
+            }
+            last
+        }
+
+        /// E6 : un second import « Supprimer les lieux existants » déplace les joueurs vers le
+        /// lieu de départ, rend l'objet posé à son propriétaire avec son contenu, détruit l'objet
+        /// sans propriétaire (après confirmation, Q2) et supprime les anciens lieux et routes de
+        /// Discord et de la base.
+        #[test]
+        #[ignore = "integration test: needs MongoDB, DISCORD_TOKEN and VERSEENGINE_TEST_GUILD_ID; run with --ignored"]
+        fn replacing_the_existing_places_moves_players_and_settles_placed_items_on_discord() {
+            use crate::database::inventory::{HolderType, Inventory};
+            use crate::database::travel::{SpaceType, TravelGroup};
+            use futures::TryStreamExt;
+            block_on(async {
+                let _ = crate::database::db_client::get_db_client().await;
+                let (http, guild, app, _state, token) = setup();
+                let before = counts(&http, guild).await;
+                let owner_user = http.get_guild(GuildId::new(guild)).await.unwrap().owner_id.get();
+                let map = || Body::from(crate::activity::map::azgaar_file::tests::sample_map_text());
+
+                // 1. Premier import.
+                assert_eq!(call(&app, "POST", "/api/admin/import/map", &token, map()).await.0, StatusCode::OK);
+                tokio::time::sleep(Duration::from_millis(1100)).await;
+                let first = format!(r#"{{"plan":{PLAN},"confirm_name":"Test E6","new_universe":{{"name":"Test E6"}}}}"#);
+                let (st, body) = call(&app, "POST", "/api/admin/import/execute", &token, Body::from(first)).await;
+                assert_eq!(st, StatusCode::OK, "{body}");
+                let done = wait_job(&app, &token, body["job_id"].as_str().unwrap()).await;
+                assert_eq!(done["outcome"]["status"], "done", "{done}");
+                let universe_id = ObjectId::parse_str(done["outcome"]["universe_id"].as_str().unwrap()).unwrap();
+                let old_places: Vec<Place> = crate::database::places::get_places_by_universe_id(universe_id).await.unwrap().try_collect().await.unwrap();
+                let old_roads: Vec<crate::database::road::Road> = crate::database::road::get_roads_by_universe(universe_id).await.unwrap().try_collect().await.unwrap();
+                let harwick = old_places.iter().find(|p| p.name == "Harwick").unwrap().clone();
+
+                // 2. Un joueur à Harwick, un objet posé à lui (avec du contenu), un sans propriétaire.
+                let db = crate::database::db_client::get_db_client().await.database(VERSEENGINE_DB_NAME);
+                let character = crate::database::characters::Character { _id: ObjectId::new(), user_id: owner_user, universe_id, name: "Testeur".into(), stats: vec![], description: None, image: None };
+                db.collection::<crate::database::characters::Character>("characters").insert_one(&character).await.unwrap();
+                TravelGroup { _id: ObjectId::new(), universe_id, actual_space_id: harwick.category_id, actual_space_type: SpaceType::Place, members: vec![owner_user], server_id: guild, ..Default::default() }
+                    .insert().await.unwrap();
+                let (chest_item, coin) = (ObjectId::new(), ObjectId::new());
+                let tool = |owner: Option<ObjectId>| crate::database::tool::Tool {
+                    _id: Some(ObjectId::new()), universe_id, server_id: guild, owner_id: owner, category_id: harwick.category_id,
+                    channel_id: harwick.central_channel_id.unwrap(), area_id: None, original_item: chest_item, name: "Coffre".into(),
+                    chained: None, inventory_id: None, inventory_size: 5,
+                };
+                let (owned, unowned) = (tool(Some(character._id)), tool(None));
+                owned.clone().save().await.unwrap();
+                unowned.clone().save().await.unwrap();
+                Inventory::add_item_to_inventory(universe_id, owned._id.unwrap(), HolderType::Item, coin, 2).await.unwrap();
+                Inventory::add_item_to_inventory(universe_id, unowned._id.unwrap(), HolderType::Item, coin, 7).await.unwrap();
+
+                // 3. Second import, en remplaçant : l'aperçu annonce ce qui sera touché.
+                tokio::time::sleep(Duration::from_millis(1100)).await;
+                assert_eq!(call(&app, "POST", "/api/admin/import/map", &token, map()).await.0, StatusCode::OK);
+                tokio::time::sleep(Duration::from_millis(1100)).await;
+                let (st, preview) = call(&app, "POST", "/api/admin/import/plan", &token, Body::from(PLAN)).await;
+                assert_eq!(st, StatusCode::OK, "{preview}");
+                assert_eq!(preview["removal"]["characters"], 1);
+                assert_eq!(preview["removal"]["items"].as_array().unwrap().len(), 2);
+                assert!(preview["removal"]["items"].as_array().unwrap().iter().any(|i| i["owner"] == "Testeur" && i["content"] == 2));
+
+                // Sans confirmation de la destruction de l'objet sans propriétaire : refusé (Q2).
+                tokio::time::sleep(Duration::from_millis(1100)).await;
+                let refused = format!(r#"{{"plan":{PLAN},"confirm_name":"Test E6","removal":{{"start_burg":1}}}}"#);
+                let (st, body) = call(&app, "POST", "/api/admin/import/execute", &token, Body::from(refused)).await;
+                assert_eq!((st, body["error"].as_str()), (StatusCode::BAD_REQUEST, Some("activity__import_confirm_unowned")));
+
+                tokio::time::sleep(Duration::from_millis(1100)).await;
+                let ok = format!(r#"{{"plan":{PLAN},"confirm_name":"Test E6","removal":{{"start_burg":2,"confirm_destroy_unowned":true}}}}"#);
+                let (st, body) = call(&app, "POST", "/api/admin/import/execute", &token, Body::from(ok)).await;
+                assert_eq!(st, StatusCode::OK, "{body}");
+                let done = wait_job(&app, &token, body["job_id"].as_str().unwrap()).await;
+                assert_eq!(done["outcome"]["status"], "done", "{done}");
+
+                // 4. Vérifications.
+                let places: Vec<Place> = crate::database::places::get_places_by_universe_id(universe_id).await.unwrap().try_collect().await.unwrap();
+                assert_eq!(places.len(), 2, "only the new places remain");
+                assert!(places.iter().all(|p| !old_places.iter().any(|o| o.category_id == p.category_id)));
+                for o in &old_places {
+                    assert!(http.get_channel(ChannelId::new(o.category_id)).await.is_err(), "old category deleted");
+                    assert!(http.get_channel(ChannelId::new(o.central_channel_id.unwrap())).await.is_err(), "old channel deleted");
+                }
+                for r in &old_roads {
+                    assert!(http.get_channel(ChannelId::new(r.channel_id)).await.is_err(), "old road deleted");
+                }
+                let roles = http.get_guild_roles(GuildId::new(guild)).await.unwrap();
+                assert!(old_places.iter().all(|o| !roles.iter().any(|r| r.id.get() == o.role)), "old roles deleted");
+                // Lieu de départ : le bourg 2 (Westham) de la nouvelle carte.
+                let westham = places.iter().find(|p| p.name == "Westham").unwrap();
+                let group = crate::database::travel::get_group_of_user(universe_id, owner_user).await.unwrap().unwrap();
+                assert_eq!((group.actual_space_type, group.actual_space_id), (SpaceType::Place, westham.category_id));
+                let member = http.get_member(GuildId::new(guild), serenity::all::UserId::new(owner_user)).await.unwrap();
+                assert!(member.roles.iter().any(|r| r.get() == westham.role), "the start place role is given");
+                // Objets : rendu avec son contenu, l'autre détruit.
+                let inv = Inventory::get_by_holder(universe_id, character._id, HolderType::Character).await.unwrap();
+                let qty = |item: ObjectId| inv.iter().filter(|i| i.item_id == item).map(|i| i.quantity).sum::<u64>();
+                assert_eq!((qty(chest_item), qty(coin)), (1, 2));
+                assert_eq!(db.collection::<mongodb::bson::Document>("placed_items").count_documents(doc! {"universe_id": universe_id}).await.unwrap(), 0);
+                assert_eq!(db.collection::<mongodb::bson::Document>("inventory").count_documents(doc! {"universe_id": universe_id, "holder.holder_type": "Item"}).await.unwrap(), 0);
+
+                crate::test_support::delete_universe_everywhere(&http, universe_id).await;
+                for name in ["characters", "travels", "inventory", "provisioning_jobs"] {
+                    db.collection::<mongodb::bson::Document>(name).delete_many(doc! {"universe_id": universe_id}).await.unwrap();
+                }
+                db.collection::<mongodb::bson::Document>("provisioning_jobs").delete_many(doc! {"kind": "map_import", "universe_id": null}).await.unwrap();
+                assert_eq!(counts(&http, guild).await, before, "everything is cleaned up");
+            });
+        }
+
         /// Un échec au milieu (après le premier lieu) défait tout : univers, serveur, rôles et
         /// salons, documents.
         #[test]
@@ -631,6 +814,7 @@ mod tests {
                     plan,
                     map: Arc::new(map),
                     zone: vec![],
+                    removal: None,
                     fail_after_places: Some(1),
                 };
                 let err = execute(&mut p, exec).await.unwrap_err();

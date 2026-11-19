@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ImportPlan, ServerChoice, UploadedMap } from '../api';
-import { blocker, estimatedMinutes, initialChoices, missingServers, nameConfirmed, optionsForSlot, percent, planRequest, roadKey, setSlot, slotCount, summary, toggleSecret } from './importModel';
+import { blocker, removalChoices, estimatedMinutes, initialChoices, missingServers, nameConfirmed, optionsForSlot, percent, planRequest, roadKey, setSlot, slotCount, summary, toggleSecret } from './importModel';
 
 const map = (over: Partial<UploadedMap> = {}): UploadedMap => ({
   name: 'Moria', version: '1.158', width: 100, height: 100, distance_unit: 'km', route_count: 1, burgs: [], terrain: null,
@@ -60,7 +60,7 @@ describe('server slots (Q11)', () => {
     expect(blocker(plan(['g', null]))).toBe('activity_ui__import_servers_missing');
     expect(blocker(plan(['g', 'h']))).toBeNull();
     expect(blocker(null)).toBe('activity_ui__import_wait_preview');
-    expect(blocker(plan(['g'], { remove_roads: ['1'] }))).toBe('activity__import_removal_not_ready');
+    expect(blocker(plan(['g'], { remove_roads: ['1'] }))).toBeNull();
   });
 
   it('clears trailing empty slots', () => {
@@ -68,6 +68,33 @@ describe('server slots (Q11)', () => {
     expect(c.extraServers).toEqual([null, 'b']);
     c = setSlot(c, 2, null);
     expect(c.extraServers).toEqual([]);
+  });
+});
+
+describe('removing the existing places (I15, Q2)', () => {
+  const p = plan(['g'], {
+    remove_places: ['9'],
+    places: [{ burg_id: 4, name: 'Bree', x: 0, y: 0, capital: false, action: { kind: 'create' }, server: 0 }],
+  });
+  const removal = { characters: 2, travelling: 1, items: [
+    { tool_id: 'a', name: 'Coffre', place_name: 'Vieux', owner: 'Aria', content: 3 },
+    { tool_id: 'b', name: 'Statue', place_name: 'Vieux', owner: null, content: 0 },
+  ] };
+
+  it('requires a start place of the new map, then the confirmation of unowned items', () => {
+    let c = initialChoices(map());
+    expect(blocker(p, removal, c)).toBe('activity__import_start_place_required');
+    c = { ...c, startBurg: 99 };
+    expect(blocker(p, removal, c)).toBe('activity__import_start_place_required');
+    c = { ...c, startBurg: 4 };
+    expect(blocker(p, removal, c)).toBe('activity__import_confirm_unowned');
+    c = { ...c, confirmUnowned: true };
+    expect(blocker(p, removal, c)).toBeNull();
+  });
+
+  it('sends the chosen actions', () => {
+    const c = { ...initialChoices(map()), startBurg: 4, confirmUnowned: true, itemActions: new Map([['a', 'destroy' as const]]) };
+    expect(removalChoices(c)).toEqual({ start_burg: 4, items: [{ tool_id: 'a', action: 'destroy' }], confirm_destroy_unowned: true });
   });
 });
 

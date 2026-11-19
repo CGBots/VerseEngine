@@ -417,7 +417,13 @@ async fn plan(State(state): State<AppState>, Authed(s): Authed, Json(req): Json<
     let ctx = require_importer(&state, &s).await?;
     let inputs = plan_inputs(&state, &s, &ctx, &req).await?;
     let plan = compute_plan(&inputs).await?;
+    // Ce que la suppression toucherait : joueurs à déplacer, objets posés (I15, Q2).
+    let removal = match (&ctx.universe, crate::activity::import_exec::removes_something(&plan)) {
+        (Some(u), true) => Some(crate::activity::import_removal::load_removal(u.universe_id, req.mode, &plan).await?.info),
+        _ => None,
+    };
     Ok(Json(serde_json::json!({
+        "removal": removal,
         "plan": plan,
         "servers_to_create": plan.servers_to_create(),
         "discord_objects": plan.discord_objects_to_create(),
