@@ -218,4 +218,34 @@ pub(crate) mod tests {
         assert!(bomb.len() < 2 << 20);
         assert!(parse_map_file(&bomb).is_err());
     }
+
+    /// Vraie sauvegarde `.map` (fichier fourni par `AZGAAR_MAP_FILE`). Avec `AZGAAR_FULL_JSON`
+    /// (export JSON « Full » de la même carte), vérifie que les deux donnent les mêmes données.
+    #[test]
+    #[ignore = "integration test: needs AZGAAR_MAP_FILE (a real Azgaar .map save)"]
+    fn a_real_map_save_is_read() {
+        let path = std::env::var("AZGAAR_MAP_FILE").expect("set AZGAAR_MAP_FILE");
+        let f = parse_map_file(&std::fs::read(&path).unwrap()).expect("the save is read");
+        assert!(f.map.width > 0.0 && f.map.height > 0.0);
+        assert!(f.map.burgs.len() > 5 && !f.map.routes.is_empty() && !f.map.cells.is_empty());
+        assert!(f.svg.as_deref().is_some_and(|s| s.starts_with("<svg") && s.ends_with("</svg>")), "svg record");
+        let ids: Vec<u64> = f.map.burgs.iter().take(12).map(|b| b.id).collect();
+        let roads = crate::activity::map::network::road_candidates(&f.map, &ids, &Default::default(), false, 6.0);
+        assert!(roads.iter().all(|r| r.path.len() >= 2), "every road has a path");
+
+        if let Ok(json) = std::env::var("AZGAAR_FULL_JSON") {
+            let j = crate::activity::map::azgaar::parse(&std::fs::read_to_string(json).unwrap()).unwrap();
+            assert_eq!((f.map.width, f.map.height), (j.width, j.height));
+            assert_eq!(f.map.burgs, j.burgs, "same burgs");
+            assert_eq!(f.map.routes.len(), j.routes.len(), "same routes");
+            assert_eq!((f.map.distance_scale, f.map.distance_unit.clone()), (j.distance_scale, j.distance_unit.clone()));
+            let jr = crate::activity::map::network::road_candidates(&j, &ids, &Default::default(), false, 6.0);
+            assert_eq!(roads.len(), jr.len(), "same road candidates");
+        }
+        eprintln!(
+            "{} {}: {}×{}, {} bourgs, {} routes, {} cellules, svg {} Ko, {} routes candidates pour 12 bourgs",
+            f.map.name.as_deref().unwrap_or("?"), f.version, f.map.width, f.map.height, f.map.burgs.len(), f.map.routes.len(),
+            f.map.cells.len(), f.svg.as_ref().map_or(0, |s| s.len() / 1024), roads.len()
+        );
+    }
 }
