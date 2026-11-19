@@ -58,6 +58,8 @@ pub struct AppState {
     pub images: Arc<crate::activity::images::ImageCache>,
     /// Cartes Azgaar envoyées par les admins, en attente d'import.
     pub import_drafts: Arc<crate::activity::admin_import::ImportDrafts>,
+    /// Imports en cours ou terminés (progression).
+    pub import_jobs: Arc<crate::activity::import_exec::ImportJobs>,
 }
 
 impl AppState {
@@ -74,6 +76,7 @@ impl AppState {
             hub: crate::activity::events::Hub::new(),
             images: Arc::default(),
             import_drafts: Arc::default(),
+            import_jobs: Arc::default(),
         }
     }
 
@@ -103,7 +106,7 @@ pub fn router(state: AppState) -> Router {
 
     // Limite de 64 Kio partout, sauf l'envoi d'une carte Azgaar (32 Mio, route dédiée).
     let (admin, upload) = crate::activity::admin_import::routes();
-    let api = api.merge(admin).layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES)).merge(upload.layer(RequestBodyLimitLayer::new(crate::activity::admin_import::MAX_MAP_BYTES)));
+    let api = api.merge(admin).merge(crate::activity::import_exec::routes()).layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES)).merge(upload.layer(RequestBodyLimitLayer::new(crate::activity::admin_import::MAX_MAP_BYTES)));
     Router::new()
         .nest("/api", api)
         .layer(SetResponseHeaderLayer::if_not_present(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")))

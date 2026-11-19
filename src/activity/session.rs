@@ -72,6 +72,15 @@ impl SessionStore {
         token
     }
 
+    /// Le serveur `guild_id` vient d'être relié à `universe_id` (import) : ses sessions sans
+    /// univers y accèdent désormais, sans nouvelle connexion.
+    pub fn link_universe(&self, guild_id: u64, universe_id: ObjectId) {
+        let mut map = self.sessions.write().unwrap_or_else(|p| p.into_inner());
+        for s in map.values_mut().filter(|s| s.guild_id == guild_id && s.universe_id.is_none()) {
+            s.universe_id = Some(universe_id);
+        }
+    }
+
     pub fn get(&self, token: &str) -> Option<Session> { self.get_at(token, Instant::now()) }
 
     pub fn get_at(&self, token: &str, now: Instant) -> Option<Session> {
@@ -104,6 +113,22 @@ pub(crate) fn test_session(user_id: u64) -> Session {
         locale: "fr",
         access: AccessLevel::Player,
         expires_at: Instant::now(),
+    }
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::*;
+
+    #[test]
+    fn linking_a_guild_updates_its_sessions_without_universe_only() {
+        let store = SessionStore::new(Duration::from_secs(60));
+        let a = store.create(Session { universe_id: None, guild_id: 5, ..test_session(1) });
+        let other_guild = store.create(Session { universe_id: None, guild_id: 6, ..test_session(2) });
+        let u = ObjectId::new();
+        store.link_universe(5, u);
+        assert_eq!(store.get(&a).unwrap().universe_id, Some(u));
+        assert_eq!(store.get(&other_guild).unwrap().universe_id, None);
     }
 }
 

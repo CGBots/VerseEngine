@@ -98,6 +98,8 @@ Conventions :
 | GET | `/api/admin/import/servers` | d | serveurs utilisables pour l'import (voir `IMPORT_SPEC.md` § 13) |
 | POST | `/api/admin/import/map` | d | sauvegarde `.map` d'Azgaar, 32 Mio au plus |
 | POST | `/api/admin/import/plan` | d | aperçu de l'import |
+| POST | `/api/admin/import/execute` | d | création, après saisie du nom de l'univers |
+| GET | `/api/admin/import/jobs/{id}` | d | progression d'un import |
 | — | `/api/admin/*` | d | lieux, objets, fiches en attente, logs, positions des joueurs |
 
 Validation des entrées : désérialisation stricte (`deny_unknown_fields`), ids parsés (`u64`/`ObjectId`) avant tout accès base, longueurs bornées (noms ≤ 100, descriptions ≤ 4000), corps limité à 64 Kio (import Azgaar : route admin dédiée à 32 Mio, traitée en flux).
