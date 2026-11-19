@@ -235,7 +235,43 @@ pub fn road_candidates(map: &AzgaarMap, burg_ids: &[u64], zone: &Zone, include_s
     }
     let mut out: Vec<RoadCandidate> = best.into_values().collect();
     out.sort_by(|a, b| (a.burg_a, a.burg_b).cmp(&(b.burg_a, b.burg_b)));
-    out
+    prune_detours(out, DETOUR_TOLERANCE)
+}
+
+/// Un détour par un autre lieu au plus 10 % plus long rend la route directe inutile.
+pub const DETOUR_TOLERANCE: f64 = 1.10;
+
+/// Retire la route A–B quand un lieu C retenu donne un chemin A–C–B au plus `tolerance` fois
+/// plus long. Sur le réseau maillé d'Azgaar, presque toutes les paires de lieux sont reliées par
+/// un chemin qui évite les autres : sans ce tri, 12 lieux donneraient 66 routes (une par paire).
+///
+/// Les routes sont examinées de la plus longue à la plus courte, et A–B n'est retirée que si A–C
+/// et C–B sont encore gardées : le réseau reste connexe.
+pub fn prune_detours(candidates: Vec<RoadCandidate>, tolerance: f64) -> Vec<RoadCandidate> {
+    let dist: HashMap<(u64, u64), f64> = candidates.iter().map(|c| ((c.burg_a, c.burg_b), c.distance_km)).collect();
+    let pair = |a: u64, b: u64| (a.min(b), a.max(b));
+    let burgs: Vec<u64> = {
+        let mut v: Vec<u64> = candidates.iter().flat_map(|c| [c.burg_a, c.burg_b]).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    };
+    let mut kept: HashSet<(u64, u64)> = dist.keys().copied().collect();
+    let mut order: Vec<&RoadCandidate> = candidates.iter().collect();
+    order.sort_by(|x, y| y.distance_km.partial_cmp(&x.distance_km).unwrap_or(Ordering::Equal).then((x.burg_a, x.burg_b).cmp(&(y.burg_a, y.burg_b))));
+    for c in order {
+        let (a, b) = (c.burg_a, c.burg_b);
+        let redundant = burgs.iter().filter(|&&m| m != a && m != b).any(|&m| {
+            match (kept.contains(&pair(a, m)), kept.contains(&pair(m, b))) {
+                (true, true) => dist[&pair(a, m)] + dist[&pair(m, b)] <= c.distance_km * tolerance,
+                _ => false,
+            }
+        });
+        if redundant {
+            kept.remove(&(a, b));
+        }
+    }
+    candidates.into_iter().filter(|c| kept.contains(&(c.burg_a, c.burg_b))).collect()
 }
 
 #[cfg(test)]
@@ -282,6 +318,46 @@ mod tests {
         assert!(find(&c, 1, 4).is_none());
         // Burg isolé : aucune route.
         assert!(c.iter().all(|r| r.burg_a != 5 && r.burg_b != 5));
+    }
+
+    fn cand(a: u64, b: u64, km: f64) -> RoadCandidate {
+        RoadCandidate { burg_a: a.min(b), burg_b: a.max(b), distance_km: km, uses_sea: false, azgaar_routes: vec![] }
+    }
+
+    #[test]
+    fn a_road_passing_by_another_place_is_dropped() {
+        // A —10— B —10— C, et un chemin A–C de 21 km qui longe B : A–C est redondante.
+        let kept = prune_detours(vec![cand(1, 2, 10.0), cand(2, 3, 10.0), cand(1, 3, 21.0)], DETOUR_TOLERANCE);
+        let pairs: Vec<_> = kept.iter().map(|c| (c.burg_a, c.burg_b)).collect();
+        assert_eq!(pairs, vec![(1, 2), (2, 3)]);
+    }
+
+    #[test]
+    fn a_real_shortcut_is_kept() {
+        // Triangle : le détour par B (20 km) est bien plus long que A–C (12 km).
+        assert_eq!(prune_detours(vec![cand(1, 2, 10.0), cand(2, 3, 10.0), cand(1, 3, 12.0)], DETOUR_TOLERANCE).len(), 3);
+    }
+
+    #[test]
+    fn pruning_never_disconnects_places() {
+        // Trois routes de même longueur : chacune est un détour « gratuit » des deux autres en
+        // tolérance large, mais on n'en retire qu'une.
+        let kept = prune_detours(vec![cand(1, 2, 10.0), cand(2, 3, 10.0), cand(1, 3, 10.0)], 2.5);
+        assert_eq!(kept.len(), 2);
+    }
+
+    #[test]
+    fn a_complete_mesh_shrinks_to_neighbours() {
+        // Quatre lieux alignés tous reliés entre eux (comme sur un réseau maillé) : il reste la chaîne.
+        let xs = [0.0, 10.0, 20.0, 30.0];
+        let mut all = vec![];
+        for i in 0..4u64 {
+            for j in (i + 1)..4u64 {
+                all.push(cand(i + 1, j + 1, (xs[j as usize] - xs[i as usize]) * 1.02));
+            }
+        }
+        let pairs: Vec<_> = prune_detours(all, DETOUR_TOLERANCE).iter().map(|c| (c.burg_a, c.burg_b)).collect();
+        assert_eq!(pairs, vec![(1, 2), (2, 3), (3, 4)]);
     }
 
     #[test]

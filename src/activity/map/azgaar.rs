@@ -88,8 +88,58 @@ fn num(v: Option<&Value>) -> Option<f64> {
 }
 
 /// Parse le JSON « Full » exporté par Azgaar.
+/// Remplace les échappements `\uD800`–`\uDFFF` isolés (moitié de caractère sans l'autre) par
+/// `\uFFFD`. Azgaar en produit en coupant des textes générés au milieu d'un caractère ; le JSON
+/// reste sinon valide, mais `serde_json` les refuse. Les paires correctes et le reste sont gardés.
+pub fn replace_lone_surrogates(json: &str) -> std::borrow::Cow<'_, str> {
+    fn hex4(b: &[u8]) -> Option<u16> {
+        u16::from_str_radix(std::str::from_utf8(b.get(..4)?).ok()?, 16).ok()
+    }
+    let b = json.as_bytes();
+    let mut out: Option<String> = None;
+    let mut last = 0;
+    let mut i = 0;
+    while i + 1 < b.len() {
+        if b[i] != b'\\' {
+            i += 1;
+            continue;
+        }
+        if b[i + 1] != b'u' {
+            i += 2; // autre échappement (\\, \", \n…) : on le saute en entier
+            continue;
+        }
+        let Some(code) = hex4(&b[i + 2..]) else { i += 2; continue };
+        let next_low = b.get(i + 6) == Some(&b'\\') && b.get(i + 7) == Some(&b'u')
+            && hex4(&b[(i + 8).min(b.len())..]).is_some_and(|c| (0xDC00..=0xDFFF).contains(&c));
+        let lone = match code {
+            0xD800..=0xDBFF => !next_low,
+            0xDC00..=0xDFFF => true, // une moitié basse valide a déjà été consommée avec sa paire
+            _ => false,
+        };
+        if lone {
+            let o = out.get_or_insert_with(|| String::with_capacity(json.len()));
+            o.push_str(&json[last..i]);
+            o.push_str("\\uFFFD");
+            last = i + 6;
+            i += 6;
+        } else if (0xD800..=0xDBFF).contains(&code) {
+            i += 12; // paire valide
+        } else {
+            i += 6;
+        }
+    }
+    match out {
+        Some(mut o) => {
+            o.push_str(&json[last..]);
+            std::borrow::Cow::Owned(o)
+        }
+        None => std::borrow::Cow::Borrowed(json),
+    }
+}
+
 pub fn parse(json: &str) -> Result<AzgaarMap, AzgaarError> {
-    let root: RawRoot = serde_json::from_str(json).map_err(|e| AzgaarError::InvalidJson(e.to_string()))?;
+    let json = replace_lone_surrogates(json);
+    let root: RawRoot = serde_json::from_str(&json).map_err(|e| AzgaarError::InvalidJson(e.to_string()))?;
     let pack = root.pack.ok_or(AzgaarError::MissingPack)?;
     let info = root.info.unwrap_or(Value::Null);
     let settings = root.settings.unwrap_or(Value::Null);
@@ -411,5 +461,55 @@ mod tests {
         assert_eq!(t.heights[0], 5);
         assert_eq!(t.heights[2 * 8 + 4], 60);
         assert!(t.heights.iter().all(|&h| h <= 100));
+    }
+
+    #[test]
+    fn lone_surrogates_from_azgaar_are_replaced() {
+        // Cas réels d'un export : moitiés hautes répétées, moitié basse seule, paire correcte.
+        let raw = r#"{"note":"a\ud802\ud802b\udc2dc\ud83d\ude00d\\ud802e\n"}"#;
+        let fixed = replace_lone_surrogates(raw);
+        assert_eq!(fixed, r#"{"note":"a\uFFFD\uFFFDb\uFFFDc\ud83d\ude00d\\ud802e\n"}"#);
+        let v: serde_json::Value = serde_json::from_str(&fixed).unwrap();
+        assert_eq!(v["note"], "a\u{FFFD}\u{FFFD}b\u{FFFD}c\u{1F600}d\\ud802e\n");
+        assert!(serde_json::from_str::<serde_json::Value>(raw).is_err(), "serde_json refuses the raw text");
+    }
+
+    #[test]
+    fn valid_json_is_left_untouched() {
+        let raw = r#"{"a":"\u00e9\ud83d\ude00\\u0041"}"#;
+        assert!(matches!(replace_lone_surrogates(raw), std::borrow::Cow::Borrowed(_)));
+    }
+
+    /// Vrai export « Full » d'Azgaar (fichier fourni par `AZGAAR_FULL_JSON`) : il se lit, ses bourgs
+    /// et ses routes sont trouvés, et les routes candidates relient des bourgs avec une distance.
+    /// Avec `AZGAAR_SUMMARY_OUT`, écrit un résumé (bourgs retenus, routes) en JSON.
+    #[test]
+    #[ignore = "integration test: needs AZGAAR_FULL_JSON (a real Azgaar Full JSON export)"]
+    fn a_real_full_export_is_parsed() {
+        let path = std::env::var("AZGAAR_FULL_JSON").expect("set AZGAAR_FULL_JSON");
+        let map = parse(&std::fs::read_to_string(&path).unwrap()).expect("the export parses");
+        assert!(map.width > 0.0 && map.height > 0.0);
+        assert!(map.burgs.len() > 5, "burgs: {}", map.burgs.len());
+        assert!(!map.routes.is_empty(), "routes");
+        assert!(!map.cells.is_empty(), "cells");
+        assert!(resample_terrain(&map, MAX_TERRAIN_SIDE).is_some());
+
+        // Capitales d'abord, puis les autres : une douzaine de lieux.
+        let mut burgs = map.burgs.clone();
+        burgs.sort_by_key(|b| (!b.capital, b.id));
+        burgs.truncate(12);
+        let ids: Vec<u64> = burgs.iter().map(|b| b.id).collect();
+        let roads = crate::activity::map::network::road_candidates(&map, &ids, &crate::activity::map::network::Zone::default(), false, 6.0);
+        assert!(!roads.is_empty(), "no road between the chosen burgs");
+        assert!(roads.iter().all(|r| r.distance_km > 0.0 && ids.contains(&r.burg_a) && ids.contains(&r.burg_b)));
+
+        if let Ok(out) = std::env::var("AZGAAR_SUMMARY_OUT") {
+            let summary = serde_json::json!({
+                "name": map.name, "width": map.width, "height": map.height,
+                "burgs": burgs.iter().map(|b| serde_json::json!({"id": b.id, "name": b.name, "x": b.x, "y": b.y, "capital": b.capital})).collect::<Vec<_>>(),
+                "roads": roads.iter().map(|r| serde_json::json!({"a": r.burg_a, "b": r.burg_b, "km": r.distance_km, "sea": r.uses_sea})).collect::<Vec<_>>(),
+            });
+            std::fs::write(out, serde_json::to_string_pretty(&summary).unwrap()).unwrap();
+        }
     }
 }
