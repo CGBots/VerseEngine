@@ -70,3 +70,54 @@ Avec 150 lieux, il reste environ 95 rôles pour les routes (250 − 150 − envi
 - Faisabilité d'Azgaar dans l'iframe de l'activité (I3) : CSP de Discord, iframe imbriquée, polices servies depuis notre domaine. Sinon, redirection vers azgaar.github.io (instructions), puis import du `.map` et rendu par l'activité (Q3).
 - Limites de débit de Discord lors de la création en masse de salons et de rôles (respect de `Retry-After`, barre de progression).
 - Partition des lieux entre serveurs (I4) : graphe pondéré par les routes, au plus 150 lieux et dans le budget de salons par serveur, en minimisant les routes entre serveurs.
+
+## 7. Résultats des vérifications (19/11/2026, session « import de carte »)
+
+### 7.1 Azgaar dans l'iframe de l'activité (I3)
+- **Non vérifiable depuis la session cloud** : ni client Discord, ni accès à docs.discord.com depuis le réseau de la session. La documentation publique (page *Networking*) confirme que toute requête de l'activité doit passer par le proxy `<client_id>.discordsays.com` (CSP `connect-src`) ; rien de public ne précise `frame-src` pour une iframe imbriquée.
+- Piste technique si on l'essaie : servir une version figée d'Azgaar sous notre domaine (`/azgaar/`, même origine que l'activité, donc via le mapping `/`), polices auto-hébergées, et lire la carte **directement dans la fenêtre enfant** (même origine) plutôt que par un téléchargement, que l'iframe de Discord risque de bloquer.
+- Conséquence : on livre d'abord le **repli** (instructions + lien vers azgaar.github.io, puis import du `.map`, rendu par l'activité, Q3). L'intégration d'Azgaar est une étape à part, en dernier, qui demande un essai réel dans Discord par l'utilisateur et son accord pour exécuter le code d'Azgaar.
+
+### 7.2 Limites de débit de Discord (mesurées sur « rpbot test »)
+Script : 30 salons puis 30 rôles créés à la suite, puis supprimés.
+
+| Point d'accès | `X-RateLimit-Limit` | Fenêtre observée | Débit réel |
+|---|---:|---|---|
+| `POST /guilds/{id}/channels` | **2 000** | réinitialisation en minutes | ≈ 0,35 s par salon, aucun 429 |
+| `POST /guilds/{id}/roles` | **250** | `Reset-After` ≈ **21 000 s (≈ 6 h)** | ≈ 0,45 s par rôle, aucun 429 |
+| Suppressions | — | ne consomment pas les quotas ci-dessus | — |
+
+Conséquences :
+- **Quota de 250 créations de rôles par serveur sur plusieurs heures**, indépendant de la limite de 250 rôles présents. 150 lieux + 4 rôles de base passent, mais **un import raté puis relancé** peut épuiser le quota. Confirme Q1 (plus de rôle par route) et impose : (1) ne jamais recréer un rôle existant (I10), (2) si Discord demande d'attendre plus de quelques secondes, **arrêter et revenir en arrière** au lieu d'attendre des heures (serenity dort sur `Retry-After` sans plafond : il faut intercepter via le callback du `Ratelimiter` ou un délai maximal).
+- Durée estimée d'un serveur complet (150 lieux = 450 objets Discord + ~200 routes) : **4 à 5 minutes**, d'où la barre de progression (I13).
+- serenity 0.12 respecte déjà `Retry-After` et la limite globale (`http/ratelimiting.rs`).
+
+### 7.3 Permissions individuelles sur un salon de route (Q1)
+Essai `PUT /channels/{id}/permissions/{user_id}` (type membre) sur un salon temporaire :
+- membre du serveur : **204** ; non-membre : **404 `Unknown Overwrite` (10009)** → même comportement que `manage_roles`, qui ignore déjà un joueur absent du serveur ;
+- `DELETE` d'une permission absente : **204** (idempotent, donc sûr pour l'arrêt et l'arrivée rejoués après un redémarrage).
+
+### 7.4 Répartition des lieux entre serveurs (I4)
+Budget d'un serveur : rôles `lieux + 4 ≤ 250` ; salons `base + 2 × lieux + routes hébergées + ⌈routes hébergées / 50⌉ ≤ 500` (base : 9 salons en installation complète, 1 en partielle) ; lieux ≤ 150. Une route entre deux serveurs est hébergée par l'un des deux (celui qui a le plus de marge) ; ses voyageurs doivent être membres des deux serveurs, comme aujourd'hui (`server_two_id`).
+
+Algorithme retenu (pur, déterministe, testé hors Discord) :
+1. `k` = nombre minimal de serveurs, d'abord `⌈lieux / 150⌉`, augmenté tant qu'aucune répartition ne respecte les budgets ;
+2. graines éloignées (point le plus loin du précédent, distance par les routes), puis **croissance de régions** par Dijkstra multi-source, en respectant la capacité ;
+3. **raffinement Fiduccia–Mattheyses** : déplacer un lieu de bordure si cela réduit le nombre de routes entre serveurs sans dépasser un budget ;
+4. résultat : affectation lieu → serveur, nombre de routes coupées, budget restant de chaque serveur (affiché à l'admin avant validation).
+
+## 8. Découpage proposé (à valider par l'utilisateur)
+
+Chaque étape est testée, poussée sur `feature/map-import`, et met à jour `PROGRESS.md` et la PR.
+
+| # | Étape | Contenu |
+|---|---|---|
+| E1 | Routes sans rôle (Q1) | Permission individuelle posée au départ, retirée à l'arrivée et à l'arrêt, dans `travel/logic.rs`/`service.rs` (donc identique slash et activité). `Road.role_id` optionnel ; `/road_create_road` ne crée plus de rôle ; migration des routes existantes. Test REST. |
+| E2 | Services de création sans `poise::Context` | Lieu (rôle + catégorie + salon `place-centrale`/`central-square`, I5, Q5), route, installation d'univers et de serveur, partagés par les commandes slash et l'import. Exécuteur de plan avec journal, progression et **retour en arrière complet** (I13), arrêt sur quota. |
+| E3 | Plan d'import (logique pure) | `.map` → lieux, routes, distances brutes (I8), routes maritimes, secrètes, rattachement (I16), différence de ré-import (I10), répartition (§ 7.4). |
+| E4 | API admin | Activité sans univers (I2), droits (I1, revérifiés sur chaque serveur cible), envoi du `.map`, aperçu, choix des serveurs (I9), création de l'univers (I14), validation par le nom (I12), tâche avec progression par WebSocket. |
+| E5 | Écrans de l'activité | Instructions Azgaar, aperçu 2D/3D, clic sur une route → « secrète », case « routes maritimes », nombre de serveurs, récapitulatif, barres de progression. |
+| E6 | « Supprimer les lieux existants » (I15, Q2) | Lieu de départ, voyages annulés, objets posés détruits ou rendus, alerte et confirmation. |
+| E7 | « Générer une map » (I11) | Graine, nombre de lieux, édition simple. |
+| E8 | Brouillard (I17, Q4) | Option par univers, brume animée opaque. |
+| E9 | Azgaar dans l'activité (I3) | Facultatif, après accord et essai réel dans Discord. |
