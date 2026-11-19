@@ -159,3 +159,18 @@ Chaque étape est testée, poussée sur `feature/map-import`, et met à jour `PR
 
 ### Limite de serveurs par univers (Q10)
 Elle était de 2 (`FREE_LIMIT_SERVERS_PER_UNIVERSE`), ce qui plafonnait l'import à 120 lieux. **Décision : supprimée pour l'instant** (`MAX_SERVERS_PER_UNIVERSE = None`), pour l'import comme pour `/universe_add_server`. **À réintroduire plus tard comme fonctionnalité premium** (dépôt privé). La limite de 2 univers par créateur est inchangée.
+
+## 12. E3 livrée : plan d'import (19/11/2026)
+
+Logique pure, sans Discord ni base : `activity/map/partition.rs` et `activity/map/import_plan.rs`.
+
+- **Répartition** (§ 7.4) : `k` minimal, graines éloignées, croissance de régions par Dijkstra sur les routes, raffinement des lieux de bordure. Lieux déjà créés **fixés** sur leur serveur ; lieux et routes existants comptés dans la limite de lieux mais pas deux fois dans le budget de salons et de rôles. Une route entre deux serveurs est hébergée par celui qui a le plus de salons libres.
+- **Plan** (`build_plan`) : bourgs retenus (sélection, zone), routes candidates (maritimes si demandées), secrets choisis dans l'aperçu, distances arrondies au km avec 1 km au moins. Trois modes :
+  - `Replace` (I15) : tout l'existant est listé pour suppression ;
+  - `Merge` (I16) : les rattachements choisis par l'admin (proposés par `match_places`) gardent le lieu et son nom ; rien n'est supprimé ;
+  - `Reimport` (I10) : les lieux d'un import précédent (bourg connu) sont gardés avec leur nom ; les routes changées sont mises à jour ; ce qui a disparu est retiré. Les routes manuelles vers des lieux manuels ne sont pas touchées.
+- Le plan donne : actions par lieu et par route, serveur de chaque lieu, serveur hôte de chaque route, budget de chaque serveur, **nombre de serveurs à créer** par l'admin (I4), routes entre serveurs, bourgs isolés, et le nombre d'objets Discord à créer (total de la barre de progression).
+- **Moria entière** (`a_real_map_is_planned_over_several_servers`) : 538 lieux, 656 routes, **9 serveurs** (le minimum), 88 routes entre serveurs (13,4 %), 6 bourgs isolés, 2 288 objets Discord, calcul en 0,17 s. Par serveur : 59 ou 60 lieux, 197 à 212 salons, 63 ou 64 rôles.
+
+### Question ouverte : unité des distances
+`road_candidates` convertit en km les cartes en miles, lieues ou milles marins (`unit_to_km`). I8 dit « aucune conversion ». Moria est en km, donc sans effet ici. À trancher : garder la conversion (cohérente avec les vitesses en km/h) ou garder le nombre de la carte tel quel.
