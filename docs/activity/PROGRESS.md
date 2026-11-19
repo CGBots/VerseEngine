@@ -7,6 +7,7 @@ Dernière mise à jour : 19/11/2026 (session « import de carte », branche `fea
 | Branche | PR | État |
 |---|---|---|
 | `chore/hardening` | [#11](https://github.com/CGBots/VerseEngine/pull/11) | **Prête à fusionner.** CI verte (tests, intégration MongoDB, image Docker). Validée contre l'API REST Discord. |
+| `feature/map-import` | [#13](https://github.com/CGBots/VerseEngine/pull/13) (brouillon, vers `feature/discord-activity`) | Import et génération de carte : E1 et E2 livrées. |
 | `feature/discord-activity` | [#12](https://github.com/CGBots/VerseEngine/pull/12) (brouillon) | Contient #11 par fusion. Phase b terminée côté code ; reste un essai réel dans Discord, qui demande l'hébergement. |
 
 - `cargo test --locked` sur `feature/discord-activity` : 194 réussis, 18 ignorés (intégration).
