@@ -61,6 +61,7 @@ pub fn computed_map(universe_id: ObjectId, places: &[Place], roads: &[Road], now
         terrain: None,
         zone: None,
         graph_hash: Some(graph_hash(places, roads)),
+        background: None,
         updated_at: now,
     }
 }
@@ -105,6 +106,14 @@ pub struct MapTerrainDto {
     pub heights: Vec<u8>,
 }
 
+/// Fond de carte (image Azgaar) : URL versionnée par l'empreinte, donc mise en cache sans risque.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct MapBackgroundDto {
+    pub url: String,
+    pub width: u32,
+    pub height: u32,
+}
+
 #[derive(Debug, Serialize)]
 pub struct MapDto {
     pub source: MapSource,
@@ -114,6 +123,7 @@ pub struct MapDto {
     pub roads: Vec<MapRoadDto>,
     pub terrain: Option<MapTerrainDto>,
     pub zone: Option<MapZone>,
+    pub background: Option<MapBackgroundDto>,
     pub server_time: u64,
 }
 
@@ -153,6 +163,11 @@ pub fn build_map_dto(map: &UniverseMap, places: &[Place], roads: &[Road], visibl
         roads: road_dtos,
         terrain: map.terrain.as_ref().map(|t| MapTerrainDto { cols: t.cols, rows: t.rows, heights: t.heights.clone() }),
         zone: map.zone.clone(),
+        background: map.background.as_ref().map(|b| MapBackgroundDto {
+            url: format!("/api/map/background?v={}", &b.sha256[..b.sha256.len().min(16)]),
+            width: b.width,
+            height: b.height,
+        }),
         server_time: now,
     }
 }
@@ -241,6 +256,19 @@ mod tests {
         let (places, roads) = world();
         let shown = visible_place_ids(&places, &roads, &HashSet::from([10]), &[3]);
         assert!(shown.contains(&3));
+    }
+
+    #[test]
+    fn the_background_url_carries_its_version() {
+        let (places, roads) = world();
+        let mut map = computed_map(ObjectId::new(), &places, &roads, 0);
+        assert!(build_map_dto(&map, &places, &roads, &HashSet::new(), &[], 0).background.is_none());
+        map.background = Some(crate::database::map_backgrounds::MapBackground {
+            file_id: ObjectId::new(), content_type: "image/png".into(), width: 3000, height: 2000,
+            sha256: "0123456789abcdef0123".into(), bytes: 10,
+        });
+        let dto = build_map_dto(&map, &places, &roads, &HashSet::new(), &[], 0);
+        assert_eq!(dto.background, Some(MapBackgroundDto { url: "/api/map/background?v=0123456789abcdef".into(), width: 3000, height: 2000 }));
     }
 
     #[test]

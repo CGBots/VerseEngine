@@ -3,9 +3,12 @@ import { api, ApiError, clock, getSessionToken, travelApi, type CharacterView, t
 import { connect } from './discord';
 import { loadTranslator, pickLocale, type Translator } from './i18n';
 import { CharacterPanel } from './components/CharacterPanel';
-import { MapFallback2D } from './components/MapFallback2D';
+import { MapView2D } from './components/MapView2D';
 import { TravelPanel } from './components/TravelPanel';
-import { positionOnRoad, toScene, traveledAt, webglAvailable, type ScenePoint } from './map/geometry';
+import { TopBar } from './components/TopBar';
+import { SettingsPanel } from './components/SettingsPanel';
+import { positionOnRoad, traveledAt, webglAvailable, type MapPoint } from './map/geometry';
+import { playerPictureUrl } from './map/player';
 import { connectRealtime } from './realtime';
 
 type State =
@@ -19,7 +22,7 @@ const MapScene = lazy(() => import('./components/MapScene').then((m) => ({ defau
 const errorKey = (e: unknown) => (e instanceof ApiError ? e.key : 'activity__internal_error');
 
 /** Position du joueur dans la scène, recalculée chaque seconde pendant un voyage. */
-function usePlayerPosition(map: MapView | null, travel: TravelState | null): ScenePoint | null {
+function usePlayerPosition(map: MapView | null, travel: TravelState | null): MapPoint | null {
   const [tick, setTick] = useState(0);
   const moving = !!travel?.travel?.in_move;
   useEffect(() => {
@@ -33,7 +36,7 @@ function usePlayerPosition(map: MapView | null, travel: TravelState | null): Sce
     const loc = travel.location;
     if (loc.kind === 'place') {
       const p = map.places.find((x) => x.id === loc.id);
-      return p ? toScene(p.x, p.y, map.width, map.height) : null;
+      return p ? { x: p.x, y: p.y } : null;
     }
     const v = travel.travel;
     if (!v || !loc.source_id || !loc.destination_id) return null;
@@ -47,6 +50,7 @@ export function App() {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [t, setT] = useState<Translator>(() => fallbackT);
   const [adminMode, setAdminMode] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [character, setCharacter] = useState<CharacterView | null>(null);
   const [characterError, setCharacterError] = useState<string | null>(null);
   const [map, setMap] = useState<MapView | null>(null);
@@ -144,7 +148,14 @@ export function App() {
 
   const { session } = state;
   const avatar = session.user.avatar ? `https://cdn.discordapp.com/avatars/${session.user.id}/${session.user.avatar}.png?size=128` : null;
-  const mapProps = { currentPlaceId, reachable, player, onSelectPlace: setSelected };
+  const mapProps = {
+    currentPlaceId,
+    reachable,
+    player,
+    playerPicture: playerPictureUrl(session.user, character),
+    playerName: character?.name ?? session.user.global_name ?? session.user.username,
+    onSelectPlace: setSelected,
+  };
   return (
     <div className="layout">
       {character ? (
@@ -153,23 +164,24 @@ export function App() {
         <aside className="side-panel"><p>{t(characterError ?? 'activity__no_character')}</p></aside>
       )}
       <main className="map-area">
-        <div className="toolbar">
-          <span>{session.universe.name}</span>
-          {session.admin_mode_available && (
-            <label className="admin-toggle">
-              <input type="checkbox" checked={adminMode} onChange={(e) => setAdminMode(e.target.checked)} />
-              {t('activity_ui__admin_mode')}
-            </label>
-          )}
-        </div>
+        <TopBar
+          universeName={session.universe.name}
+          clockParams={session.universe_clock}
+          adminAvailable={session.admin_mode_available}
+          adminMode={adminMode}
+          onToggleAdmin={() => setAdminMode((on) => !on)}
+          onOpenSettings={() => setSettingsOpen(true)}
+          t={t}
+        />
         <div className="map-view">
           {map ? (
-            use3d ? (
-              <Suspense fallback={<MapFallback2D map={map} {...mapProps} />}>
+            // Export Azgaar : son image, en 2D. Sinon : scène 3D, ou 2D sans WebGL.
+            map.background || !use3d ? (
+              <MapView2D map={map} {...mapProps} />
+            ) : (
+              <Suspense fallback={<MapView2D map={map} {...mapProps} />}>
                 <MapScene map={map} {...mapProps} />
               </Suspense>
-            ) : (
-              <MapFallback2D map={map} {...mapProps} />
             )
           ) : (
             <div className="map-placeholder">{t('activity_ui__map')}</div>
@@ -190,6 +202,7 @@ export function App() {
           )}
         </div>
       </main>
+      {settingsOpen && <SettingsPanel t={t} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

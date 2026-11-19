@@ -49,6 +49,8 @@ export interface SessionInfo {
   universe: { id: string; name: string };
   access: 'player' | 'moderator' | 'admin';
   admin_mode_available: boolean;
+  /** `null` si le temps de l'univers est à l'arrêt. */
+  universe_clock: { origin: number; phase_duration_secs: number } | null;
   server_time: number;
 }
 
@@ -60,6 +62,8 @@ export interface MapView {
   roads: { id: string; name: string; from: string; to: string; distance_km: number; secret: boolean }[];
   terrain: { cols: number; rows: number; heights: number[] } | null;
   zone: { polygon: [number, number][]; outside: 'crop' | 'grey' | 'remove' } | null;
+  /** Image exportée par Azgaar (mêmes coordonnées que les lieux). */
+  background: { url: string; width: number; height: number } | null;
   server_time: number;
 }
 
@@ -100,6 +104,15 @@ export function setSessionToken(token: string | null): void {
 
 export function getSessionToken(): string | null {
   return sessionToken;
+}
+
+/** Ressource binaire authentifiée (fond de carte) → URL locale `blob:` utilisable par <img>. */
+export async function apiBlobUrl(path: string): Promise<string> {
+  const headers = new Headers();
+  if (sessionToken) headers.set('Authorization', `Bearer ${sessionToken}`);
+  const res = await fetch(path.startsWith('/api') ? path : `/api${path}`, { headers });
+  if (!res.ok) throw new ApiError(res.status, 'activity__map_not_found');
+  return URL.createObjectURL(await res.blob());
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {

@@ -88,6 +88,7 @@ pub fn router(state: AppState) -> Router {
         .route("/me", get(me))
         .route("/me/character", get(me_character))
         .route("/map", get(map))
+        .route("/map/background", get(map_background))
         .route("/me/travel", get(me_travel))
         .route("/me/travel/start", post(travel_start))
         .route("/me/travel/stop", post(travel_stop))
@@ -236,6 +237,7 @@ async fn auth_token(State(state): State<AppState>, body: Result<Json<TokenReques
         "expires_in": state.sessions.ttl().as_secs(),
         "user": UserDto { id: user.id.to_string(), username: user.username, global_name: user.global_name, avatar: user.avatar },
         "guild_id": guild_id.to_string(),
+        "universe_clock": universe_clock(&universe),
         "universe": UniverseDto { id: universe.universe_id.to_hex(), name: universe.name },
         "access": access,
         "admin_mode_available": access.can_use_admin_mode(),
@@ -247,6 +249,15 @@ async fn auth_token(State(state): State<AppState>, body: Result<Json<TokenReques
 // ---------------------------------------------------------------------------
 // GET /api/me
 // ---------------------------------------------------------------------------
+
+/// Paramètres de l'horloge de l'univers ; le client calcule l'heure avec la même formule que
+/// `/universe_time` (`universe::time::time_of_day`). `null` si le temps est à l'arrêt.
+pub fn universe_clock(universe: &crate::database::universe::Universe) -> serde_json::Value {
+    match crate::universe::time::universe_time_params(universe) {
+        Some((origin, phase)) => json!({ "origin": origin, "phase_duration_secs": phase }),
+        None => serde_json::Value::Null,
+    }
+}
 
 async fn me(Authed(s): Authed) -> Json<serde_json::Value> {
     Json(json!({
@@ -391,6 +402,30 @@ async fn map(Authed(s): Authed) -> ApiResult<Json<MapDto>> {
         .flatten()
         .collect();
     Ok(Json(build_map_dto(&universe_map, &places, &roads, &visible, &always, now_secs())))
+}
+
+/// Image de fond (export Azgaar) de l'univers de la session.
+///
+/// Servie avec `Content-Security-Policy: sandbox` : même ouverte directement, elle ne peut rien
+/// exécuter. Mise en cache côté client : l'URL change avec l'image (`?v=<empreinte>`).
+async fn map_background(Authed(s): Authed) -> ApiResult<Response> {
+    let background = crate::database::universe_maps::get_universe_map(s.universe_id)
+        .await?
+        .and_then(|m| m.background)
+        .ok_or_else(|| ApiError::not_found("activity__map_not_found"))?;
+    let bytes = crate::database::map_backgrounds::read_map_background(background.file_id).await?;
+    let content_type = match background.content_type.as_str() {
+        "image/png" => "image/png",
+        "image/jpeg" => "image/jpeg",
+        "image/webp" => "image/webp",
+        _ => return Err(ApiError::internal()),
+    };
+    let mut res = bytes.into_response();
+    let h = res.headers_mut();
+    h.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("private, max-age=86400, immutable"));
+    h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("sandbox; default-src 'none'"));
+    Ok(res)
 }
 
 // ---------------------------------------------------------------------------
@@ -955,6 +990,17 @@ mod tests {
     }
 
     #[test]
+    fn the_universe_clock_matches_the_bot() {
+        let mut u = crate::database::universe::Universe {
+            universe_id: Default::default(), name: "u".into(), creator_id: 1,
+            global_time_modifier: 200, time_origin_timestamp: 1_700_000_000_000, creation_timestamp: 0,
+        };
+        assert_eq!(universe_clock(&u), json!({"origin": 1_700_000_000u64, "phase_duration_secs": 10_800u64}));
+        u.global_time_modifier = 0;
+        assert_eq!(universe_clock(&u), serde_json::Value::Null, "time stopped");
+    }
+
+    #[test]
     fn snowflakes_are_parsed_strictly() {
         assert_eq!(parse_snowflake("1080809463201677332").unwrap(), 1080809463201677332);
         for bad in ["", "0", "+1", " 1", "1e3", "18446744073709551616", "abc"] {
@@ -998,6 +1044,53 @@ mod tests {
         let (st, _, _) = call(app, post_token(r#"{"code":"nope","instance_id":"i-1","locale":"en-GB"}"#)).await;
         assert_eq!(st, StatusCode::UNAUTHORIZED, "parsed, then rejected by Discord");
         assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// Bout en bout contre MongoDB : l'image Azgaar enregistrée est servie avec son type et sans
+    /// pouvoir s'exécuter ; une autre session d'un autre univers ne l'obtient pas.
+    #[test]
+    #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
+    fn the_map_background_is_served_to_its_universe_only() {
+        use crate::database::universe_maps::{get_universe_map, save_universe_map};
+        use crate::test_support::block_on;
+        use mongodb::bson::oid::ObjectId;
+        block_on(async {
+            let universe_id = ObjectId::new();
+            let map = computed_map(universe_id, &[], &[], 0);
+            save_universe_map(&map).await.unwrap();
+            let png = crate::database::map_backgrounds::tests::png(3000, 2000);
+            assert!(crate::database::map_backgrounds::set_map_background(universe_id, b"<svg/>").await.is_err());
+            let first = crate::database::map_backgrounds::set_map_background(universe_id, &png).await.unwrap();
+            let mut second_png = png.clone();
+            second_png.push(1);
+            let second = crate::database::map_backgrounds::set_map_background(universe_id, &second_png).await.unwrap();
+
+            let (app, state) = app_with(Arc::default());
+            let mine = state.sessions.create(crate::activity::session::Session { universe_id, ..test_session(1) });
+            let other = state.sessions.create(crate::activity::session::Session { universe_id: ObjectId::new(), ..test_session(2) });
+            let res = app.clone().oneshot(authed("GET", "/api/map/background", &mine, None)).await.unwrap();
+            let status = res.status();
+            let headers = res.headers().clone();
+            let body = to_bytes(res.into_body(), 1 << 20).await.unwrap();
+            let (other_status, _, _) = call(app, authed("GET", "/api/map/background", &other, None)).await;
+            let old_still_there = crate::database::map_backgrounds::read_map_background(first.file_id).await.is_ok();
+            let stored = get_universe_map(universe_id).await.unwrap().unwrap();
+
+            let db = crate::database::db_client::get_db_client().await.database(crate::database::db_namespace::VERSEENGINE_DB_NAME);
+            db.collection::<mongodb::bson::Document>(crate::database::db_namespace::UNIVERSE_MAPS_COLLECTION_NAME)
+                .delete_many(mongodb::bson::doc! {"universe_id": universe_id}).await.unwrap();
+            let _ = db.gridfs_bucket(mongodb::options::GridFsBucketOptions::builder().bucket_name("map_backgrounds".to_string()).build())
+                .delete(mongodb::bson::Bson::ObjectId(second.file_id)).await;
+
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(&body[..], &second_png[..]);
+            assert_eq!(headers.get("content-type").unwrap(), "image/png");
+            assert!(headers.get("content-security-policy").unwrap().to_str().unwrap().starts_with("sandbox"));
+            assert_eq!(headers.get("x-content-type-options").unwrap(), "nosniff");
+            assert_eq!(other_status, StatusCode::NOT_FOUND, "another universe gets nothing");
+            assert!(!old_still_there, "the replaced background is deleted");
+            assert_eq!(stored.background.unwrap().width, 3000);
+        });
     }
 
     /// Bout en bout contre MongoDB : la route secrète inconnue n'apparaît pas dans la réponse.

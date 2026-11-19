@@ -74,8 +74,6 @@ export function CharacterPanel({ character, avatarUrl, t, onOpenInventory, onRes
 
       <nav className="actions">
         <button type="button" onClick={onOpenInventory}>{t('activity_ui__inventory')}</button>
-        {/* Emplacement réservé : gestion d'abonnement (hors périmètre, non implémentée). */}
-        <button type="button" disabled title={t('activity_ui__coming_soon')}>{t('activity_ui__subscription')}</button>
       </nav>
     </aside>
   );

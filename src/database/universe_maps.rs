@@ -75,6 +75,9 @@ pub struct UniverseMap {
     /// Empreinte des lieux et routes ayant servi au placement (`Computed` seulement).
     #[serde(default)]
     pub graph_hash: Option<String>,
+    /// Image exportée par Azgaar, affichée telle quelle (`map_backgrounds`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<crate::database::map_backgrounds::MapBackground>,
     pub updated_at: u64,
 }
 
@@ -131,6 +134,7 @@ mod tests {
             terrain: Some(MapTerrain { cols: 2, rows: 1, heights: vec![0, 255] }),
             zone: Some(MapZone { polygon: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]], outside: OutsideZone::Grey }),
             graph_hash: Some("abc".into()),
+            background: None,
             updated_at: 1,
         }
     }

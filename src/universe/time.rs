@@ -105,10 +105,22 @@ pub fn phase_start(origin_secs: u64, phase_duration_secs: u64, phase_index: u64)
 
 /// Paramètres temporels d'un univers : `(origine en secondes, durée d'une phase en secondes)`.
 /// `None` si le temps de l'univers est à l'arrêt.
-fn universe_time_params(universe: &Universe) -> Option<(u64, u64)> {
+pub fn universe_time_params(universe: &Universe) -> Option<(u64, u64)> {
     let modifier = universe.global_time_modifier as f64 / 100.0;
     let duration = phase_duration_secs(modifier)?;
     Some(((universe.time_origin_timestamp / 1000) as u64, duration))
+}
+
+/// Heure de l'univers à l'instant `now` : `(heures, minutes, phase)`.
+///
+/// Une journée de l'univers dure 4 phases (`phase_duration_secs` chacune) ; minuit correspond au
+/// début de la phase 0. Même calcul que `/universe_time` et que l'horloge de l'activité.
+pub fn time_of_day(now: u64, origin_secs: u64, phase_duration_secs: u64) -> (u32, u32, TimePhase) {
+    let cycle = phase_duration_secs.max(1).saturating_mul(4);
+    let position = now.saturating_sub(origin_secs) % cycle;
+    let phase = TimePhase::from_index(position / phase_duration_secs.max(1));
+    let day_seconds = (position as f64 / cycle as f64) * 86_400.0;
+    ((day_seconds / 3600.0) as u32, ((day_seconds % 3600.0) / 60.0) as u32, phase)
 }
 
 /// Retire de la file (triée) tous les événements échus à `now` et les retourne.
@@ -482,6 +494,29 @@ mod tests {
         assert_eq!(e.trigger_timestamp, 1_500);
         assert_eq!(e.phase_index, 5);
         assert_eq!((e.origin_secs, e.phase_duration_secs), (1_000, 100));
+    }
+
+    // ---- heure de l'univers ----
+
+    #[test]
+    fn the_universe_day_starts_at_midnight() {
+        // Temps réel : 6 h de phase, journée de 24 h.
+        assert_eq!(time_of_day(1_000, 1_000, 21_600), (0, 0, TimePhase::Midnight));
+        assert_eq!(time_of_day(1_000 + 6 * 3600, 1_000, 21_600), (6, 0, TimePhase::Sunrise));
+        assert_eq!(time_of_day(1_000 + 13 * 3600 + 30 * 60, 1_000, 21_600), (13, 30, TimePhase::Noon));
+        assert_eq!(time_of_day(1_000 + 23 * 3600 + 59 * 60, 1_000, 21_600), (23, 59, TimePhase::Sunset));
+        assert_eq!(time_of_day(1_000 + 24 * 3600, 1_000, 21_600), (0, 0, TimePhase::Midnight));
+    }
+
+    #[test]
+    fn a_faster_universe_turns_faster() {
+        // Modificateur ×2 : une journée en 12 h réelles ; 3 h réelles = 06:00.
+        assert_eq!(time_of_day(3 * 3600, 0, 10_800), (6, 0, TimePhase::Sunrise));
+    }
+
+    #[test]
+    fn before_the_origin_it_is_midnight() {
+        assert_eq!(time_of_day(10, 1_000, 21_600), (0, 0, TimePhase::Midnight));
     }
 
     // ---- file d'événements ----

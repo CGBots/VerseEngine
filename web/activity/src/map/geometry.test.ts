@@ -13,6 +13,7 @@ const map: MapView = {
   roads: [{ id: '10', name: 'r', from: '1', to: '2', distance_km: 100, secret: false }],
   terrain: { cols: 2, rows: 1, heights: [0, 255] },
   zone: null,
+  background: null,
   server_time: 0,
 };
 
@@ -25,12 +26,12 @@ describe('toScene', () => {
 
 describe('positionOnRoad', () => {
   it('interpole selon la distance parcourue, dans le sens du trajet', () => {
-    expect(positionOnRoad(map, '1', '2', 25, 100)).toEqual({ x: -25, z: 0 });
-    expect(positionOnRoad(map, '2', '1', 25, 100)).toEqual({ x: 25, z: 0 });
+    expect(positionOnRoad(map, '1', '2', 25, 100)).toEqual({ x: 250, y: 250 });
+    expect(positionOnRoad(map, '2', '1', 25, 100)).toEqual({ x: 750, y: 250 });
   });
   it('reste sur la route même si la distance déborde', () => {
-    expect(positionOnRoad(map, '1', '2', 150, 100)).toEqual({ x: 50, z: 0 });
-    expect(positionOnRoad(map, '1', '2', -3, 100)).toEqual({ x: -50, z: 0 });
+    expect(positionOnRoad(map, '1', '2', 150, 100)).toEqual({ x: 1000, y: 250 });
+    expect(positionOnRoad(map, '1', '2', -3, 100)).toEqual({ x: 0, y: 250 });
   });
   it("renvoie null si un lieu n'est pas sur la carte (route secrète masquée)", () => {
     expect(positionOnRoad(map, '1', '99', 10, 100)).toBeNull();

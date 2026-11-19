@@ -17,9 +17,16 @@ export function toScene(x: number, y: number, width: number, height: number): Sc
   };
 }
 
+/** Point dans le repère de la carte (pixels Azgaar ou unités du placement calculé). */
+export interface MapPoint {
+  x: number;
+  y: number;
+}
+
 /**
- * Position d'un groupe sur une route : interpolation linéaire entre le lieu de départ et la
- * destination, selon la distance parcourue. `null` si un des lieux n'est pas sur la carte.
+ * Position d'un groupe sur une route, dans le repère de la carte : interpolation linéaire entre le
+ * lieu de départ et la destination, selon la distance parcourue. `null` si un des lieux n'est pas
+ * sur la carte.
  */
 export function positionOnRoad(
   map: MapView,
@@ -27,14 +34,12 @@ export function positionOnRoad(
   destinationId: string,
   traveledKm: number,
   roadKm: number,
-): ScenePoint | null {
+): MapPoint | null {
   const a = map.places.find((p) => p.id === sourceId);
   const b = map.places.find((p) => p.id === destinationId);
   if (!a || !b) return null;
   const t = roadKm > 0 ? Math.min(1, Math.max(0, traveledKm / roadKm)) : 0;
-  const pa = toScene(a.x, a.y, map.width, map.height);
-  const pb = toScene(b.x, b.y, map.width, map.height);
-  return { x: pa.x + (pb.x - pa.x) * t, z: pa.z + (pb.z - pa.z) * t };
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 }
 
 /** Distance parcourue à l'instant `now` (même formule que le serveur, `calculate_distance_at`). */

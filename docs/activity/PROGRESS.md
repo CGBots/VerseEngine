@@ -9,9 +9,9 @@ Dernière mise à jour : 18/11/2026 (session « environnement de test Discord »
 | `chore/hardening` | [#11](https://github.com/CGBots/VerseEngine/pull/11) | **Prête à fusionner.** CI verte (tests, intégration MongoDB, image Docker). Validée contre l'API REST Discord. |
 | `feature/discord-activity` | [#12](https://github.com/CGBots/VerseEngine/pull/12) (brouillon) | Contient #11 par fusion. Phase b terminée côté code ; reste un essai réel dans Discord, qui demande l'hébergement. |
 
-- `cargo test --locked` sur `feature/discord-activity` : 184 réussis, 17 ignorés (intégration).
-- `cargo test --locked -- --ignored --skip test_discord_bot_connection` : 16 réussis contre MongoDB 8.0 (replica set) et l'API REST Discord.
-- `npm test` (web/activity) : 9 réussis ; `npm run build` OK.
+- `cargo test --locked` sur `feature/discord-activity` : 194 réussis, 18 ignorés (intégration).
+- `cargo test --locked -- --ignored --skip test_discord_bot_connection` : 17 réussis contre MongoDB 8.0 (replica set) et l'API REST Discord.
+- `npm test` (web/activity) : 24 réussis ; `npm run build` OK.
 - Reprise : `add_repo` (accès push), puis `git checkout feature/discord-activity`. Pas de force-push, pas de push sur `main`. Les PR passent par l'API REST : GraphQL n'est pas disponible.
 
 ## Environnement de test (session cloud)
@@ -41,14 +41,21 @@ PR #12 (`feature/discord-activity`) :
 - Commande Entry Point « Launch » conservée lors de l'enregistrement des commandes.
 - `DEPLOY.md` : URL mapping, portail OAuth2, Caddy.
 
+## Retours utilisateur du 19/11/2026 (faits)
+- Barre du haut : heure de l'univers à droite (même calcul que `/universe_time`, fonction `universe::time::time_of_day` partagée), bouton admin à icône qui s'active **et** se désactive, roue des paramètres. « Gérer mon abonnement » est déplacé dans les paramètres.
+- Carte Azgaar : **l'image exportée par Azgaar est affichée telle quelle** (vue 2D, zoom et déplacement), pour avoir exactement ses visuels. Stockage GridFS (`map_backgrounds`), PNG/JPEG/WebP seulement (vérifiés par octets magiques, SVG refusé car il peut contenir du script), route `GET /api/map/background` (CSP `sandbox`). L'envoi de l'image par l'admin reste à faire avec l'import Azgaar (phase d).
+- Sans export : vue 3D plus détaillée (terrain généré, déterministe, biomes, côtes irrégulières, routes posées sur le relief).
+- Lieux en cercles avec leur nom ; joueur représenté par une épingle « goutte inversée » avec sa photo de profil Discord (sinon le portrait du personnage, sinon ses initiales).
+
 ## Points ouverts
+- Déploiement : option 2 choisie (redirection d'un port vers le bot, HTTPS servi par le bot). À valider d'abord : Discord accepte-t-il un port dans le mapping (`activity.home.knifetail.eu:8484` s'enregistre ; le chargement réel n'est pas encore testé). Puis certificat par validation DNS (hébergeur DNS à connaître) et HTTPS dans le bot.
+- Mise en page téléphone : la fiche prend le haut de l'écran et le panneau de voyage couvre la carte. À revoir (onglets ou panneau à tirer, choix à faire).
 
 - **Hébergement** : on ne sait pas encore si l'infra a déjà un reverse proxy. `DEPLOY.md` décrit Caddy et les exigences pour un autre proxy.
 - Essai réel dans Discord (auth SDK, iframe, CSP, WebSocket via le proxy) : impossible depuis la session cloud.
 - Commandes slash : elles répondent maintenant à l'interaction par un message éphémère (avant, elles ne répondaient pas). Une destination invalide n'arrête plus un groupe en route. Le menu de `/travel_start` montre les routes secrètes déjà empruntées (D10).
 - Messages publics en fin de trajet (`travel/logic.rs`) toujours en `fr` en dur (D12 : langue de la guilde proposée, non faite).
 - Annexe d'`ARCHITECTURE.md` § 2 : ré-accepter un personnage existant échoue (`_id` modifié par `replace_one`). Non corrigé.
-- Étiquettes de lieux dans la scène 3D : absentes (noms visibles dans le panneau et la vue 2D).
 
 ## Prochaine étape (phase c : inventaire)
 1. `Inventory.equipped: bool` (`#[serde(default)]`), sans emplacement (D6).
