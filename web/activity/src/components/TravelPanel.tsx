@@ -22,12 +22,14 @@ export function TravelPanel({ state, selectedId, busy, message, speed, t, onStar
   const leader = state.group_members[0];
   return (
     <div className="travel-panel">
+      <h2>{t('activity_ui__travel')}</h2>
       {moving && travel?.eta_timestamp ? (
         <p className="eta">
           {t('activity_ui__arrival_in')} <Countdown until={travel.eta_timestamp} onElapsed={onElapsed} />
           {travel.remaining_km != null && <span className="muted"> · {travel.remaining_km.toFixed(1)} km</span>}
         </p>
       ) : null}
+      {state.destinations.length === 0 && !moving && <p className="muted">{t('activity_ui__no_destination')}</p>}
       {state.destinations.length > 0 && (
         <ul className="destinations">
           {state.destinations.map((d) => {
@@ -35,18 +37,18 @@ export function TravelPanel({ state, selectedId, busy, message, speed, t, onStar
             return (
               <li key={d.id} className={d.id === selectedId ? 'selected' : undefined}>
                 <span>
-                  {d.name} <span className="muted">· {d.distance_km.toFixed(1)} km{hours != null ? ` · ~${hours.toFixed(1)} h` : ''}</span>
+                  <span className="name">{d.name}</span> <span className="muted">· {d.distance_km.toFixed(1)} km{hours != null ? ` · ~${hours.toFixed(1)} h` : ''}</span>
                 </span>
-                <button type="button" disabled={busy} onClick={() => onStart(d.id)}>{t('activity_ui__go')}</button>
+                <button type="button" className="small" disabled={busy} onClick={() => onStart(d.id)}>{t('activity_ui__go')}</button>
               </li>
             );
           })}
         </ul>
       )}
       <div className="row">
-        {moving && <button type="button" disabled={busy} onClick={onStop}>{t('activity_ui__stop_travel')}</button>}
+        {moving && <button type="button" className="danger" disabled={busy} onClick={onStop}>{t('activity_ui__stop_travel')}</button>}
         {state.group_members.length > 1 && (
-          <button type="button" disabled={busy} onClick={onLeave}>{t('activity_ui__leave_group')}</button>
+          <button type="button" className="secondary" disabled={busy} onClick={onLeave}>{t('activity_ui__leave_group')}</button>
         )}
       </div>
       {state.group_members.length > 1 && leader && <p className="muted">{t('activity_ui__group_size', { count: state.group_members.length })}</p>}

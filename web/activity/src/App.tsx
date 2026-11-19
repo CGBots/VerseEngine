@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, ApiError, clock, getSessionToken, travelApi, type CharacterView, type MapView, type SessionInfo, type TravelState } from './api';
+import { api, ApiError, getSessionToken, travelApi, type CharacterView, type MapView, type SessionInfo, type TravelState } from './api';
 import { connect } from './discord';
 import { loadTranslator, pickLocale, type Translator } from './i18n';
 import { CharacterPanel } from './components/CharacterPanel';
@@ -7,7 +7,7 @@ import { MapView2D } from './components/MapView2D';
 import { TravelPanel } from './components/TravelPanel';
 import { TopBar } from './components/TopBar';
 import { SettingsPanel } from './components/SettingsPanel';
-import { positionOnRoad, traveledAt, webglAvailable, type MapPoint } from './map/geometry';
+import { webglAvailable, type PlayerMotion } from './map/geometry';
 import { playerPictureUrl } from './map/player';
 import { connectRealtime } from './realtime';
 
@@ -21,29 +21,30 @@ const fallbackT: Translator = (k) => k;
 const MapScene = lazy(() => import('./components/MapScene').then((m) => ({ default: m.MapScene })));
 const errorKey = (e: unknown) => (e instanceof ApiError ? e.key : 'activity__internal_error');
 
-/** Position du joueur dans la scène, recalculée chaque seconde pendant un voyage. */
-function usePlayerPosition(map: MapView | null, travel: TravelState | null): MapPoint | null {
-  const [tick, setTick] = useState(0);
-  const moving = !!travel?.travel?.in_move;
-  useEffect(() => {
-    if (!moving) return;
-    const id = window.setInterval(() => setTick((n) => n + 1), 1000);
-    return () => window.clearInterval(id);
-  }, [moving]);
+/** Description du mouvement du joueur ; l'animation est faite par la carte (`useAnimatedPosition`). */
+function usePlayerMotion(map: MapView | null, travel: TravelState | null): PlayerMotion | null {
   return useMemo(() => {
-    void tick;
     if (!map || !travel?.location) return null;
     const loc = travel.location;
     if (loc.kind === 'place') {
       const p = map.places.find((x) => x.id === loc.id);
-      return p ? { x: p.x, y: p.y } : null;
+      return p ? { kind: 'place', at: { x: p.x, y: p.y } } : null;
     }
     const v = travel.travel;
-    if (!v || !loc.source_id || !loc.destination_id) return null;
-    const roadKm = v.traveled_km + (v.remaining_km ?? 0);
-    const traveled = v.in_move ? traveledAt(v.traveled_km, v.speed_kmh, travel.server_time, clock.now()) : v.traveled_km;
-    return positionOnRoad(map, loc.source_id, loc.destination_id, traveled, roadKm);
-  }, [map, travel, tick]);
+    const from = map.places.find((x) => x.id === loc.source_id);
+    const to = map.places.find((x) => x.id === loc.destination_id);
+    if (!v || !from || !to) return null;
+    return {
+      kind: 'road',
+      from: { x: from.x, y: from.y },
+      to: { x: to.x, y: to.y },
+      traveledKm: v.traveled_km,
+      roadKm: v.traveled_km + (v.remaining_km ?? 0),
+      speedKmh: v.speed_kmh,
+      refTime: travel.server_time,
+      moving: v.in_move,
+    };
+  }, [map, travel]);
 }
 
 export function App() {
@@ -133,7 +134,7 @@ export function App() {
     [t, loadCharacter],
   );
 
-  const player = usePlayerPosition(map, travel);
+  const motion = usePlayerMotion(map, travel);
   const reachable = useMemo(() => new Set(travel?.destinations.map((d) => d.id) ?? []), [travel]);
   const currentPlaceId = travel?.location?.kind === 'place' ? travel.location.id : null;
 
@@ -151,7 +152,7 @@ export function App() {
   const mapProps = {
     currentPlaceId,
     reachable,
-    player,
+    motion,
     playerPicture: playerPictureUrl(session.user, character),
     playerName: character?.name ?? session.user.global_name ?? session.user.username,
     onSelectPlace: setSelected,

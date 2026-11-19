@@ -1248,6 +1248,8 @@ activity_ui__phase_midnight = Night
 activity_ui__phase_sunrise = Morning
 activity_ui__phase_noon = Afternoon
 activity_ui__phase_sunset = Evening
+activity_ui__travel = Travel
+activity_ui__no_destination = No road leaves from here.
 
 # Travel keys used by the code but missing until now
 travel__invalid_channel = Invalid channel

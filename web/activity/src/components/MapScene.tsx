@@ -3,7 +3,8 @@ import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { MapControls } from 'three/examples/jsm/controls/MapControls.js';
 import type { MapView } from '../api';
-import { SCENE_SIZE, toScene, type MapPoint } from '../map/geometry';
+import { SCENE_SIZE, toScene, type PlayerMotion } from '../map/geometry';
+import { useAnimatedPosition } from '../map/useMotion';
 import { biomeColor, LAND, proceduralTerrain, type Heightmap } from '../map/procedural';
 import { labelTexture, PIN_ASPECT, pinTexture } from '../map/sprites';
 
@@ -13,7 +14,7 @@ interface Props {
   map: MapView;
   currentPlaceId: string | null;
   reachable: Set<string>;
-  player: MapPoint | null;
+  motion: PlayerMotion | null;
   playerPicture: string | null;
   playerName: string;
   onSelectPlace: (id: string) => void;
@@ -152,7 +153,49 @@ function PlayerPin({ x, y, z, picture, name }: { x: number; y: number; z: number
   );
 }
 
-export function MapScene({ map, currentPlaceId, reachable, player, playerPicture, playerName, onSelectPlace }: Props) {
+/** Tube qui suit le relief entre deux points de carte. */
+function terrainTube(map: MapView, hm: Heightmap, a: { x: number; y: number }, b: { x: number; y: number }, radius: number, lift: number, steps = 48) {
+  const pts: THREE.Vector3[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const x = a.x + (b.x - a.x) * t;
+    const y = a.y + (b.y - a.y) * t;
+    const s = toScene(x, y, map.width, map.height);
+    pts.push(new THREE.Vector3(s.x, elevation(hm, map, x, y) + lift, s.z));
+  }
+  return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), steps * 2, radius, 8, false);
+}
+
+const RADIAL = 8;
+
+/** Joueur : épingle animée en continu et partie parcourue du trajet. */
+function Player({ map, hm, motion, picture, name }: { map: MapView; hm: Heightmap; motion: PlayerMotion; picture: string | null; name: string }) {
+  const animated = useAnimatedPosition(motion);
+  const traveled = useMemo(
+    () => (motion.kind === 'road' ? terrainTube(map, hm, motion.from, motion.to, 0.34, 0.3) : null),
+    [map, hm, motion],
+  );
+  useEffect(() => () => traveled?.dispose(), [traveled]);
+  if (!animated) return null;
+  if (traveled && animated.progress != null) {
+    // 6 indices par face, RADIAL faces par anneau, 2 × 48 anneaux le long du tube.
+    const rings = Math.round(animated.progress * 96);
+    traveled.setDrawRange(0, rings * RADIAL * 6);
+  }
+  const s = toScene(animated.at.x, animated.at.y, map.width, map.height);
+  return (
+    <>
+      {traveled && (
+        <mesh geometry={traveled}>
+          <meshBasicMaterial color="#5865f2" />
+        </mesh>
+      )}
+      <PlayerPin x={s.x} y={elevation(hm, map, animated.at.x, animated.at.y) + 0.3} z={s.z} picture={picture} name={name} />
+    </>
+  );
+}
+
+export function MapScene({ map, currentPlaceId, reachable, motion, playerPicture, playerName, onSelectPlace }: Props) {
   const hm = useHeightmap(map);
   return (
     <Canvas
@@ -173,10 +216,7 @@ export function MapScene({ map, currentPlaceId, reachable, player, playerPicture
         const color = p.id === currentPlaceId ? '#57f287' : reachable.has(p.id) ? '#5865f2' : '#f2f3f5';
         return <Place key={p.id} x={s.x} y={elevation(hm, map, p.x, p.y)} z={s.z} name={p.name} color={color} onClick={() => onSelectPlace(p.id)} />;
       })}
-      {player && (() => {
-        const s = toScene(player.x, player.y, map.width, map.height);
-        return <PlayerPin x={s.x} y={elevation(hm, map, player.x, player.y) + 0.3} z={s.z} picture={playerPicture} name={playerName} />;
-      })()}
+      {motion && <Player map={map} hm={hm} motion={motion} picture={playerPicture} name={playerName} />}
     </Canvas>
   );
 }

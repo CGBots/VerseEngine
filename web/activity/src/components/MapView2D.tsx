@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiBlobUrl, type MapView } from '../api';
-import type { MapPoint } from '../map/geometry';
+import type { PlayerMotion } from '../map/geometry';
+import { useAnimatedPosition } from '../map/useMotion';
 import { initials, pinPath } from '../map/player';
 
 interface Props {
   map: MapView;
   currentPlaceId: string | null;
   reachable: Set<string>;
-  player: MapPoint | null;
+  motion: PlayerMotion | null;
   playerPicture: string | null;
   playerName: string;
   onSelectPlace: (id: string) => void;
@@ -39,7 +40,9 @@ function useBackground(url: string | null): string | null {
  * Carte 2D dans le repère de la carte. Avec un export Azgaar, l'image est affichée telle quelle
  * sous les lieux : mêmes visuels qu'Azgaar. Glisser = déplacer, molette ou pincer = zoom.
  */
-export function MapView2D({ map, currentPlaceId, reachable, player, playerPicture, playerName, onSelectPlace }: Props) {
+export function MapView2D({ map, currentPlaceId, reachable, motion, playerPicture, playerName, onSelectPlace }: Props) {
+  const animated = useAnimatedPosition(motion);
+  const player = animated?.at ?? null;
   const background = useBackground(map.background?.url ?? null);
   const full: Box = { x: 0, y: 0, w: map.width, h: map.height };
   const [box, setBox] = useState<Box>(full);
@@ -142,6 +145,14 @@ export function MapView2D({ map, currentPlaceId, reachable, player, playerPictur
             stroke={road.secret ? '#d4a72c' : '#d9d9d9'} strokeWidth={3 * unit} strokeDasharray={road.secret ? `${6 * unit} ${4 * unit}` : undefined} strokeLinecap="round" />
         );
       })}
+      {motion?.kind === 'road' && player && (
+        // Trajet : la partie parcourue en plein, le reste en pointillés.
+        <g className="map-progress">
+          <line x1={motion.to.x} y1={motion.to.y} x2={player.x} y2={player.y} stroke="#f2f3f5" strokeWidth={3 * unit} strokeDasharray={`${2 * unit} ${6 * unit}`} strokeLinecap="round" />
+          <line x1={motion.from.x} y1={motion.from.y} x2={player.x} y2={player.y} stroke="#141518" strokeWidth={7 * unit} strokeLinecap="round" />
+          <line x1={motion.from.x} y1={motion.from.y} x2={player.x} y2={player.y} stroke="#5865f2" strokeWidth={4.5 * unit} strokeLinecap="round" />
+        </g>
+      )}
       {map.places.map((p) => {
         const fill = p.id === currentPlaceId ? '#57f287' : reachable.has(p.id) ? '#5865f2' : '#f2f3f5';
         return (

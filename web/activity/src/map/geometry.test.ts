@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MapView } from '../api';
-import { positionOnRoad, SCENE_SIZE, terrainHeight, toScene, traveledAt } from './geometry';
+import { lerpPoint, positionOnRoad, roadProgress, SCENE_SIZE, smoothToward, terrainHeight, toScene, traveledAt } from './geometry';
 
 const map: MapView = {
   source: 'Computed',
@@ -51,5 +51,32 @@ describe('terrainHeight', () => {
     expect(terrainHeight(map, 100, 100)).toBe(0);
     expect(terrainHeight(map, 900, 100)).toBe(1);
     expect(terrainHeight({ ...map, terrain: null }, 900, 100)).toBe(0);
+  });
+});
+
+describe('mouvement en temps réel', () => {
+  const m = { kind: 'road' as const, from: { x: 0, y: 0 }, to: { x: 100, y: 0 }, traveledKm: 10, roadKm: 100, speedKmh: 36, refTime: 1000, moving: true };
+  it("avance à la vitesse de l'étape", () => {
+    expect(roadProgress(m, 1000)).toBeCloseTo(0.1);
+    expect(roadProgress(m, 1000 + 3600)).toBeCloseTo(0.46); // +36 km en 1 h
+  });
+  it("s'arrête à l'arrivée et ne bouge pas à l'arrêt", () => {
+    expect(roadProgress(m, 1000 + 100 * 3600)).toBe(1);
+    expect(roadProgress({ ...m, moving: false }, 99999)).toBeCloseTo(0.1);
+    expect(roadProgress({ ...m, roadKm: 0 }, 1000)).toBe(0);
+  });
+  it('interpole un point', () => {
+    expect(lerpPoint({ x: 0, y: 10 }, { x: 100, y: 30 }, 0.25)).toEqual({ x: 25, y: 15 });
+  });
+  it('rejoint la cible en douceur, sans la dépasser', () => {
+    let v = 0;
+    const seen: number[] = [];
+    for (let i = 0; i < 30; i++) seen.push((v = smoothToward(v, 1, 0.1)));
+    expect(seen[0]).toBeGreaterThan(0);
+    expect(seen[0]).toBeLessThan(0.5);
+    expect(seen.every((x, i) => i === 0 || x >= seen[i - 1])).toBe(true);
+    expect(seen[seen.length - 1]).toBeCloseTo(1, 2);
+    expect(Math.max(...seen)).toBeLessThanOrEqual(1);
+    expect(smoothToward(NaN, 0.7, 0.1)).toBe(0.7);
   });
 });

@@ -15,17 +15,28 @@ interface Props {
   onResync: () => void;
 }
 
-/** Menu vertical gauche : identité, description (lecture seule), statuts, vitesse, accès inventaire. */
+/** Un effet est négatif s'il réduit la statistique (multiplicateur < 1, ajout < 0). */
+export function isNegative(modifierType: string, value: unknown): boolean {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return false;
+  return modifierType === 'multiplier' ? v < 1 : v < 0;
+}
+
+/** Menu vertical gauche, à la manière d'un profil Discord : identité, position, vitesse,
+ *  description (lecture seule), effets actifs, accès à l'inventaire. */
 export function CharacterPanel({ character, avatarUrl, t, onOpenInventory, onResync }: Props) {
   const image = character.image_url ?? avatarUrl;
   const travel = character.travel;
   const loc = character.location;
   return (
     <aside className="side-panel" aria-label={t('activity_ui__character')}>
-      <header className="identity">
-        {image ? <img className="portrait" src={image} alt="" /> : <div className="portrait placeholder" aria-hidden />}
-        <h1>{character.name}</h1>
-      </header>
+      <div className="profile">
+        <div className="profile-banner" aria-hidden />
+        <header className="identity">
+          {image ? <img className="portrait" src={image} alt="" /> : <div className="portrait placeholder" aria-hidden />}
+          <h1>{character.name}</h1>
+        </header>
+        <div className="profile-body">
 
       {loc && (
         <section>
@@ -60,7 +71,7 @@ export function CharacterPanel({ character, avatarUrl, t, onOpenInventory, onRes
         ) : (
           <ul className="statuses">
             {character.statuses.map((s, i) => (
-              <li key={`${s.source}-${i}`}>
+              <li key={`${s.source}-${i}`} className={isNegative(s.modifier_type, s.value) ? 'negative' : undefined}>
                 <strong>{s.stat}</strong> {s.modifier_type === 'multiplier' ? '×' : s.value != null && Number(s.value) >= 0 ? '+' : ''}
                 {fmt(s.value)}
                 {s.end_timestamp && (
@@ -71,6 +82,8 @@ export function CharacterPanel({ character, avatarUrl, t, onOpenInventory, onRes
           </ul>
         )}
       </section>
+        </div>
+      </div>
 
       <nav className="actions">
         <button type="button" onClick={onOpenInventory}>{t('activity_ui__inventory')}</button>

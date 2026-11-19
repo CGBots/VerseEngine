@@ -1259,6 +1259,8 @@ activity_ui__phase_midnight = Nuit
 activity_ui__phase_sunrise = Matin
 activity_ui__phase_noon = Après-midi
 activity_ui__phase_sunset = Soir
+activity_ui__travel = Voyage
+activity_ui__no_destination = Aucune route ne part d'ici.
 
 # Clés de voyage utilisées par le code mais absentes jusqu'ici
 travel__invalid_channel = Salon invalide
