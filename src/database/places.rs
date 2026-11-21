@@ -24,6 +24,11 @@ pub struct Place{
     pub role: u64,
     pub name: String,
     pub modifiers: Vec<Modifier>,
+    /// Salon textuel générique du lieu (`place-centrale` / `central-square`, I5 et Q5). Absent des
+    /// lieux créés avant l'import de carte.
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub central_channel_id: Option<u64>,
 }
 
 impl Place{

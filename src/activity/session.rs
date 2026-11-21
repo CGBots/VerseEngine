@@ -18,7 +18,9 @@ pub struct Session {
     pub user_id: u64,
     pub username: String,
     pub guild_id: u64,
-    pub universe_id: ObjectId,
+    /// `None` : serveur relié à aucun univers (I2). Seul l'import ou la génération de carte est
+    /// alors possible, pour un administrateur du serveur.
+    pub universe_id: Option<ObjectId>,
     pub instance_id: String,
     /// Langue du client Discord du joueur (D12), normalisée : `fr` ou `en-US`.
     pub locale: &'static str,
@@ -38,6 +40,14 @@ fn digest(token: &str) -> [u8; 32] { Sha256::digest(token.as_bytes()).into() }
 fn to_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     bytes.iter().flat_map(|b| [HEX[(b >> 4) as usize] as char, HEX[(b & 0xf) as usize] as char]).collect()
+}
+
+impl Session {
+    /// Univers de la session, ou 404 `activity__server_not_linked` si le serveur n'est relié à
+    /// aucun univers (seul l'import est alors possible).
+    pub fn universe(&self) -> Result<ObjectId, crate::activity::error::ApiError> {
+        self.universe_id.ok_or_else(|| crate::activity::error::ApiError::not_found("activity__server_not_linked"))
+    }
 }
 
 impl SessionStore {
@@ -60,6 +70,15 @@ impl SessionStore {
         map.retain(|_, s| !(s.user_id == session.user_id && s.instance_id == session.instance_id));
         map.insert(digest(&token), session);
         token
+    }
+
+    /// Le serveur `guild_id` vient d'être relié à `universe_id` (import) : ses sessions sans
+    /// univers y accèdent désormais, sans nouvelle connexion.
+    pub fn link_universe(&self, guild_id: u64, universe_id: ObjectId) {
+        let mut map = self.sessions.write().unwrap_or_else(|p| p.into_inner());
+        for s in map.values_mut().filter(|s| s.guild_id == guild_id && s.universe_id.is_none()) {
+            s.universe_id = Some(universe_id);
+        }
     }
 
     pub fn get(&self, token: &str) -> Option<Session> { self.get_at(token, Instant::now()) }
@@ -89,11 +108,27 @@ pub(crate) fn test_session(user_id: u64) -> Session {
         user_id,
         username: "test".into(),
         guild_id: 1,
-        universe_id: ObjectId::new(),
+        universe_id: Some(ObjectId::new()),
         instance_id: "i-1".into(),
         locale: "fr",
         access: AccessLevel::Player,
         expires_at: Instant::now(),
+    }
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::*;
+
+    #[test]
+    fn linking_a_guild_updates_its_sessions_without_universe_only() {
+        let store = SessionStore::new(Duration::from_secs(60));
+        let a = store.create(Session { universe_id: None, guild_id: 5, ..test_session(1) });
+        let other_guild = store.create(Session { universe_id: None, guild_id: 6, ..test_session(2) });
+        let u = ObjectId::new();
+        store.link_universe(5, u);
+        assert_eq!(store.get(&a).unwrap().universe_id, Some(u));
+        assert_eq!(store.get(&other_guild).unwrap().universe_id, None);
     }
 }
 

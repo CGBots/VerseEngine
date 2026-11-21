@@ -2,15 +2,16 @@ use std::str::FromStr;
 use mongodb::bson::oid::ObjectId;
 use crate::discord::poise_structs::{Context, Error};
 use crate::tr;
-use crate::database::universe::{get_universe_by_id, get_universe_by_server_id, Universe};
+use crate::database::universe::{get_universe_by_server_id, Universe};
 use poise::CreateReply;
 use poise::serenity_prelude::ComponentInteractionCollector;
 use serenity::all::CreateSelectMenu;
 use serenity::all::CreateSelectMenuKind;
 use serenity::all::CreateSelectMenuOption;
 use serenity::all::{ComponentInteractionDataKind, CreateActionRow};
-use crate::database::server::Server;
-use crate::universe::setup::setup_sub_command::{SetupType, _setup};
+use crate::provisioning::universe::add_server as add_server_service;
+use crate::provisioning::Provisioner;
+use crate::universe::setup::setup_sub_command::SetupType;
 use crate::utility::reply::reply;
 
 #[poise::command(slash_command, required_permissions = "ADMINISTRATOR", guild_only, rename = "universe_add_server")]
@@ -68,39 +69,14 @@ pub async fn _add_server(ctx: &Context<'_>, setup_type: SetupType) -> Result<&'s
             if let Some(selected) = values.get(0) {
                 let _ = message.delete(*ctx).await;
 
-                let Ok(universe_opt) = get_universe_by_id(ObjectId::from_str(selected.as_str())?).await else { return Err("create_character__database_error".into()) };
-                let Some(universe) = universe_opt else {return Err("create_character__no_universe_found".into())};
-
-                let Ok(res) = universe.clone().check_server_limit().await else { return Err("universe__check_server_limit_failed".into()) };
-
-                if !res{
-                    return Err("exceed_limit_number_of_servers_per_universe".into())
+                let universe_id = ObjectId::from_str(selected.as_str())?;
+                let locale = ctx.locale().unwrap_or("fr").to_string();
+                let mut provisioner = Provisioner::new(ctx.serenity_context().http.clone());
+                match add_server_service(&mut provisioner, universe_id, ctx.guild_id().unwrap().get(), setup_type, &locale).await {
+                    Ok(_) => provisioner.finish().await,
+                    Err(e) if e.left_over.is_empty() && !e.key.starts_with("setup") && !e.key.starts_with("partial_setup") => return Err(e.key.into()),
+                    Err(_) => return Err("setup_server__failed".into()),
                 }
-
-                let Ok(_) = Server{
-                    _id: Default::default(),
-                    universe_id: universe.universe_id,
-                    server_id: ctx.guild_id().unwrap().get(),
-                    admin_role_id: Default::default(),
-                    moderator_role_id: Default::default(),
-                    spectator_role_id: Default::default(),
-                    player_role_id: Default::default(),
-                    everyone_role_id: Default::default(),
-                    admin_category_id: Default::default(),
-                    nrp_category_id: Default::default(),
-                    rp_category_id: Default::default(),
-                    road_category_id: Default::default(),
-                    rp_wiki_channel_id: Default::default(),
-                    log_channel_id: Default::default(),
-                    moderation_channel_id: Default::default(),
-                    commands_channel_id: Default::default(),
-                    nrp_general_channel_id: Default::default(),
-                    rp_character_channel_id: Default::default(),
-                    universal_time_channel_id: Default::default(),
-                    universal_time_message_id: Default::default(),
-                    universal_invite_url: Default::default(),
-                }.insert_server().await else { return Err("create_universe__server_insert_failed".into()) };
-                let Ok(_) = _setup(&ctx, setup_type).await else { return Err("setup_server__failed".into()) };
 
                 return Ok("add_server_to_universe__guild_linked");
             }

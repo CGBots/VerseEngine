@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MapView } from '../api';
-import { initialBox, lerpPoint, pointAlong, positionOnRoad, roadPath, roadProgress, SCENE_SIZE, smoothToward, splitAlong, terrainHeight, toScene, traveledAt } from './geometry';
+import { initialBox, lerpPoint, markerScale, pointAlong, positionOnRoad, roadPath, roadProgress, SCENE_SIZE, smoothToward, splitAlong, terrainHeight, toScene, traveledAt } from './geometry';
 
 const map: MapView = {
   source: 'Computed',
@@ -132,5 +132,31 @@ describe('initialBox', () => {
     expect(b.w).toBe(1600);
     expect(b.h).toBe(900);
     expect(b.y).toBe(50);
+  });
+});
+
+describe('markerScale', () => {
+  const dense = (n: number, step: number): MapView => ({
+    ...map,
+    width: 1000,
+    height: 1000,
+    places: Array.from({ length: n }, (_, i) => ({ id: String(i), name: `P${i}`, x: (i % 10) * step, y: Math.floor(i / 10) * step, z: 0 })),
+  });
+
+  it('keeps full-size markers when places are far apart', () => {
+    expect(markerScale(map)).toBe(1);
+    expect(markerScale({ ...map, places: [] })).toBe(1);
+  });
+
+  it('shrinks markers on a dense map, never below a fifth', () => {
+    // Écart 20 sur 1000 : 2 unités de scène, pastille de 0,6 unité.
+    expect(markerScale(dense(100, 20))).toBeCloseTo(0.48);
+    expect(markerScale(dense(100, 1))).toBe(0.2);
+  });
+
+  it('uses the fog radius under fog, since only a few places are sent', () => {
+    const fogged = { ...dense(2, 500), fog: { radius: 12, discovered: ['0'], glimpsed: [], roads: [] } };
+    // Écart 12 / 0,6 = 20 : comme la carte dense ci-dessus.
+    expect(markerScale(fogged)).toBeCloseTo(0.48);
   });
 });

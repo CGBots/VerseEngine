@@ -23,7 +23,17 @@ use crate::discord::poise_structs::Error;
 
 pub static FREE_LIMIT_UNIVERSE: usize = 2;
 
-pub static FREE_LIMIT_SERVERS_PER_UNIVERSE: usize = 2;
+/// Nombre maximal de serveurs par univers. `None` : pas de limite.
+///
+/// Supprimée le 19/11/2026 (la répartition d'une carte importée peut demander beaucoup de
+/// serveurs, 60 lieux au plus par serveur). **À réintroduire plus tard comme fonctionnalité
+/// premium**, dans le dépôt privé : c'était 2 serveurs par univers.
+pub static MAX_SERVERS_PER_UNIVERSE: Option<usize> = None;
+
+/// Vrai si un univers qui a déjà `count` serveurs peut en recevoir un de plus.
+pub fn within_server_limit(count: u64, limit: Option<usize>) -> bool {
+    limit.is_none_or(|max| count < max as u64)
+}
 
 /// Represents a Universe entity with associated metadata.
 ///
@@ -73,6 +83,11 @@ pub struct Universe {
 
     #[serde_as(as = "DisplayFromStr")]
     pub creation_timestamp: u128,
+
+    /// Brouillard sur la carte des joueurs (I17, au choix du créateur). Absent des univers
+    /// créés avant : désactivé.
+    #[serde(default)]
+    pub fog_enabled: bool,
 }
 
 impl Universe {
@@ -322,6 +337,7 @@ impl Universe {
             global_time_modifier: self.global_time_modifier.clone(),
             time_origin_timestamp: self.time_origin_timestamp.clone(),
             creation_timestamp: self.creation_timestamp.clone(),
+            fog_enabled: self.fog_enabled,
         }
     }
 
@@ -520,7 +536,7 @@ impl Universe {
     ///   `SERVER_COLLECTION_NAME`.
     ///
     /// # Notes
-    /// - The limit for the number of servers per universe is defined by the constant `FREE_LIMIT_UNIVERSE`.
+    /// - The limit for the number of servers per universe is [`MAX_SERVERS_PER_UNIVERSE`] (none for now).
     /// - This function clones the database client for use in querying.
     ///
     /// # Example
@@ -540,6 +556,9 @@ impl Universe {
     /// }
     /// ```
     pub async fn check_server_limit(self) -> Result<bool, &'static str> {
+        if MAX_SERVERS_PER_UNIVERSE.is_none() {
+            return Ok(true);
+        }
         let db_client = get_db_client().await;
         let filter = doc!{"universe_id": self.universe_id};
         let servers_result_request = db_client
@@ -550,7 +569,7 @@ impl Universe {
 
         match servers_result_request {
             Ok(server_count) => {
-                Ok(server_count < FREE_LIMIT_SERVERS_PER_UNIVERSE as u64)
+                Ok(within_server_limit(server_count, MAX_SERVERS_PER_UNIVERSE))
             }
             Err(e) => { println!("{:?}", e); return Err("universe__check_server_limit_failed".into()) }
         }
@@ -760,6 +779,14 @@ mod test {
     //! Tests d'intégration : ils écrivent dans le MongoDB désigné par `MONGODB_*`.
     //! Chaque test utilise des identifiants aléatoires et nettoie ce qu'il crée : ils peuvent
     //! tourner en parallèle et sur une base qui contient déjà des données.
+
+    #[test]
+    fn there_is_no_server_limit_for_now() {
+        assert_eq!(super::MAX_SERVERS_PER_UNIVERSE, None);
+        assert!(super::within_server_limit(1_000, None));
+        assert!(super::within_server_limit(1, Some(2)));
+        assert!(!super::within_server_limit(2, Some(2)));
+    }
     use crate::database::db_client::get_db_client;
     use crate::database::db_namespace::{SERVERS_COLLECTION_NAME, UNIVERSES_COLLECTION_NAME, VERSEENGINE_DB_NAME};
     use crate::database::server::Server;
@@ -781,7 +808,7 @@ mod test {
             creator_id,
             global_time_modifier: 100,
             time_origin_timestamp: now_ms(),
-            creation_timestamp: now_ms(),
+            creation_timestamp: now_ms(), fog_enabled: false
         };
         universe.insert_universe().await.expect("insert the test universe");
         universe.universe_id
@@ -866,4 +893,15 @@ mod test {
             assert!(unknown.unwrap().is_none());
         });
     }
+}
+
+/// Active ou coupe le brouillard d'un univers (E8).
+pub async fn set_fog_enabled(universe_id: ObjectId, enabled: bool) -> mongodb::error::Result<()> {
+    get_db_client()
+        .await
+        .database(VERSEENGINE_DB_NAME)
+        .collection::<Universe>(UNIVERSES_COLLECTION_NAME)
+        .update_one(doc! {"_id": universe_id}, doc! {"$set": {"fog_enabled": enabled}})
+        .await?;
+    Ok(())
 }

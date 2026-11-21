@@ -17,6 +17,7 @@ mod loot_table;
 mod loot;
 mod recipe;
 mod activity;
+mod provisioning;
 #[cfg(test)]
 mod test_support;
 

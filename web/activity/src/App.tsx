@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, ApiError, getSessionToken, travelApi, type CharacterView, type MapView, type SessionInfo, type TravelState } from './api';
+import { api, ApiError, getSessionToken, travelApi, universeApi, type CharacterView, type MapView, type SessionInfo, type TravelState } from './api';
 import { connect } from './discord';
 import { loadTranslator, pickLocale, type Translator } from './i18n';
 import { CharacterPanel } from './components/CharacterPanel';
@@ -20,6 +20,8 @@ type State =
 const fallbackT: Translator = (k) => k;
 // three.js est volumineux : chargé à part, après le panneau du personnage.
 const MapScene = lazy(() => import('./components/MapScene').then((m) => ({ default: m.MapScene })));
+// Import de carte (vue admin) : chargé seulement quand il est ouvert.
+const ImportWizard = lazy(() => import('./admin/ImportWizard').then((m) => ({ default: m.ImportWizard })));
 const errorKey = (e: unknown) => (e instanceof ApiError ? e.key : 'activity__internal_error');
 
 /** Description du mouvement du joueur ; l'animation est faite par la carte (`useAnimatedPosition`). */
@@ -64,6 +66,11 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  /** Incrémenté quand le bot rejoint ou quitte un serveur : l'écran d'import relit la liste. */
+  const [serversVersion, setServersVersion] = useState(0);
+  const [fogEnabled, setFogEnabled] = useState(false);
+  const [fogBusy, setFogBusy] = useState(false);
   const use3d = useRef(webglAvailable()).current;
 
   const loadCharacter = useCallback(async () => {
@@ -99,7 +106,9 @@ export function App() {
       const { session, locale } = await connect();
       setT(await loadTranslator(pickLocale(locale)).then((tr) => () => tr));
       setState({ kind: 'ready', session });
-      await reloadAll();
+      setFogEnabled(session.fog_enabled);
+      // Sans univers, il n'y a encore ni personnage ni carte à charger.
+      if (session.universe) await reloadAll();
     } catch (e) {
       setState({ kind: 'error', key: e instanceof ApiError ? e.key : 'activity__unauthorized' });
     }
@@ -117,6 +126,7 @@ export function App() {
       if (event === 'travel_updated') void Promise.all([loadTravel(), loadCharacter()]);
       else if (event === 'character_updated') void loadCharacter();
       else if (event === 'map_updated') void Promise.all([loadMap(), loadTravel()]);
+      else if (event === 'servers_updated') setServersVersion((v) => v + 1);
       else void reloadAll();
     });
   }, [ready, loadTravel, loadCharacter, loadMap, reloadAll]);
@@ -153,6 +163,25 @@ export function App() {
     );
 
   const { session } = state;
+  // Fin d'un import : nouvelle connexion silencieuse, la session est alors reliée à l'univers.
+  const afterImport = () => {
+    setImportOpen(false);
+    void start();
+  };
+  if (!session.universe)
+    return session.can_import ? (
+      <div className="import-page">
+        <p className="muted">{t('activity_ui__no_universe_admin')}</p>
+        <Suspense fallback={<div className="center">{t('activity_ui__loading')}</div>}>
+          <ImportWizard t={t} universeName={null} serversVersion={serversVersion} onDone={afterImport} />
+        </Suspense>
+      </div>
+    ) : (
+      <div className="center">
+        <p>{t('activity_ui__no_universe_yet')}</p>
+      </div>
+    );
+  const universe = session.universe;
   const avatar = session.user.avatar ? `https://cdn.discordapp.com/avatars/${session.user.id}/${session.user.avatar}.png?size=128` : null;
   const mapProps = {
     currentPlaceId,
@@ -206,7 +235,7 @@ export function App() {
       <main className="map-area">
         <TopBar
           characterButton={isPhone ? { picture: mapProps.playerPicture ?? character?.image_url ?? null, open: sheetOpen, onToggle: () => setSheetOpen((o) => !o), onPull: pull } : undefined}
-          universeName={session.universe.name}
+          universeName={universe.name}
           clockParams={session.universe_clock}
           adminAvailable={session.admin_mode_available}
           adminMode={adminMode}
@@ -243,7 +272,35 @@ export function App() {
           )}
         </div>
       </main>
-      {settingsOpen && <SettingsPanel t={t} onClose={() => setSettingsOpen(false)} />}
+      {adminMode && session.can_import && !importOpen && (
+        <button type="button" className="import-open" onClick={() => setImportOpen(true)}>{t('activity_ui__import_title')}</button>
+      )}
+      {importOpen && (
+        <div className="dialog-backdrop">
+          <div className="dialog import-dialog">
+            <Suspense fallback={<p>{t('activity_ui__loading')}</p>}>
+              <ImportWizard t={t} universeName={universe.name} serversVersion={serversVersion} onClose={() => setImportOpen(false)} onDone={afterImport} />
+            </Suspense>
+          </div>
+        </div>
+      )}
+      {settingsOpen && (
+        <SettingsPanel
+          t={t}
+          onClose={() => setSettingsOpen(false)}
+          fog={session.is_creator ? {
+            enabled: fogEnabled,
+            busy: fogBusy,
+            onToggle: (enabled) => {
+              setFogBusy(true);
+              universeApi.setFog(enabled)
+                .then((r) => { setFogEnabled(r.fog_enabled); return loadMap(); })
+                .catch((e) => setMessage(t(errorKey(e))))
+                .finally(() => setFogBusy(false));
+            },
+          } : undefined}
+        />
+      )}
     </div>
   );
 }

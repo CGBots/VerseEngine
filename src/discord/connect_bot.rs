@@ -63,7 +63,7 @@ pub(crate) static TEST_PASSED: Mutex<VecDeque<bool>> = Mutex::new(VecDeque::new(
 /// - If the framework or client creation fails.
 ///
 /// # Configuration
-/// - `GatewayIntents` are configured to include `GUILD_MESSAGES`, `DIRECT_MESSAGES`, and `MESSAGE_CONTENT`.
+/// - `GatewayIntents` are configured to include `GUILDS`, `GUILD_MESSAGES`, `DIRECT_MESSAGES`, `MESSAGE_CONTENT` and `GUILD_MEMBERS`.
 /// - Translations are applied using the `apply_translations` function with the data read by `read_ftl`.
 ///
 /// # Environment Variables
@@ -101,7 +101,9 @@ pub async fn connect_bot() -> Result<Client, ()>{
     translation::apply_translations(&translations, &mut commands);
     
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
-    let intents = GatewayIntents::GUILD_MESSAGES
+    // GUILDS : arrivée et départ du bot d'un serveur (liste des serveurs de l'import de carte).
+    let intents = GatewayIntents::GUILDS
+        | GatewayIntents::GUILD_MESSAGES
         | GatewayIntents::DIRECT_MESSAGES
         | GatewayIntents::MESSAGE_CONTENT
         | GatewayIntents::GUILD_MEMBERS;

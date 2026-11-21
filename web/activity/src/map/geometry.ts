@@ -171,3 +171,26 @@ export function initialBox(mapW: number, mapH: number, viewW: number, viewH: num
   const y = Math.min(mapH - h, Math.max(0, c.y - h / 2));
   return { x, y, w, h };
 }
+
+/**
+ * Échelle des repères 3D (pastilles des lieux, routes), entre 0,2 et 1 : sur une carte dense
+ * (Azgaar, des centaines de bourgs), des pastilles de taille fixe se chevaucheraient. L'écart entre
+ * lieux est la distance médiane au plus proche voisin ; sous brouillard, où seuls quelques lieux
+ * sont envoyés, on le déduit du rayon de la brume (60 % de la longueur médiane des routes).
+ */
+export function markerScale(map: MapView): number {
+  const side = Math.max(map.width, map.height) || 1;
+  let spacing: number | null = null;
+  if (map.fog && map.fog.radius > 0) spacing = map.fog.radius / 0.6;
+  else if (map.places.length >= 2) {
+    const nearest = map.places.map((p) =>
+      Math.min(...map.places.filter((q) => q !== p).map((q) => Math.hypot(p.x - q.x, p.y - q.y))),
+    );
+    nearest.sort((a, b) => a - b);
+    spacing = nearest[Math.floor(nearest.length / 2)];
+  }
+  if (spacing === null || !Number.isFinite(spacing)) return 1;
+  // Pastille de 1,25 unité de scène pour un écart d'au moins 4 unités (≈ 30 % de l'écart).
+  const scene = (spacing / side) * SCENE_SIZE;
+  return Math.min(1, Math.max(0.2, (scene * 0.3) / 1.25));
+}

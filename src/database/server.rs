@@ -1,6 +1,5 @@
 use futures::{TryStreamExt};
 use std::cmp::PartialEq;
-use log::{log, Level};
 use mongodb::bson::{doc, to_document};
 use mongodb::bson::oid::ObjectId;
 use mongodb::Cursor;
@@ -13,7 +12,6 @@ use crate::database::characters::{get_character_by_user_id, Character};
 use crate::database::road::{get_road, Road};
 use crate::database::travel::TravelGroup;
 use crate::database::universe::get_servers_from_universe;
-use crate::discord::poise_structs::{Context, Error};
 
 /// Represents the type of a Discord identifier.
 ///
@@ -47,53 +45,6 @@ impl From<(u64, IdType)> for Id {
 impl From<u64> for Id {
     fn from(value: u64) -> Self {
         Id { id: value, id_type: IdType::Channel }  // Default to Channel type
-    }
-}
-
-/// Extension trait for deleting Discord entities represented by `Option<Id>`.
-pub trait IdExt {
-    async fn delete(&mut self, ctx: &Context<'_>) -> Result<&'static str, Error>;
-}
-
-// Implement the trait for Option<Id>
-impl IdExt for Option<Id> {
-    /// Deletes the Discord entity (role or channel) and sets `self` to `None` on success.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - `self` is `None` (`"id__nothing_to_delete"`)
-    /// - Not in a guild context (`"guild_only"`)
-    /// - The deletion fails (`"id__role_delete_failed"` or `"id__channel_delete_failed"`)
-    async fn delete(&mut self, ctx: &Context<'_>) -> Result<&'static str, Error> {
-        match self {
-            None => Err("id__nothing_to_delete".into()),
-            Some(id) => {
-                let guild_id = ctx.guild_id().ok_or_else(|| -> Error { "guild_only".into() })?;
-                let http = ctx.http();
-
-                match id.id_type {
-                    IdType::Role => {
-                        // Use HTTP via GuildId; do NOT borrow ctx.guild() (cache) across await.
-                        match guild_id.delete_role(http, id.id).await {
-                            Ok(_) => {
-                                *self = None;
-                                Ok("id__role_delete_success")
-                            }
-                            Err(_) => Err("id__role_delete_failed".into()),
-                        }
-                    }
-                    _ => {
-                        if http.delete_channel(id.id.into(), None).await.is_ok() {
-                            *self = None;
-                            Ok("id__channel_delete_sucess")
-                        } else {
-                            Err("id__channel_delete_failed".into())
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -346,188 +297,6 @@ impl Server {
     }
     /// Sets the RP character channel ID. Returns `self` for method chaining.
     pub fn rp_character_channel_id(&mut self, rp_character_channel_id: impl Into<Id>) -> &mut Self {self.rp_character_channel_id = Some(rp_character_channel_id.into()); self}
-
-    /// Rolls back the current server configuration to a previous snapshot state.
-    ///
-    /// This asynchronous method compares the current server configuration with a provided
-    /// snapshot and deletes any roles, categories, or channels that differ between them.
-    /// All deletion operations are executed concurrently using `join_all`, and any errors
-    /// encountered during deletion are logged.
-    ///
-    /// # Parameters
-    ///
-    /// - `ctx`: A reference to the Discord context, used for performing Discord API operations
-    ///   such as deleting roles and channels.
-    /// - `snapshot`: A previous state of the `Server` instance to which the current state should
-    ///   be rolled back. Fields that differ from the snapshot will be deleted.
-    ///
-    /// # Behavior
-    ///
-    /// The method performs the following steps:
-    /// 1. Creates an array of mutable references to the current server's role/channel fields
-    ///    paired with their corresponding snapshot values.
-    /// 2. Filters the fields to identify those that differ between the current state and the snapshot.
-    /// 3. Collects futures for deleting the differing fields using the `IdExt::delete` method.
-    /// 4. Executes all deletion operations concurrently using `join_all`.
-    /// 5. Logs any errors that occur during deletion with error-level logging, including
-    ///    the universe ID, server ID, and error message.
-    ///
-    /// # Fields Rolled Back
-    ///
-    /// The following fields are checked and potentially rolled back:
-    /// - `admin_role_id`
-    /// - `moderator_role_id`
-    /// - `spectator_role_id`
-    /// - `player_role_id`
-    /// - `admin_category_id`
-    /// - `nrp_category_id`
-    /// - `rp_category_id`
-    /// - `road_category_id`
-    /// - `rp_wiki_channel_id`
-    /// - `log_channel_id`
-    /// - `moderation_channel_id`
-    /// - `commands_channel_id`
-    /// - `nrp_general_channel_id`
-    /// - `rp_character_channel_id`
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut server = Server::default();
-    /// let snapshot = server.clone();
-    /// // ... modify server ...
-    /// server.rollback(&ctx, snapshot).await;
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Errors during deletion operations are logged but do not cause the function to return
-    /// an error. This allows the rollback to proceed even if some deletions fail.
-    ///
-    /// # Notes
-    ///
-    /// - This method requires the `futures` crate for `join_all`.
-    /// - Errors are logged using the `log` crate at the `Error` level.
-    pub async fn rollback(&mut self, ctx: &Context<'_>, snapshot: Self) {
-        use futures::future::join_all;
-
-        let mut fields = [
-            (&mut self.admin_role_id, snapshot.admin_role_id),
-            (&mut self.moderator_role_id, snapshot.moderator_role_id),
-            (&mut self.spectator_role_id, snapshot.spectator_role_id),
-            (&mut self.player_role_id, snapshot.player_role_id),
-            (&mut self.admin_category_id, snapshot.admin_category_id),
-            (&mut self.nrp_category_id, snapshot.nrp_category_id),
-            (&mut self.rp_category_id, snapshot.rp_category_id),
-            (&mut self.road_category_id, snapshot.road_category_id),
-            (&mut self.rp_wiki_channel_id, snapshot.rp_wiki_channel_id),
-            (&mut self.log_channel_id, snapshot.log_channel_id),
-            (&mut self.moderation_channel_id, snapshot.moderation_channel_id),
-            (&mut self.commands_channel_id, snapshot.commands_channel_id),
-            (&mut self.nrp_general_channel_id, snapshot.nrp_general_channel_id),
-            (&mut self.rp_character_channel_id, snapshot.rp_character_channel_id),
-            (&mut self.universal_time_channel_id, snapshot.universal_time_channel_id),
-        ];
-
-        let delete_futures: Vec<_> = fields
-            .iter_mut()
-            .filter_map(|(field, snapshot_field)| {
-                if **field != *snapshot_field {
-                    Some(field.delete(ctx))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let results = join_all(delete_futures).await;
-        results.iter().for_each(|r| {
-            if let Err(err) = r {
-                log!(
-                    Level::Error,
-                    "Error during setup and rollback.\nuniverse_id: {}\nserver_id: {}\n error: {}",
-                    self.universe_id,
-                    self.server_id,
-                    err
-                );
-            }
-        });
-    }
-
-    /// Creates a validated snapshot of the current server configuration.
-    ///
-    /// Verifies that all role and channel IDs still exist in the Discord guild.
-    /// Any IDs that no longer exist are set to `None` in the returned snapshot.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the guild ID cannot be retrieved or if the HTTP requests to
-    /// retrieve guild roles or channels fail.
-    pub async fn snaphot(self, ctx: &Context<'_>) -> Self {
-        let mut snapshot = self.clone();
-        let guild_id = ctx.guild_id().unwrap();
-        let roles = ctx.http().get_guild_roles(guild_id.into()).await.unwrap();
-        let channels = ctx.http().get_channels(guild_id.into()).await.unwrap();
-
-
-        let role_exists = |id: u64| roles.iter().any(|r| r.id.get() == id);
-
-        if snapshot.admin_role_id.map(|x| role_exists(x.id)) == Some(false) {
-            snapshot.admin_role_id = None;
-        }
-        if snapshot.moderator_role_id.map(|x| role_exists(x.id)) == Some(false) {
-            snapshot.moderator_role_id = None;
-        }
-        if snapshot.spectator_role_id.map(|x| role_exists(x.id)) == Some(false) {
-            snapshot.spectator_role_id = None;
-        }
-        if snapshot.player_role_id.map(|x| role_exists(x.id)) == Some(false) {
-            snapshot.player_role_id = None;
-        }
-        if snapshot.everyone_role_id.map(|x| role_exists(x.id)) == Some(false) {
-            snapshot.everyone_role_id = None;
-        }
-
-        let channel_exists = |id: u64| channels.iter().any(|r| r.id.get() == id);
-
-        // ---- Channels/categories: check via get_channel ----
-
-        if snapshot.road_category_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.road_category_id = None;
-        }
-        if snapshot.admin_category_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.admin_category_id = None;
-        }
-        if snapshot.nrp_category_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.nrp_category_id = None;
-        }
-        if snapshot.rp_category_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.rp_category_id = None;
-        }
-        if snapshot.log_channel_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.log_channel_id = None;
-        }
-        if snapshot.commands_channel_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.commands_channel_id = None;
-        }
-        if snapshot.moderation_channel_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.moderation_channel_id = None;
-        }
-        if snapshot.nrp_general_channel_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.nrp_general_channel_id = None;
-        }
-        if snapshot.rp_character_channel_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.rp_character_channel_id = None;
-        }
-        if snapshot.rp_wiki_channel_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.rp_wiki_channel_id = None;
-        }
-        if snapshot.universal_time_channel_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.universal_time_channel_id = None;
-        }
-
-        snapshot
-    }
 
     pub async fn get_character_by_user_id(self, user_id: u64) -> mongodb::error::Result<Option<Character>> {
         get_character_by_user_id(self.universe_id, user_id).await
