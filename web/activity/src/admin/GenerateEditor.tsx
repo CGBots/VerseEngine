@@ -86,7 +86,7 @@ export function GenerateEditor({ t, onReady, onBack }: Props) {
   };
 
   const sceneMap = useMemo(() => (map && view3d ? toMapView(map) : null), [map, view3d]);
-  const problem = map ? mapProblem(map) : 'activity_ui__loading';
+  const problem = map ? mapProblem(map) : 'activity_ui__working';
   const place = map?.places.find((p) => p.id === selected) ?? null;
 
   const useMap = async () => {
@@ -106,7 +106,7 @@ export function GenerateEditor({ t, onReady, onBack }: Props) {
     <div className="import-options">
       <div className="generate-canvas">
         {map && view3d && sceneMap ? (
-          <Suspense fallback={<p className="center">{t('activity_ui__loading')}</p>}>
+          <Suspense fallback={<p className="center">{t('activity_ui__working')}</p>}>
             <MapScene map={sceneMap} currentPlaceId={null} reachable={new Set()} motion={null} playerPicture={null} playerName="" onSelectPlace={() => {}} />
           </Suspense>
         ) : (

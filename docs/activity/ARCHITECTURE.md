@@ -144,7 +144,7 @@ Limitation de débit (en mémoire, seau à jetons, `src/activity/ratelimit.rs`) 
 - limite globale par IP : peu pertinente derrière le proxy Discord (qui masque l'IP) ; à faire au niveau de Caddy si besoin.
 Réponse `429` avec `Retry-After`.
 
-En-têtes : `Content-Security-Policy` stricte sur les fichiers statiques (`default-src 'self'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`. CORS : aucune origine externe (tout passe par le proxy Discord, même origine).
+En-têtes : `Content-Security-Policy` stricte sur les fichiers statiques (`default-src 'self'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`. Azgaar (`/azgaar/`, étape E9 de l'import) est servi avec `Content-Security-Policy: sandbox …` : origine opaque, aucun accès à l'activité ni à l'API (voir `IMPORT_SPEC.md` § 18). CORS : aucune origine externe (tout passe par le proxy Discord, même origine).
 
 ## 7. Temps réel
 

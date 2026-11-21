@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, importApi, uploadMapFile, type ImportPlan, type JobState, type PlanResponse, type RemovalInfo, type ServerList, type UploadedMap } from '../api';
 import { openExternal } from '../discord';
 import type { Translator } from '../i18n';
+import { AzgaarStudio } from './AzgaarStudio';
 import { GenerateEditor } from './GenerateEditor';
 import { ImportPreview } from './ImportPreview';
 import {
@@ -25,7 +26,7 @@ const PHASE_LABEL = {
   RollbackIncomplete: 'activity_ui__import_phase_rollback_incomplete_phase',
 } as const;
 
-type Step = 'intro' | 'upload' | 'generate' | 'options' | 'confirm' | 'running' | 'finished';
+type Step = 'intro' | 'upload' | 'azgaar' | 'generate' | 'options' | 'confirm' | 'running' | 'finished';
 
 interface Props {
   t: Translator;
@@ -54,6 +55,9 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
   const [fog, setFog] = useState(false);
   const [typedName, setTypedName] = useState('');
   const [job, setJob] = useState<JobState | null>(null);
+  // Azgaar reste chargé une fois ouvert : revenir en arrière ne fait pas perdre la carte en cours.
+  const [azgaarOpened, setAzgaarOpened] = useState(false);
+  const [source, setSource] = useState<'upload' | 'azgaar'>('upload');
 
   // Liste des serveurs : au départ, et quand le bot rejoint ou quitte un serveur.
   const loadServers = useCallback(() => {
@@ -83,10 +87,16 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
   const onFile = async (file: File | undefined) => {
     if (!file) return;
     if (file.size > MAX_MAP_BYTES) return setError('activity__payload_too_large');
+    setSource('upload');
+    await upload(await file.arrayBuffer());
+  };
+
+  // Même envoi (et mêmes contrôles côté serveur) pour un fichier choisi et une carte venue d'Azgaar.
+  const upload = async (bytes: ArrayBuffer) => {
     setUploading(true);
     setError(null);
     try {
-      const uploaded = await uploadMapFile(await file.arrayBuffer());
+      const uploaded = await uploadMapFile(bytes);
       setMap(uploaded);
       setChoices(initialChoices(uploaded));
       setNewName(uploaded.name ?? '');
@@ -152,7 +162,8 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
 
       {step === 'intro' && (
         <div className="import-choices">
-          <button type="button" onClick={() => setStep('upload')}>{t('activity_ui__import_map')}</button>
+          <button type="button" onClick={() => { setAzgaarOpened(true); setStep('azgaar'); }}>{t('activity_ui__import_in_azgaar')}</button>
+          <button type="button" className="secondary" onClick={() => setStep('upload')}>{t('activity_ui__import_map')}</button>
           <button type="button" className="secondary" onClick={() => setStep('generate')}>{t('activity_ui__generate_map')}</button>
         </div>
       )}
@@ -168,12 +179,26 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
           </ol>
           <label className="file-input">
             <input type="file" accept=".map,.txt,.gz" disabled={uploading} onChange={(e) => void onFile(e.target.files?.[0])} />
-            <span>{uploading ? t('activity_ui__loading') : t('activity_ui__import_choose_file')}</span>
+            <span>{uploading ? t('activity_ui__working') : t('activity_ui__import_choose_file')}</span>
           </label>
           <div className="import-nav">
             <button type="button" className="secondary" onClick={() => setStep('intro')}>{t('activity_ui__back')}</button>
           </div>
         </div>
+      )}
+
+      {azgaarOpened && (
+        <AzgaarStudio
+          t={t}
+          hidden={step !== 'azgaar'}
+          busy={uploading}
+          onBack={() => setStep('intro')}
+          onError={setError}
+          onMap={(bytes) => {
+            setSource('azgaar');
+            void upload(bytes.slice().buffer);
+          }}
+        />
       )}
 
       {step === 'generate' && (
@@ -275,9 +300,9 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
             {p && removal && <RemovalSection plan={p} removal={removal} choices={choices} update={update} t={t} />}
             {p && <PlanSummary plan={plan!} t={t} />}
             <div className="import-nav">
-              <button type="button" className="secondary" onClick={() => setStep(map.generated ? 'generate' : 'upload')}>{t('activity_ui__back')}</button>
+              <button type="button" className="secondary" onClick={() => setStep(map.generated ? 'generate' : source)}>{t('activity_ui__back')}</button>
               <button type="button" disabled={planning || !!blockKey} title={blockKey ? t(blockKey) : undefined} onClick={() => setStep('confirm')}>
-                {planning ? t('activity_ui__loading') : t('activity_ui__import_next')}
+                {planning ? t('activity_ui__working') : t('activity_ui__import_next')}
               </button>
             </div>
             {blockKey && !planning && <p className="muted small-text">{t(blockKey)}</p>}
