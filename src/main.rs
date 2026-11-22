@@ -18,6 +18,7 @@ mod loot;
 mod recipe;
 mod activity;
 mod provisioning;
+mod music;
 #[cfg(test)]
 mod test_support;
 
