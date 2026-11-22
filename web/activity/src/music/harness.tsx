@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 import '../styles.css';
 import { loadTranslator, type Translator } from '../i18n';
 import { MusicControl } from '../components/MusicControl';
+import { MusicAdmin } from '../admin/MusicAdmin';
 
 function Harness() {
   const [t, setT] = useState<Translator | null>(null);
@@ -13,6 +14,15 @@ function Harness() {
     void loadTranslator('fr').then((tr) => setT(() => tr));
   }, []);
   if (!t) return null;
+  if (new URLSearchParams(location.search).get('view') === 'admin') {
+    return (
+      <div className="dialog-backdrop">
+        <div className="dialog music-dialog">
+          <MusicAdmin t={t} onClose={() => {}} />
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="map-view" style={{ height: '100vh' }}>
       <button type="button" onClick={() => setVersion((v) => v + 1)}>Déplacer</button>

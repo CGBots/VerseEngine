@@ -23,6 +23,8 @@ const fallbackT: Translator = (k) => k;
 const MapScene = lazy(() => import('./components/MapScene').then((m) => ({ default: m.MapScene })));
 // Import de carte (vue admin) : chargé seulement quand il est ouvert.
 const ImportWizard = lazy(() => import('./admin/ImportWizard').then((m) => ({ default: m.ImportWizard })));
+// Page admin de la musique : chargée seulement quand elle est ouverte.
+const MusicAdmin = lazy(() => import('./admin/MusicAdmin').then((m) => ({ default: m.MusicAdmin })));
 const errorKey = (e: unknown) => (e instanceof ApiError ? e.key : 'activity__internal_error');
 
 /** Description du mouvement du joueur ; l'animation est faite par la carte (`useAnimatedPosition`). */
@@ -60,6 +62,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Relecture de la playlist : déplacement, bibliothèque modifiée, reconnexion.
   const [musicVersion, setMusicVersion] = useState(0);
+  const [musicAdminOpen, setMusicAdminOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const isPhone = useIsPhone();
   const [character, setCharacter] = useState<CharacterView | null>(null);
@@ -286,8 +289,24 @@ export function App() {
           <MusicControl t={t} version={musicVersion} />
         </div>
       </main>
-      {adminMode && session.can_import && !importOpen && (
-        <button type="button" className="import-open" onClick={() => setImportOpen(true)}>{t('activity_ui__import_title')}</button>
+      {adminMode && !importOpen && !musicAdminOpen && (session.can_import || session.access === 'admin') && (
+        <div className="admin-actions">
+          {session.can_import && (
+            <button type="button" className="import-open" onClick={() => setImportOpen(true)}>{t('activity_ui__import_title')}</button>
+          )}
+          {session.access === 'admin' && (
+            <button type="button" className="import-open" onClick={() => setMusicAdminOpen(true)}>{t('activity_ui__music_admin_title')}</button>
+          )}
+        </div>
+      )}
+      {musicAdminOpen && (
+        <div className="dialog-backdrop">
+          <div className="dialog music-dialog">
+            <Suspense fallback={<p>{t('activity_ui__working')}</p>}>
+              <MusicAdmin t={t} onClose={() => setMusicAdminOpen(false)} />
+            </Suspense>
+          </div>
+        </div>
       )}
       {importOpen && (
         <div className="dialog-backdrop">

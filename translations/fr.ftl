@@ -1333,6 +1333,34 @@ activity_ui__music_enable = Activer la musique
 activity_ui__music_mute = Couper la musique
 activity_ui__music_unmute = Remettre la musique
 activity_ui__music_volume = Volume de la musique
+activity_ui__music_admin_title = Musique
+activity_ui__music_usage = { $used } utilisés sur { $max } · { $count } { $count ->
+    [one] morceau
+   *[other] morceaux
+  } sur { $maxCount }
+activity_ui__music_add = Ajouter un morceau
+activity_ui__music_choose_file = Choisir un fichier audio
+activity_ui__music_track_title = Titre
+activity_ui__music_rights = J'ai les droits sur cette musique (je l'ai créée, ou sa licence permet de la diffuser).
+activity_ui__music_formats = MP3, OGG, Opus, FLAC, WAV, M4A ou WebM ; { $max } et 15 minutes au maximum. Le fichier est vérifié avant d'être accepté.
+activity_ui__music_upload = Ajouter
+activity_ui__music_checking = Vérification du fichier…
+activity_ui__music_library = Bibliothèque
+activity_ui__music_empty = Aucun morceau pour l'instant.
+activity_ui__music_from_youtube = YouTube
+activity_ui__music_listen = Écouter
+activity_ui__music_stop = Arrêter
+activity_ui__music_nowhere = Joué nulle part : assignez-le à des lieux ou des routes.
+activity_ui__music_unassign = Retirer
+activity_ui__music_assign = Lieux et routes
+activity_ui__music_search = Chercher un lieu ou une route
+activity_ui__music_more = … et { $count } autres : précisez la recherche.
+activity_ui__music_delete = Supprimer
+activity_ui__music_confirm_delete = Confirmer la suppression
+activity_ui__music_save = Enregistrer
+activity_ui__music_unit_mb = Mo
+activity_ui__music_unit_kb = Ko
+activity_ui__number_locale = fr-FR
 activity_ui__azgaar_hint = Créez ou modifiez votre carte (Azgaar peut aussi ouvrir un fichier .map), puis envoyez-la. Chaque serveur accueille au plus 60 lieux : réduisez le nombre de bourgs dans les options d'Azgaar si besoin. Rien n'est gardé sur votre appareil : envoyez-la, ou enregistrez-la depuis Azgaar, avant de fermer l'activité.
 activity_ui__azgaar_unavailable = Azgaar n'a pas pu se charger ici. Créez votre carte sur azgaar.github.io, puis importez le fichier .map.
 activity_ui__azgaar_failed = Azgaar n'a pas pu fournir la carte. Attendez la fin de la génération, puis réessayez.

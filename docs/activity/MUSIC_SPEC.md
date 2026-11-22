@@ -85,3 +85,10 @@ Risques signalés à l'utilisateur pour M1 (22/11/2026) : conditions d'utilisati
 - CSP de l'activité : `media-src 'self' blob:` ajouté (sinon le son téléchargé avec le jeton ne pourrait pas être lu).
 - Vérifié dans Chromium (`music-harness.html`, page de développement absente du build ; `web/activity/e2e/music-harness.cjs`, avec la CSP réelle) : lecture depuis `blob:` (temps qui avance), fondu à l'entrée, bascule sur la musique de la route au déplacement, coupure gardée. Le cas « son bloqué » ne se produit pas dans Chromium sans écran : il est couvert par les tests du lecteur.
 - **À vérifier dans le vrai client Discord** : que la CSP de Discord laisse jouer un son depuis `blob:` dans l'activité.
+
+## 9. S4 livrée : page admin « Musique » (22/11/2026)
+
+- Bouton « Musique » dans les actions du mode admin (à côté de « Carte de l'univers »), pour les administrateurs du serveur ; la page est chargée seulement quand elle s'ouvre.
+- Envoi : fichier audio, titre proposé d'après le nom du fichier, case « j'ai les droits » obligatoire, limites rappelées ; le bouton dit pourquoi il est désactivé (fichier, taille, quota, titre, droits).
+- Bibliothèque : place occupée, titre modifiable, durée et taille, écoute, assignation aux **lieux et routes** (recherche sans accents ni casse, 150 résultats affichés au plus pour les grandes cartes), enregistrement seulement s'il y a un changement, suppression en deux temps (pas de boîte de dialogue du navigateur, souvent bloquée dans Discord).
+- Vérifié dans Chromium (`music-harness.html?view=admin`, `web/activity/e2e/music-admin-harness.cjs`) : envoi, recherche « kerival » qui trouve « Kérival » et la route « Kérival → Lorroc », enregistrement, écoute, suppression ; aucune erreur.

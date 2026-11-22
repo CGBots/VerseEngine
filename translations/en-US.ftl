@@ -1322,6 +1322,34 @@ activity_ui__music_enable = Turn the music on
 activity_ui__music_mute = Mute the music
 activity_ui__music_unmute = Unmute the music
 activity_ui__music_volume = Music volume
+activity_ui__music_admin_title = Music
+activity_ui__music_usage = { $used } used of { $max } · { $count } { $count ->
+    [one] track
+   *[other] tracks
+  } of { $maxCount }
+activity_ui__music_add = Add a track
+activity_ui__music_choose_file = Choose an audio file
+activity_ui__music_track_title = Title
+activity_ui__music_rights = I hold the rights to this music (I made it, or its license allows sharing it).
+activity_ui__music_formats = MP3, OGG, Opus, FLAC, WAV, M4A or WebM; { $max } and 15 minutes maximum. The file is checked before being accepted.
+activity_ui__music_upload = Add
+activity_ui__music_checking = Checking the file…
+activity_ui__music_library = Library
+activity_ui__music_empty = No tracks yet.
+activity_ui__music_from_youtube = YouTube
+activity_ui__music_listen = Listen
+activity_ui__music_stop = Stop
+activity_ui__music_nowhere = Played nowhere: assign it to places or roads.
+activity_ui__music_unassign = Remove
+activity_ui__music_assign = Places and roads
+activity_ui__music_search = Search a place or a road
+activity_ui__music_more = … and { $count } more: refine the search.
+activity_ui__music_delete = Delete
+activity_ui__music_confirm_delete = Confirm deletion
+activity_ui__music_save = Save
+activity_ui__music_unit_mb = MB
+activity_ui__music_unit_kb = KB
+activity_ui__number_locale = en-US
 activity_ui__azgaar_hint = Create or edit your map (Azgaar can also open a .map file), then send it. Each server holds at most 60 places: lower the number of burgs in Azgaar's options if needed. Nothing is kept on your device: send it, or save it from Azgaar, before closing the activity.
 activity_ui__azgaar_unavailable = Azgaar could not load here. Create your map on azgaar.github.io, then import the .map file.
 activity_ui__azgaar_failed = Azgaar could not provide the map. Wait for the generation to finish, then try again.
