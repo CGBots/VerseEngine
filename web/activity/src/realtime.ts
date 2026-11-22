@@ -1,7 +1,7 @@
 /** Évènements poussés par le serveur (`/api/ws`) : ils disent quoi relire. */
-export type ServerEvent = 'travel_updated' | 'character_updated' | 'map_updated' | 'servers_updated' | 'resync';
+export type ServerEvent = 'travel_updated' | 'character_updated' | 'map_updated' | 'servers_updated' | 'music_updated' | 'resync';
 
-const KNOWN: readonly string[] = ['travel_updated', 'character_updated', 'map_updated', 'servers_updated', 'resync'];
+const KNOWN: readonly string[] = ['travel_updated', 'character_updated', 'map_updated', 'servers_updated', 'music_updated', 'resync'];
 
 /** Délai avant la n-ième tentative de reconnexion : 1, 2, 4… plafonné à 30 s. */
 export function backoffMs(attempt: number): number {

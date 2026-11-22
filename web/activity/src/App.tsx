@@ -7,6 +7,7 @@ import { MapView2D } from './components/MapView2D';
 import { TravelPanel } from './components/TravelPanel';
 import { TopBar } from './components/TopBar';
 import { SettingsPanel } from './components/SettingsPanel';
+import { MusicControl } from './components/MusicControl';
 import { roadPath, webglAvailable, type PlayerMotion } from './map/geometry';
 import { playerPictureUrl } from './map/player';
 import { connectRealtime } from './realtime';
@@ -57,6 +58,8 @@ export function App() {
   const [t, setT] = useState<Translator>(() => fallbackT);
   const [adminMode, setAdminMode] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Relecture de la playlist : déplacement, bibliothèque modifiée, reconnexion.
+  const [musicVersion, setMusicVersion] = useState(0);
   const [sheetOpen, setSheetOpen] = useState(false);
   const isPhone = useIsPhone();
   const [character, setCharacter] = useState<CharacterView | null>(null);
@@ -123,11 +126,17 @@ export function App() {
   useEffect(() => {
     if (!ready) return;
     return connectRealtime(getSessionToken, (event) => {
-      if (event === 'travel_updated') void Promise.all([loadTravel(), loadCharacter()]);
-      else if (event === 'character_updated') void loadCharacter();
+      if (event === 'travel_updated') {
+        void Promise.all([loadTravel(), loadCharacter()]);
+        setMusicVersion((v) => v + 1);
+      } else if (event === 'character_updated') void loadCharacter();
       else if (event === 'map_updated') void Promise.all([loadMap(), loadTravel()]);
       else if (event === 'servers_updated') setServersVersion((v) => v + 1);
-      else void reloadAll();
+      else if (event === 'music_updated') setMusicVersion((v) => v + 1);
+      else {
+        void reloadAll();
+        setMusicVersion((v) => v + 1);
+      }
     });
   }, [ready, loadTravel, loadCharacter, loadMap, reloadAll]);
 
@@ -140,6 +149,7 @@ export function App() {
         setTravel(next);
         if (next.result) setMessage(t(next.result));
         void loadCharacter();
+        setMusicVersion((v) => v + 1);
       } catch (e) {
         setMessage(t(errorKey(e)));
       } finally {
@@ -267,9 +277,13 @@ export function App() {
               onStart={(id) => void act(() => travelApi.start(id))}
               onStop={() => void act(travelApi.stop)}
               onLeave={() => void act(travelApi.leave)}
-              onElapsed={() => void Promise.all([loadTravel(), loadCharacter()])}
+              onElapsed={() => {
+                void Promise.all([loadTravel(), loadCharacter()]);
+                setMusicVersion((v) => v + 1);
+              }}
             />
           )}
+          <MusicControl t={t} version={musicVersion} />
         </div>
       </main>
       {adminMode && session.can_import && !importOpen && (

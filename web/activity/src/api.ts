@@ -277,3 +277,60 @@ export const importApi = {
   execute: (req: ExecuteRequest) => api<{ job_id: string; total: number }>('/admin/import/execute', { method: 'POST', body: JSON.stringify(req) }),
   job: (id: string) => api<JobState>(`/admin/import/jobs/${encodeURIComponent(id)}`),
 };
+
+// ---------------------------------------------------------------------------
+// Musique (MUSIC_SPEC.md)
+// ---------------------------------------------------------------------------
+
+export interface MusicHere {
+  spot: { kind: 'place' | 'road'; id: string } | null;
+  tracks: { id: string; title: string; duration_ms: number }[];
+}
+
+export interface AdminTrack {
+  id: string;
+  title: string;
+  duration_ms: number;
+  bytes: number;
+  origin: 'file' | 'youtube';
+  places: string[];
+  roads: string[];
+}
+
+export interface MusicLibrary {
+  tracks: AdminTrack[];
+  used_bytes: number;
+  max_bytes: number;
+  max_tracks: number;
+  max_file_bytes: number;
+  places: { id: string; name: string }[];
+  roads: { id: string; name: string; from: string; to: string }[];
+  youtube_enabled: boolean;
+}
+
+export const musicApi = {
+  here: () => api<MusicHere>('/music/here'),
+  /** Fichier d'un morceau, téléchargé avec le jeton, en URL `blob:` locale. */
+  trackUrl: (id: string) => apiBlobUrl(`/music/tracks/${encodeURIComponent(id)}`),
+  library: () => api<MusicLibrary>('/admin/music'),
+  update: (id: string, body: { title: string; places: string[]; roads: string[] }) =>
+    api<AdminTrack>(`/admin/music/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body) }),
+  remove: async (id: string) => {
+    const headers = new Headers();
+    if (sessionToken) headers.set('Authorization', `Bearer ${sessionToken}`);
+    const res = await fetch(`/api/admin/music/${encodeURIComponent(id)}`, { method: 'DELETE', headers });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(res.status, typeof body.error === 'string' ? body.error : 'activity__internal_error');
+    }
+  },
+  upload: async (bytes: ArrayBuffer, title: string, rights: boolean): Promise<AdminTrack> => {
+    const headers = new Headers({ Accept: 'application/json', 'Content-Type': 'application/octet-stream' });
+    if (sessionToken) headers.set('Authorization', `Bearer ${sessionToken}`);
+    const q = new URLSearchParams({ title, rights: String(rights) });
+    const res = await fetch(`/api/admin/music/upload?${q}`, { method: 'POST', headers, body: bytes });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(res.status, typeof body.error === 'string' ? body.error : 'activity__internal_error');
+    return body as AdminTrack;
+  },
+};

@@ -77,3 +77,11 @@ Risques signalés à l'utilisateur pour M1 (22/11/2026) : conditions d'utilisati
 - Admin **revérifié auprès de Discord** à chaque requête (une session qui se dit admin ne suffit pas) ; écritures limitées (3 d'affilée, puis 1 par seconde).
 - Évènement temps réel `music_updated` (tout l'univers) après chaque changement : les lecteurs relisent leur playlist.
 - Test de bout en bout contre MongoDB avec un faux Discord (`admins_build_the_library_and_players_hear_their_place`) : session falsifiée refusée (403), droits non cochés (400), page HTML et vidéo refusées (422), lieu d'un autre univers refusé, joueur qui entend la playlist de son lieu et reçoit le fichier avec les bons en-têtes, étranger refusé, suppression.
+
+## 8. S3 livrée : lecteur dans l'activité (22/11/2026)
+
+- `web/activity/src/music/` : `shuffle.ts` (aléatoire en boucle, jamais deux fois le même morceau d'affilée, y compris d'un tour à l'autre ; suit les changements de bibliothèque sans relancer le tour), `settings.ts` (volume et coupure, gardés dans ce navigateur seulement, lecture tolérante), `player.ts` (lecteur : fondu de 2 s au changement d'endroit, enchaînement, silence là où rien n'est prévu, morceau illisible sauté sans boucler, préchargement du suivant, URL `blob:` libérées, son bloqué par le navigateur → bouton « Activer la musique »).
+- `MusicControl` : petite commande en haut à droite de la carte (titre, coupure, volume), absente tant qu'aucune musique n'est prévue. La playlist est relue au déplacement (`travel_updated`, actions de voyage, fin d'un trajet), au changement de bibliothèque (`music_updated`) et à la reconnexion.
+- CSP de l'activité : `media-src 'self' blob:` ajouté (sinon le son téléchargé avec le jeton ne pourrait pas être lu).
+- Vérifié dans Chromium (`music-harness.html`, page de développement absente du build ; `web/activity/e2e/music-harness.cjs`, avec la CSP réelle) : lecture depuis `blob:` (temps qui avance), fondu à l'entrée, bascule sur la musique de la route au déplacement, coupure gardée. Le cas « son bloqué » ne se produit pas dans Chromium sans écran : il est couvert par les tests du lecteur.
+- **À vérifier dans le vrai client Discord** : que la CSP de Discord laisse jouer un son depuis `blob:` dans l'activité.
