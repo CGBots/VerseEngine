@@ -308,7 +308,15 @@ export interface MusicLibrary {
   youtube_enabled: boolean;
 }
 
+export type YoutubeJob =
+  | { status: 'running' }
+  | { status: 'done'; track: AdminTrack }
+  | { status: 'failed'; error: string };
+
 export const musicApi = {
+  youtube: (url: string, title: string, rights: boolean) =>
+    api<{ job_id: string }>('/admin/music/youtube', { method: 'POST', body: JSON.stringify({ url, title: title.trim() || undefined, rights }) }),
+  youtubeJob: (id: string) => api<YoutubeJob>(`/admin/music/youtube/${encodeURIComponent(id)}`),
   here: () => api<MusicHere>('/music/here'),
   /** Fichier d'un morceau, téléchargé avec le jeton, en URL `blob:` locale. */
   trackUrl: (id: string) => apiBlobUrl(`/music/tracks/${encodeURIComponent(id)}`),

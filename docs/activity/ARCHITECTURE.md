@@ -97,6 +97,12 @@ Conventions :
 | GET | `/api/i18n/{locale}` | a | fichier Fluent du bot (`fr`, `en-US`), public |
 | GET | `/api/admin/import/servers` | d | serveurs utilisables pour l'import (voir `IMPORT_SPEC.md` § 13) |
 | POST | `/api/admin/import/map` | d | sauvegarde `.map` d'Azgaar, 32 Mio au plus |
+| GET | `/api/music/here` | — | playlist de l'endroit du joueur (lieu ou route) |
+| GET | `/api/music/tracks/{id}` | — | fichier d'un morceau de l'univers (type contrôlé, `sandbox`) |
+| GET | `/api/admin/music` | — | bibliothèque musicale (admin revérifié auprès de Discord) |
+| POST | `/api/admin/music/upload` | — | envoi d'un fichier audio, 25 Mio, contrôlé par décodage |
+| PUT/DELETE | `/api/admin/music/{id}` | — | titre et assignations / suppression |
+| POST/GET | `/api/admin/music/youtube[/{job}]` | — | son d'une vidéo YouTube (yt-dlp, coupé par défaut) |
 | POST | `/api/admin/import/plan` | d | aperçu de l'import |
 | POST | `/api/admin/import/execute` | d | création, après saisie du nom de l'univers |
 | GET | `/api/admin/import/jobs/{id}` | d | progression d'un import |

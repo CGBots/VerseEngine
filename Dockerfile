@@ -46,8 +46,17 @@ FROM debian:bookworm-slim
 
 # Certificats racine : nécessaires pour les connexions TLS sortantes (Discord, MongoDB distant).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates python3 python3-venv \
     && rm -rf /var/lib/apt/lists/*
+
+# Musique (MUSIC_SPEC.md § 3.3) : yt-dlp, yt-dlp-ejs et Deno, versions figées et vérifiées par
+# empreinte. L'import YouTube reste coupé tant que MUSIC_YTDLP_ENABLED=true n'est pas fourni.
+COPY docker/yt-dlp-requirements.txt /tmp/yt-dlp-requirements.txt
+RUN python3 -m venv /opt/yt-dlp \
+    && /opt/yt-dlp/bin/pip install --no-cache-dir --no-deps --require-hashes -r /tmp/yt-dlp-requirements.txt \
+    && rm /tmp/yt-dlp-requirements.txt
+ENV MUSIC_YTDLP_PATH=/opt/yt-dlp/bin/yt-dlp \
+    MUSIC_YTDLP_DENO=/opt/yt-dlp/bin/deno
 
 WORKDIR /app
 COPY --from=build /app/target/release/RpBot_reborn ./RpBot_reborn

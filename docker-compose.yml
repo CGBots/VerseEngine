@@ -22,6 +22,8 @@ services:
       MONGODB_PORT: ${MONGODB_PORT:-27017}
       # Activité Discord (désactivée par défaut). Voir docs/activity/DEPLOY.md.
       ACTIVITY_ENABLED: ${ACTIVITY_ENABLED:-false}
+      # Import YouTube de la musique (yt-dlp) : coupé par défaut (MUSIC_SPEC.md § 3.3).
+      MUSIC_YTDLP_ENABLED: ${MUSIC_YTDLP_ENABLED:-false}
       # Dans le conteneur, on écoute sur toutes les interfaces : c'est la publication du port
       # ci-dessous qui le limite à la machine hôte (reverse proxy TLS).
       ACTIVITY_BIND: 0.0.0.0:8787

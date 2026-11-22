@@ -11,6 +11,9 @@ const places = [{ id: '1', name: 'Kérival' }, { id: '2', name: 'Lorroc' }, { id
 const roads = [{ id: '9', name: '', from: 'Kérival', to: 'Lorroc' }];
 const tracks = [];
 const files = {};
+let ytEnabled = false;
+let jobPolls = 0;
+const ytRequests = [];
 
 (async () => {
   const browser = await chromium.launch();
@@ -25,7 +28,7 @@ const files = {};
     const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
     if (p.startsWith('/api/i18n/')) return route.fulfill({ status: 200, contentType: 'text/plain', body: fs.readFileSync(path.join(ftlDir, 'fr.ftl'), 'utf8') });
     if (p === '/api/admin/music') {
-      return json({ tracks, used_bytes: tracks.reduce((n, t) => n + t.bytes, 0), max_bytes: 500 * 1024 * 1024, max_tracks: 300, max_file_bytes: 25 * 1024 * 1024, places, roads, youtube_enabled: false });
+      return json({ tracks, used_bytes: tracks.reduce((n, t) => n + t.bytes, 0), max_bytes: 500 * 1024 * 1024, max_tracks: 300, max_file_bytes: 25 * 1024 * 1024, places, roads, youtube_enabled: ytEnabled });
     }
     if (p === '/api/admin/music/upload') {
       const body = r.postDataBuffer();
@@ -35,6 +38,17 @@ const files = {};
       const t = { id, title: url.searchParams.get('title'), duration_ms: 2000, bytes: body.length, origin: 'file', places: [], roads: [] };
       tracks.push(t);
       return json(t);
+    }
+    if (p === '/api/admin/music/youtube') {
+      ytRequests.push(JSON.parse(r.postData()));
+      return json({ job_id: 'j1' }, 202);
+    }
+    if (p === '/api/admin/music/youtube/j1') {
+      jobPolls += 1;
+      if (jobPolls < 2) return json({ status: 'running' });
+      const t = { id: '0000000000000000000000yt', title: 'Chanson de la taverne', duration_ms: 2000, bytes: 10717, origin: 'youtube', places: [], roads: [] };
+      if (!tracks.some((x) => x.id === t.id)) tracks.push(t);
+      return json({ status: 'done', track: t });
     }
     const m = p.match(/^\/api\/admin\/music\/(\w+)$/);
     if (m && r.method() === 'PUT') {
@@ -89,6 +103,19 @@ const files = {};
   await page.getByRole('button', { name: 'Confirmer la suppression' }).click();
   await page.getByText('Aucun morceau pour l\'instant.').waitFor();
   console.log('supprimé, morceaux restants :', tracks.length);
+  // YouTube (activé sur le bot).
+  ytEnabled = true;
+  await page.reload();
+  await page.getByText('Depuis YouTube').waitFor();
+  const fetchBtn = page.getByRole('button', { name: 'Récupérer le son' });
+  await page.getByLabel('Lien de la vidéo YouTube').fill('https://youtu.be/dQw4w9WgXcQ');
+  console.log('Récupérer désactivé sans droits :', await fetchBtn.isDisabled());
+  await page.locator('.music-upload').nth(1).getByLabel(/J'ai les droits/).check();
+  await fetchBtn.click();
+  await page.getByRole('button', { name: /Récupération en cours/ }).waitFor();
+  await page.screenshot({ path: path.join(shots, 'music-admin-3-youtube.png') });
+  await page.locator('.music-track').waitFor({ timeout: 10000 });
+  console.log('demande YouTube :', JSON.stringify(ytRequests), '→ bibliothèque :', await page.locator('.music-track .muted').first().textContent());
   console.log('erreurs :', errors);
   await browser.close();
 })();
