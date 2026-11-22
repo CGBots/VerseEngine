@@ -8,7 +8,7 @@ Dernière mise à jour : 19/11/2026 (session « import de carte », branche `fea
 |---|---|---|
 | `chore/hardening` | [#11](https://github.com/CGBots/VerseEngine/pull/11) | **Prête à fusionner.** CI verte (tests, intégration MongoDB, image Docker). Validée contre l'API REST Discord. |
 | `feature/map-import` | [#13](https://github.com/CGBots/VerseEngine/pull/13) (brouillon, vers `feature/discord-activity`) | Import et génération de carte : E1 à E9 livrées. |
-| `feature/music` | [#14](https://github.com/CGBots/VerseEngine/pull/14) (brouillon, vers `feature/map-import`) | Musique des lieux et des routes : S1 à S5 livrées (`MUSIC_SPEC.md`). |
+| `feature/music` | [#14](https://github.com/CGBots/VerseEngine/pull/14) (brouillon, vers `feature/map-import`) | Musique des lieux et des routes : S1 à S5 livrées (`MUSIC_SPEC.md`) ; YouTube par le lecteur officiel. |
 | `feature/discord-activity` | [#12](https://github.com/CGBots/VerseEngine/pull/12) (brouillon) | Contient #11 par fusion. Phase b terminée côté code ; reste un essai réel dans Discord, qui demande l'hébergement. |
 
 - `cargo test --locked` sur `feature/discord-activity` : 194 réussis, 18 ignorés (intégration).
@@ -61,10 +61,10 @@ PR #12 (`feature/discord-activity`) :
 - `cargo test --locked` : 270 réussis ; intégration (`--ignored --skip test_discord_bot_connection --test-threads=1`, avec `AZGAAR_MAP_FILE` et `AZGAAR_FULL_JSON`) : 39 réussis, sur les deux serveurs de test. `--test-threads=1` : les tests d'installation utilisent le même serveur Discord ; `npm test` : 78 réussis.
 
 ## Musique (branche `feature/music`, demande du 22/11/2026)
-- Cahier des charges : **`docs/activity/MUSIC_SPEC.md`** (décisions M1–M4 : son des liens YouTube récupéré par yt-dlp, playlists des routes, aléatoire en boucle, branche séparée).
-- S1 contrôle des fichiers (Symphonia) et stockage (GridFS) ; S2 API (admin revérifié auprès de Discord) ; S3 lecteur dans l'activité ; S4 page admin « Musique » ; S5 yt-dlp encadré (coupé par défaut, version figée, sans shell, environnement vidé) et image Docker.
-- Tests : `cargo test --locked` 284 ; intégration MongoDB `a_track_lives_and_dies_in_mongodb`, `admins_build_the_library_and_players_hear_their_place` ; `npm test` 99 ; scénarios Chromium `music-harness.cjs`, `music-admin-harness.cjs`.
-- À vérifier dans le vrai client Discord : lecture depuis `blob:` sous la CSP de Discord ; import YouTube réel (YouTube injoignable depuis la session).
+- Cahier des charges : **`docs/activity/MUSIC_SPEC.md`** (décisions M1–M5 : playlists des routes, aléatoire en boucle, branche séparée ; YouTube par le lecteur officiel visible, avec « Masquer » — yt-dlp retiré le 22/11/2026 pour raisons juridiques).
+- S1 contrôle des fichiers (Symphonia) et stockage (GridFS) ; S2 API (admin revérifié auprès de Discord) ; S3 lecteur dans l'activité ; S4 page admin « Musique » ; S5 lecteur officiel de YouTube (200 × 200, isolé, « Masquer » → fichiers audio seulement).
+- Tests : `cargo test --locked` 281 ; intégration MongoDB `a_track_lives_and_dies_in_mongodb`, `admins_build_the_library_and_players_hear_their_place` ; `npm test` 108 ; scénarios Chromium `music-harness.cjs`, `music-admin-harness.cjs`.
+- À vérifier dans le vrai client Discord : lecture depuis `blob:` sous la CSP de Discord ; lecteur YouTube par le proxy (URL mapping `/youtube` à ajouter dans le portail).
 
 ## Cahier des charges de l'import
 Cahier des charges complet et validé : **`docs/activity/IMPORT_SPEC.md`** (décisions I1–I17, Q1–Q5). À traiter dans une session dédiée. Points marquants : répartition de l'univers sur plusieurs serveurs (150 lieux au plus par serveur, création des serveurs par l'admin), plus de rôle par route (permissions individuelles), brouillard optionnel par univers, double vérification par le nom de l'univers, retour en arrière complet en cas d'erreur.

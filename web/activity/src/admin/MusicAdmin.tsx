@@ -131,7 +131,7 @@ export function MusicAdmin({ t, onClose }: Props) {
             </button>
           </section>
 
-          {lib.youtube_enabled && <YoutubeImport t={t} onDone={reload} onError={setError} />}
+          <YoutubeAdd t={t} onDone={reload} onError={setError} />
 
           <section>
             <h3>{t('activity_ui__music_library')}</h3>
@@ -212,12 +212,13 @@ function TrackRow({ t, track, allSpots, size, previewing, onListen, onSaved, onD
       <div className="music-track-head">
         <input type="text" aria-label={t('activity_ui__music_track_title')} maxLength={100} value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} />
         <span className="muted">
-          {formatDuration(track.duration_ms)} · {size}
-          {track.origin === 'youtube' && ` · ${t('activity_ui__music_from_youtube')}`}
+          {track.origin === 'youtube' ? t('activity_ui__music_from_youtube') : `${formatDuration(track.duration_ms)} · ${size}`}
         </span>
-        <button type="button" className="secondary small" aria-pressed={previewing} onClick={onListen}>
-          {previewing ? t('activity_ui__music_stop') : t('activity_ui__music_listen')}
-        </button>
+        {track.origin === 'file' && (
+          <button type="button" className="secondary small" aria-pressed={previewing} onClick={onListen}>
+            {previewing ? t('activity_ui__music_stop') : t('activity_ui__music_listen')}
+          </button>
+        )}
       </div>
       <div className="music-spots">
         {assigned.length === 0 ? (
@@ -266,42 +267,33 @@ function TrackRow({ t, track, allSpots, size, previewing, onListen, onSaved, onD
   );
 }
 
-/** Import du son d'une vidéo YouTube (MUSIC_SPEC.md § 3.3) : la tâche tourne sur le serveur. */
-function YoutubeImport({ t, onDone, onError }: { t: Translator; onDone: () => void; onError: (key: string) => void }) {
+/** Ajout d'une vidéo YouTube (MUSIC_SPEC.md § 3.3) : seul son identifiant est gardé ; elle est
+ * lue par le lecteur officiel de YouTube, visible. Rien n'est téléchargé. */
+function YoutubeAdd({ t, onDone, onError }: { t: Translator; onDone: () => void; onError: (key: string) => void }) {
   const [url, setUrl] = useState('');
   const [title, setTitle] = useState('');
   const [rights, setRights] = useState(false);
-  const [job, setJob] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    if (!job) return;
-    const id = window.setInterval(async () => {
-      try {
-        const state = await musicApi.youtubeJob(job);
-        if (state.status === 'running') return;
-        setJob(null);
-        if (state.status === 'failed') onError(state.error);
-        else {
-          setUrl('');
-          setTitle('');
-          setRights(false);
-          onDone();
-        }
-      } catch (e) {
-        setJob(null);
-        onError(errKey(e));
-      }
-    }, 2000);
-    return () => window.clearInterval(id);
-  }, [job, onDone, onError]);
-
-  const blocker = !url.trim() ? 'activity_ui__music_youtube_url' : !rights ? 'activity__music_rights_required' : null;
-  const start = async () => {
+  const blocker = !url.trim()
+    ? 'activity_ui__music_youtube_url'
+    : !title.trim()
+      ? 'activity__music_title_required'
+      : !rights
+        ? 'activity__music_rights_required'
+        : null;
+  const add = async () => {
+    setBusy(true);
     try {
-      const res = await musicApi.youtube(url.trim(), title, rights);
-      setJob(res.job_id);
+      await musicApi.youtube(url.trim(), title, rights);
+      setUrl('');
+      setTitle('');
+      setRights(false);
+      onDone();
     } catch (e) {
       onError(errKey(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -310,19 +302,19 @@ function YoutubeImport({ t, onDone, onError }: { t: Translator; onDone: () => vo
       <h3>{t('activity_ui__music_youtube_title')}</h3>
       <label>
         {t('activity_ui__music_youtube_url')}
-        <input type="url" inputMode="url" placeholder="https://youtu.be/…" value={url} disabled={!!job} onChange={(e) => setUrl(e.target.value)} />
+        <input type="url" inputMode="url" placeholder="https://youtu.be/…" value={url} onChange={(e) => setUrl(e.target.value)} />
       </label>
       <label>
-        {t('activity_ui__music_youtube_track_title')}
-        <input type="text" maxLength={100} value={title} disabled={!!job} onChange={(e) => setTitle(e.target.value)} />
+        {t('activity_ui__music_track_title')}
+        <input type="text" maxLength={100} value={title} onChange={(e) => setTitle(e.target.value)} />
       </label>
       <label className="music-rights">
-        <input type="checkbox" checked={rights} disabled={!!job} onChange={(e) => setRights(e.target.checked)} />
+        <input type="checkbox" checked={rights} onChange={(e) => setRights(e.target.checked)} />
         {t('activity_ui__music_rights')}
       </label>
       <p className="muted">{t('activity_ui__music_youtube_help')}</p>
-      <button type="button" disabled={!!blocker || !!job} title={blocker ? t(blocker) : undefined} onClick={() => void start()}>
-        {job ? t('activity_ui__music_youtube_running') : t('activity_ui__music_youtube_import')}
+      <button type="button" disabled={!!blocker || busy} title={blocker ? t(blocker) : undefined} onClick={() => void add()}>
+        {t('activity_ui__music_youtube_add')}
       </button>
     </section>
   );

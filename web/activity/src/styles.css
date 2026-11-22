@@ -233,10 +233,15 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { flex-wra
 .import-preview text, .import-preview .map-label { user-select: none; -webkit-user-select: none; }
 
 /* Musique : petite commande en haut à droite de la carte (le bas droit est au voyage). */
-.music-control { position: absolute; right: 12px; top: 12px; z-index: 4; display: flex; align-items: center; gap: 6px; max-width: min(360px, calc(100% - 24px)); padding: 4px 8px; border-radius: 999px; background: var(--bg-floating, rgba(17, 18, 20, 0.85)); color: var(--text-normal); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); }
+.music-control { display: flex; align-items: center; gap: 6px; max-width: min(360px, calc(100% - 24px)); padding: 4px 8px; border-radius: 999px; background: var(--bg-floating, rgba(17, 18, 20, 0.85)); color: var(--text-normal); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); }
 .music-title { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .music-control input[type=range] { width: 80px; flex: none; }
 .music-control .icon-button { flex: none; }
+.music-control { flex-wrap: wrap; border-radius: 16px; }
+.music-hide-video { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); }
+/* Lecteur YouTube : visible, 200 × 200 au moins (règles de YouTube), jamais recouvert. */
+.music-dock { position: absolute; right: 12px; top: 12px; z-index: 4; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; max-width: calc(100% - 24px); }
+.music-video { flex: none; width: 200px; height: 200px; border: 0; border-radius: 8px; background: #000; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); }
 
 /* Page admin « Musique ». */
 .music-dialog { width: min(820px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; }

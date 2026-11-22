@@ -2,7 +2,8 @@
 //!
 //! - `GET /api/music/here` : playlist de l'endroit où se trouve le joueur (lieu, ou route en voyage).
 //! - `GET /api/music/tracks/{id}` : fichier d'un morceau de l'univers de la session.
-//! - `/api/admin/music*` : bibliothèque, envoi, titre et assignations, suppression. Droits
+//! - `/api/admin/music*` : bibliothèque, envoi d'un fichier, ajout d'une vidéo YouTube (identifiant
+//!   seul, rien n'est téléchargé), titre et assignations, suppression. Droits
 //!   d'administrateur **revérifiés auprès de Discord** à chaque requête (jamais la session seule).
 
 use std::collections::HashSet;
@@ -28,12 +29,11 @@ use crate::database::server::get_server_by_id;
 use crate::database::travel::{get_group_of_user, SpaceType};
 use crate::music::audio::{check_audio, MAX_FILE_BYTES};
 
-/// Univers dont un envoi (fichier ou YouTube) est en cours : un seul à la fois par univers
-/// (quota, décodage coûteux) ; et les imports YouTube suivis par l'activité.
+/// Univers dont un envoi de fichier est en cours : un seul à la fois par univers (quota,
+/// décodage coûteux).
 #[derive(Default)]
 pub struct MusicUploads {
     busy: Mutex<HashSet<ObjectId>>,
-    jobs: Mutex<std::collections::HashMap<String, YoutubeJob>>,
 }
 
 /// Réserve l'univers le temps d'un envoi ; libéré à la fin, même en cas d'erreur.
@@ -55,54 +55,26 @@ impl Drop for UploadSlot {
     }
 }
 
-/// Import YouTube en cours ou terminé (gardé 15 min pour que l'activité lise le résultat).
-#[derive(Clone)]
-pub struct YoutubeJob {
-    universe_id: ObjectId,
-    created: std::time::Instant,
-    status: YoutubeStatus,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum YoutubeStatus {
-    Running,
-    Done { track: AdminTrackDto },
-    Failed { error: String },
-}
-
-const JOB_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
-
-impl MusicUploads {
-    fn job_put(&self, id: &str, job: YoutubeJob) {
-        let mut jobs = self.jobs.lock().unwrap_or_else(|p| p.into_inner());
-        jobs.retain(|_, j| j.created.elapsed() < JOB_TTL);
-        jobs.insert(id.to_string(), job);
-    }
-
-    fn job_set(&self, id: &str, status: YoutubeStatus) {
-        if let Some(j) = self.jobs.lock().unwrap_or_else(|p| p.into_inner()).get_mut(id) {
-            j.status = status;
-        }
-    }
-
-    fn job_get(&self, id: &str, universe_id: ObjectId) -> Option<YoutubeStatus> {
-        let jobs = self.jobs.lock().unwrap_or_else(|p| p.into_inner());
-        jobs.get(id).filter(|j| j.universe_id == universe_id && j.created.elapsed() < JOB_TTL).map(|j| j.status.clone())
-    }
-}
-
-/// Morceau tel que le voit un joueur.
+/// Morceau tel que le voit un joueur : un fichier (`/api/music/tracks/{id}`) ou une vidéo
+/// YouTube (lue par le lecteur officiel, visible).
 #[derive(Serialize, Debug, PartialEq)]
 pub struct TrackDto {
     pub id: String,
     pub title: String,
     pub duration_ms: u64,
+    /// `file` ou `youtube`.
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub video_id: Option<String>,
 }
 
 impl From<&MusicTrack> for TrackDto {
     fn from(t: &MusicTrack) -> Self {
-        Self { id: t.id.to_hex(), title: t.title.clone(), duration_ms: t.duration_ms }
+        let (kind, video_id) = match &t.origin {
+            TrackOrigin::File => ("file", None),
+            TrackOrigin::Youtube { video_id } => ("youtube", Some(video_id.clone())),
+        };
+        Self { id: t.id.to_hex(), title: t.title.clone(), duration_ms: t.duration_ms, kind, video_id }
     }
 }
 
@@ -155,8 +127,10 @@ fn served_mime(mime: &str) -> Option<&'static str> {
 /// global), `sandbox` (même ouvert directement, rien ne s'exécute), sans nom de fichier.
 async fn track_file(Authed(s): Authed, Path(id): Path<String>) -> ApiResult<Response> {
     let track = music::get_track(s.universe()?, parse_id(&id)?).await?.ok_or_else(|| ApiError::not_found("activity__music_not_found"))?;
+    // Une vidéo YouTube n'a pas de fichier : elle se lit chez YouTube.
+    let file_id = track.file_id.ok_or_else(|| ApiError::not_found("activity__music_not_found"))?;
     let mime = served_mime(&track.mime).ok_or_else(ApiError::internal)?;
-    let bytes = music::read_track_file(track.file_id).await?;
+    let bytes = music::read_track_file(file_id).await?;
     let mut res = bytes.into_response();
     let h = res.headers_mut();
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
@@ -201,6 +175,8 @@ pub struct AdminTrackDto {
     pub origin: &'static str,
     pub places: Vec<String>,
     pub roads: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub video_id: Option<String>,
 }
 
 impl From<&MusicTrack> for AdminTrackDto {
@@ -216,6 +192,10 @@ impl From<&MusicTrack> for AdminTrackDto {
             },
             places: t.places.iter().map(u64::to_string).collect(),
             roads: t.roads.iter().map(u64::to_string).collect(),
+            video_id: match &t.origin {
+                TrackOrigin::File => None,
+                TrackOrigin::Youtube { video_id } => Some(video_id.clone()),
+            },
         }
     }
 }
@@ -243,8 +223,6 @@ pub struct LibraryDto {
     pub max_file_bytes: usize,
     pub places: Vec<NamedDto>,
     pub roads: Vec<RoadNameDto>,
-    /// Import depuis YouTube activé sur ce bot (S5).
-    pub youtube_enabled: bool,
 }
 
 async fn library(State(state): State<AppState>, Authed(s): Authed) -> ApiResult<Json<LibraryDto>> {
@@ -268,7 +246,6 @@ async fn library(State(state): State<AppState>, Authed(s): Authed) -> ApiResult<
         max_file_bytes: MAX_FILE_BYTES,
         places: place_dtos,
         roads: road_dtos,
-        youtube_enabled: crate::music::ytdlp::enabled(),
     }))
 }
 
@@ -359,53 +336,26 @@ async fn remove(State(state): State<AppState>, Authed(s): Authed, Path(id): Path
 #[serde(deny_unknown_fields)]
 pub struct YoutubeRequest {
     url: String,
-    /// Titre choisi ; sinon celui de la vidéo.
-    #[serde(default)]
-    title: Option<String>,
+    title: String,
+    /// « J'ai les droits sur cette musique » : obligatoire.
     rights: bool,
 }
 
-/// Lance l'import du son d'une vidéo YouTube (décision M1, § 3.3) ; l'activité suit la tâche.
-async fn youtube_start(State(state): State<AppState>, Authed(s): Authed, Json(req): Json<YoutubeRequest>) -> ApiResult<(StatusCode, Json<serde_json::Value>)> {
+/// Ajoute une vidéo YouTube : seul son identifiant est gardé ; l'activité la lit avec le lecteur
+/// officiel de YouTube, visible. Rien n'est téléchargé par le bot.
+async fn youtube_add(State(state): State<AppState>, Authed(s): Authed, Json(req): Json<YoutubeRequest>) -> ApiResult<Json<AdminTrackDto>> {
     check_write(&state, &s)?;
     let universe_id = require_music_admin(&state, &s).await?;
-    if !crate::music::ytdlp::enabled() {
-        return Err(ApiError::forbidden("activity__music_youtube_disabled"));
-    }
     if !req.rights {
         return Err(ApiError::bad_request("activity__music_rights_required"));
     }
-    let video_id = crate::music::ytdlp::video_id(&req.url).ok_or_else(|| ApiError::bad_request("activity__music_youtube_bad_url"))?;
-    let chosen_title = req.title.as_deref().and_then(music::clean_title);
-    let slot = state.music_uploads.reserve(universe_id)?;
-    let job_id = ObjectId::new().to_hex();
-    state.music_uploads.job_put(&job_id, YoutubeJob { universe_id, created: std::time::Instant::now(), status: YoutubeStatus::Running });
-    let (uploads, hub, user_id, id) = (state.music_uploads.clone(), state.hub.clone(), s.user_id, job_id.clone());
-    tokio::spawn(async move {
-        let _slot = slot;
-        let status = match crate::music::ytdlp::fetch(&video_id).await {
-            Err(e) => YoutubeStatus::Failed { error: e.key().to_string() },
-            Ok(fetched) => {
-                let title = chosen_title
-                    .or_else(|| fetched.title.as_deref().and_then(music::clean_title))
-                    .unwrap_or_else(|| format!("YouTube {video_id}"));
-                match store_checked(universe_id, title, TrackOrigin::Youtube { video_id }, fetched.bytes, user_id).await {
-                    Ok(track) => {
-                        hub.publish(Event { kind: EventKind::MusicUpdated, universe_id: Some(universe_id), users: vec![] });
-                        YoutubeStatus::Done { track: AdminTrackDto::from(&track) }
-                    }
-                    Err(e) => YoutubeStatus::Failed { error: e.key },
-                }
-            }
-        };
-        uploads.job_set(&id, status);
-    });
-    Ok((StatusCode::ACCEPTED, Json(serde_json::json!({ "job_id": job_id }))))
-}
-
-async fn youtube_job(State(state): State<AppState>, Authed(s): Authed, Path(id): Path<String>) -> ApiResult<Json<YoutubeStatus>> {
-    let universe_id = require_music_admin(&state, &s).await?;
-    state.music_uploads.job_get(&id, universe_id).map(Json).ok_or_else(|| ApiError::not_found("activity__music_not_found"))
+    let video_id = crate::music::youtube::video_id(&req.url).ok_or_else(|| ApiError::bad_request("activity__music_youtube_bad_url"))?;
+    let title = music::clean_title(&req.title).ok_or_else(|| ApiError::bad_request("activity__music_title_required"))?;
+    let track = music::insert_youtube_track(universe_id, title, video_id, s.user_id, true)
+        .await
+        .map_err(|e| crate::activity::http::service_error(&e))?;
+    publish(&state, universe_id);
+    Ok(Json(AdminTrackDto::from(&track)))
 }
 
 /// Routes de la musique. L'envoi d'un fichier a sa propre limite de taille.
@@ -415,8 +365,7 @@ pub fn routes() -> (Router<AppState>, Router<AppState>) {
         .route("/music/tracks/{id}", get(track_file))
         .route("/admin/music", get(library))
         .route("/admin/music/{id}", put(update).delete(remove))
-        .route("/admin/music/youtube", post(youtube_start))
-        .route("/admin/music/youtube/{job}", get(youtube_job));
+        .route("/admin/music/youtube", post(youtube_add));
     let upload = Router::new().route("/admin/music/upload", post(upload)).layer(DefaultBodyLimit::max(MAX_UPLOAD_BODY));
     (standard, upload)
 }
@@ -452,22 +401,6 @@ mod tests {
         assert!(uploads.reserve(b).is_ok(), "other universes are not blocked");
         drop(slot);
         assert!(uploads.reserve(a).is_ok(), "released at the end");
-    }
-
-    #[test]
-    fn youtube_jobs_are_only_visible_to_their_universe_and_expire() {
-        let uploads = MusicUploads::default();
-        let (u, other) = (ObjectId::new(), ObjectId::new());
-        uploads.job_put("j", YoutubeJob { universe_id: u, created: std::time::Instant::now(), status: YoutubeStatus::Running });
-        assert!(matches!(uploads.job_get("j", u), Some(YoutubeStatus::Running)));
-        assert!(uploads.job_get("j", other).is_none());
-        uploads.job_set("j", YoutubeStatus::Failed { error: "activity__music_youtube_unavailable".into() });
-        assert!(matches!(uploads.job_get("j", u), Some(YoutubeStatus::Failed { .. })));
-        let old = std::time::Instant::now().checked_sub(JOB_TTL + std::time::Duration::from_secs(1));
-        if let Some(created) = old {
-            uploads.job_put("old", YoutubeJob { universe_id: u, created, status: YoutubeStatus::Running });
-            assert!(uploads.job_get("old", u).is_none(), "expired");
-        }
     }
 
     #[test]
@@ -574,11 +507,11 @@ mod tests {
                 let (st, _, b) = call(&app, up(&admin, "Clip", true, fixture("video.mp4"))).await;
                 assert_eq!((st, json(&b)["error"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some("activity__music_not_audio")));
 
-                // Import YouTube : coupé par défaut (après une pause : limite d'écriture).
+                // Vidéo YouTube : un lien qui n'en est pas un est refusé (après une pause : limite d'écriture).
                 tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
-                let yt = Body::from(serde_json::json!({"url": "https://youtu.be/dQw4w9WgXcQ", "rights": true}).to_string());
-                let (st, _, b) = call(&app, req("POST", "/api/admin/music/youtube", &admin, yt, true)).await;
-                assert_eq!((st, json(&b)["error"].as_str()), (StatusCode::FORBIDDEN, Some("activity__music_youtube_disabled")));
+                let yt = |url: &str| Body::from(serde_json::json!({"url": url, "title": "Thème", "rights": true}).to_string());
+                let (st, _, b) = call(&app, req("POST", "/api/admin/music/youtube", &admin, yt("https://evil.example/watch?v=dQw4w9WgXcQ"), true)).await;
+                assert_eq!((st, json(&b)["error"].as_str()), (StatusCode::BAD_REQUEST, Some("activity__music_youtube_bad_url")));
 
                 // Envoi accepté (après une pause : 3 écritures d'affilée au plus, puis 1 par seconde).
                 let pause = || tokio::time::sleep(std::time::Duration::from_millis(1100));
@@ -599,12 +532,30 @@ mod tests {
                 let (st, _, b) = call(&app, req("PUT", &format!("/api/admin/music/{id}"), &admin, body(vec![tavern.to_string()]), true)).await;
                 assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
 
+                // Une vidéo YouTube, assignée aussi à la taverne : seul son identifiant est gardé.
+                pause().await;
+                let (st, _, b) = call(&app, req("POST", "/api/admin/music/youtube", &admin, yt("https://youtu.be/dQw4w9WgXcQ?si=x"), true)).await;
+                assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
+                let video = json(&b)["id"].as_str().unwrap().to_string();
+                assert_eq!(json(&b)["video_id"], "dQw4w9WgXcQ");
+                pause().await;
+                let assign = Body::from(serde_json::json!({"title": "Thème", "places": [tavern.to_string()], "roads": []}).to_string());
+                let (st, _, _) = call(&app, req("PUT", &format!("/api/admin/music/{video}"), &admin, assign, true)).await;
+                assert_eq!(st, StatusCode::OK);
+                let (st, _, _) = call(&app, req("GET", &format!("/api/music/tracks/{video}"), &player, Body::empty(), false)).await;
+                assert_eq!(st, StatusCode::NOT_FOUND, "a YouTube video has no file on our side");
+
                 // Le joueur, à la taverne, entend le morceau ; il peut le télécharger, pas un étranger.
                 let (st, _, b) = call(&app, req("GET", "/api/music/here", &player, Body::empty(), false)).await;
                 assert_eq!(st, StatusCode::OK);
                 let here = json(&b);
                 assert_eq!(here["spot"], serde_json::json!({"kind": "place", "id": tavern.to_string()}));
-                assert_eq!(here["tracks"][0]["id"], id.as_str());
+                let tracks = here["tracks"].as_array().unwrap();
+                let file = tracks.iter().find(|t| t["kind"] == "file").unwrap();
+                assert_eq!(file["id"], id.as_str());
+                assert!(file.get("video_id").is_none());
+                let yt_track = tracks.iter().find(|t| t["kind"] == "youtube").unwrap();
+                assert_eq!(yt_track["video_id"], "dQw4w9WgXcQ");
                 let (st, h, b) = call(&app, req("GET", &format!("/api/music/tracks/{id}"), &player, Body::empty(), false)).await;
                 assert_eq!(st, StatusCode::OK);
                 assert_eq!(b, fixture("tone.ogg"));
@@ -622,6 +573,11 @@ mod tests {
                 assert_eq!(lib["places"].as_array().unwrap().len(), 2);
                 pause().await;
                 let (st, _, _) = call(&app, req("DELETE", &format!("/api/admin/music/{id}"), &admin, Body::empty(), false)).await;
+                assert_eq!(st, StatusCode::NO_CONTENT);
+                let (_, _, b) = call(&app, req("GET", "/api/music/here", &player, Body::empty(), false)).await;
+                assert_eq!(json(&b)["tracks"].as_array().unwrap().len(), 1, "only the video is left");
+                pause().await;
+                let (st, _, _) = call(&app, req("DELETE", &format!("/api/admin/music/{video}"), &admin, Body::empty(), false)).await;
                 assert_eq!(st, StatusCode::NO_CONTENT);
                 let (_, _, b) = call(&app, req("GET", "/api/music/here", &player, Body::empty(), false)).await;
                 assert_eq!(json(&b)["tracks"], serde_json::json!([]));

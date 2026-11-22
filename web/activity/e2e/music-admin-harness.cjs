@@ -11,8 +11,6 @@ const places = [{ id: '1', name: 'Kérival' }, { id: '2', name: 'Lorroc' }, { id
 const roads = [{ id: '9', name: '', from: 'Kérival', to: 'Lorroc' }];
 const tracks = [];
 const files = {};
-let ytEnabled = false;
-let jobPolls = 0;
 const ytRequests = [];
 
 (async () => {
@@ -28,7 +26,7 @@ const ytRequests = [];
     const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
     if (p.startsWith('/api/i18n/')) return route.fulfill({ status: 200, contentType: 'text/plain', body: fs.readFileSync(path.join(ftlDir, 'fr.ftl'), 'utf8') });
     if (p === '/api/admin/music') {
-      return json({ tracks, used_bytes: tracks.reduce((n, t) => n + t.bytes, 0), max_bytes: 500 * 1024 * 1024, max_tracks: 300, max_file_bytes: 25 * 1024 * 1024, places, roads, youtube_enabled: ytEnabled });
+      return json({ tracks, used_bytes: tracks.reduce((n, t) => n + t.bytes, 0), max_bytes: 500 * 1024 * 1024, max_tracks: 300, max_file_bytes: 25 * 1024 * 1024, places, roads });
     }
     if (p === '/api/admin/music/upload') {
       const body = r.postDataBuffer();
@@ -40,15 +38,11 @@ const ytRequests = [];
       return json(t);
     }
     if (p === '/api/admin/music/youtube') {
-      ytRequests.push(JSON.parse(r.postData()));
-      return json({ job_id: 'j1' }, 202);
-    }
-    if (p === '/api/admin/music/youtube/j1') {
-      jobPolls += 1;
-      if (jobPolls < 2) return json({ status: 'running' });
-      const t = { id: '0000000000000000000000yt', title: 'Chanson de la taverne', duration_ms: 2000, bytes: 10717, origin: 'youtube', places: [], roads: [] };
-      if (!tracks.some((x) => x.id === t.id)) tracks.push(t);
-      return json({ status: 'done', track: t });
+      const body = JSON.parse(r.postData());
+      ytRequests.push(body);
+      const t = { id: '0000000000000000000000yt', title: body.title, duration_ms: 0, bytes: 0, origin: 'youtube', places: [], roads: [], video_id: 'dQw4w9WgXcQ' };
+      tracks.push(t);
+      return json(t);
     }
     const m = p.match(/^\/api\/admin\/music\/(\w+)$/);
     if (m && r.method() === 'PUT') {
@@ -71,9 +65,10 @@ const ytRequests = [];
   console.log('Ajouter désactivé sans fichier :', await add.isDisabled());
   await page.setInputFiles('input[type=file]', path.join(audioDir, 'tone.mp3'));
   console.log('titre proposé :', await page.getByLabel('Titre').first().inputValue());
-  await page.getByLabel('Titre').first().fill('Taverne du port');
+  const upload = page.locator('.music-upload').first();
+  await upload.getByLabel('Titre').fill('Taverne du port');
   console.log('Ajouter désactivé sans droits :', await add.isDisabled(), '/', await add.getAttribute('title'));
-  await page.getByLabel(/J'ai les droits/).check();
+  await upload.getByLabel(/J'ai les droits/).check();
   await page.screenshot({ path: path.join(shots, 'music-admin-1-envoi.png') });
   await add.click();
   await page.locator('.music-track').waitFor();
@@ -103,19 +98,18 @@ const ytRequests = [];
   await page.getByRole('button', { name: 'Confirmer la suppression' }).click();
   await page.getByText('Aucun morceau pour l\'instant.').waitFor();
   console.log('supprimé, morceaux restants :', tracks.length);
-  // YouTube (activé sur le bot).
-  ytEnabled = true;
-  await page.reload();
-  await page.getByText('Depuis YouTube').waitFor();
-  const fetchBtn = page.getByRole('button', { name: 'Récupérer le son' });
-  await page.getByLabel('Lien de la vidéo YouTube').fill('https://youtu.be/dQw4w9WgXcQ');
-  console.log('Récupérer désactivé sans droits :', await fetchBtn.isDisabled());
-  await page.locator('.music-upload').nth(1).getByLabel(/J'ai les droits/).check();
-  await fetchBtn.click();
-  await page.getByRole('button', { name: /Récupération en cours/ }).waitFor();
+  // Vidéo YouTube : seul l'identifiant est envoyé (lecteur officiel visible, rien de téléchargé).
+  await page.getByText('Ajouter une vidéo YouTube').waitFor();
+  const addVideo = page.getByRole('button', { name: 'Ajouter la vidéo' });
+  const yt = page.locator('.music-upload').nth(1);
+  await yt.getByLabel('Lien de la vidéo YouTube').fill('https://youtu.be/dQw4w9WgXcQ');
+  console.log('Ajouter la vidéo désactivé sans titre :', await addVideo.isDisabled());
+  await yt.getByLabel('Titre').fill('Thème du port');
+  await yt.getByLabel(/J'ai les droits/).check();
   await page.screenshot({ path: path.join(shots, 'music-admin-3-youtube.png') });
+  await addVideo.click();
   await page.locator('.music-track').waitFor({ timeout: 10000 });
-  console.log('demande YouTube :', JSON.stringify(ytRequests), '→ bibliothèque :', await page.locator('.music-track .muted').first().textContent());
+  console.log('demande YouTube :', JSON.stringify(ytRequests), '→ bibliothèque :', await page.locator('.music-track .muted').first().textContent(), '; bouton Écouter :', await page.locator('.music-track').getByRole('button', { name: 'Écouter' }).count());
   console.log('erreurs :', errors);
   await browser.close();
 })();

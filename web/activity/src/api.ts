@@ -284,7 +284,7 @@ export const importApi = {
 
 export interface MusicHere {
   spot: { kind: 'place' | 'road'; id: string } | null;
-  tracks: { id: string; title: string; duration_ms: number }[];
+  tracks: { id: string; title: string; duration_ms: number; kind: 'file' | 'youtube'; video_id?: string }[];
 }
 
 export interface AdminTrack {
@@ -295,6 +295,7 @@ export interface AdminTrack {
   origin: 'file' | 'youtube';
   places: string[];
   roads: string[];
+  video_id?: string;
 }
 
 export interface MusicLibrary {
@@ -305,18 +306,12 @@ export interface MusicLibrary {
   max_file_bytes: number;
   places: { id: string; name: string }[];
   roads: { id: string; name: string; from: string; to: string }[];
-  youtube_enabled: boolean;
 }
 
-export type YoutubeJob =
-  | { status: 'running' }
-  | { status: 'done'; track: AdminTrack }
-  | { status: 'failed'; error: string };
-
 export const musicApi = {
+  /** Vidéo YouTube : seul son identifiant est gardé (lecteur officiel, visible). */
   youtube: (url: string, title: string, rights: boolean) =>
-    api<{ job_id: string }>('/admin/music/youtube', { method: 'POST', body: JSON.stringify({ url, title: title.trim() || undefined, rights }) }),
-  youtubeJob: (id: string) => api<YoutubeJob>(`/admin/music/youtube/${encodeURIComponent(id)}`),
+    api<AdminTrack>('/admin/music/youtube', { method: 'POST', body: JSON.stringify({ url, title: title.trim(), rights }) }),
   here: () => api<MusicHere>('/music/here'),
   /** Fichier d'un morceau, téléchargé avec le jeton, en URL `blob:` locale. */
   trackUrl: (id: string) => apiBlobUrl(`/music/tracks/${encodeURIComponent(id)}`),

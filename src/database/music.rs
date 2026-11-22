@@ -1,7 +1,9 @@
 //! Bibliothèque musicale d'un univers (`docs/activity/MUSIC_SPEC.md` § 2).
 //!
-//! Un morceau est un fichier audio contrôlé (`music::audio::check_audio`), stocké dans GridFS
-//! (bucket `music_files`), et assigné à des lieux (`category_id`) et/ou des routes (`channel_id`).
+//! Un morceau est soit un fichier audio contrôlé (`music::audio::check_audio`), stocké dans GridFS
+//! (bucket `music_files`), soit une vidéo YouTube (identifiant seul, lue par le lecteur officiel de
+//! YouTube dans l'activité : rien n'est téléchargé). Il est assigné à des lieux (`category_id`)
+//! et/ou des routes (`channel_id`).
 
 use futures::io::{AsyncReadExt, AsyncWriteExt};
 use futures::TryStreamExt;
@@ -38,8 +40,11 @@ pub struct MusicTrack {
     pub universe_id: ObjectId,
     pub title: String,
     pub origin: TrackOrigin,
-    pub file_id: ObjectId,
-    /// Type servi, issu du contrôle du fichier.
+    /// Fichier dans GridFS ; `None` pour une vidéo YouTube.
+    #[serde(default)]
+    pub file_id: Option<ObjectId>,
+    /// Type servi, issu du contrôle du fichier (vide pour une vidéo YouTube).
+    #[serde(default)]
     pub mime: String,
     pub duration_ms: u64,
     pub bytes: u64,
@@ -114,7 +119,7 @@ pub async fn insert_track(new: NewTrack<'_>) -> Result<MusicTrack, crate::discor
         universe_id: new.universe_id,
         title: new.title,
         origin: new.origin,
-        file_id,
+        file_id: Some(file_id),
         mime: new.info.container.mime().to_string(),
         duration_ms: new.info.duration_ms,
         bytes: new.bytes.len() as u64,
@@ -128,6 +133,32 @@ pub async fn insert_track(new: NewTrack<'_>) -> Result<MusicTrack, crate::discor
         let _ = bucket(&db).delete(Bson::ObjectId(file_id)).await;
         return Err(e.into());
     }
+    Ok(track)
+}
+
+/// Ajoute une vidéo YouTube (identifiant déjà vérifié) : rien n'est téléchargé ni stocké, hormis
+/// l'identifiant. Compte dans le nombre de morceaux, pas dans la place occupée.
+pub async fn insert_youtube_track(universe_id: ObjectId, title: String, video_id: String, created_by: u64, rights_confirmed: bool) -> Result<MusicTrack, crate::discord::poise_structs::Error> {
+    let (_, count) = usage(universe_id).await?;
+    if count >= MAX_TRACKS_PER_UNIVERSE {
+        return Err("activity__music_quota".into());
+    }
+    let track = MusicTrack {
+        id: ObjectId::new(),
+        universe_id,
+        title,
+        origin: TrackOrigin::Youtube { video_id },
+        file_id: None,
+        mime: String::new(),
+        duration_ms: 0,
+        bytes: 0,
+        places: vec![],
+        roads: vec![],
+        created_by,
+        created_at: DateTime::now(),
+        rights_confirmed,
+    };
+    collection(&db().await).insert_one(&track).await?;
     Ok(track)
 }
 
@@ -158,8 +189,10 @@ pub async fn delete_track(universe_id: ObjectId, id: ObjectId) -> mongodb::error
     let Some(track) = collection(&db).find_one_and_delete(doc! {"_id": id, "universe_id": universe_id}).await? else {
         return Ok(false);
     };
-    if let Err(e) = bucket(&db).delete(Bson::ObjectId(track.file_id)).await {
-        tracing::warn!(error = %e, "music: fichier non supprimé");
+    if let Some(file_id) = track.file_id {
+        if let Err(e) = bucket(&db).delete(Bson::ObjectId(file_id)).await {
+            tracing::warn!(error = %e, "music: fichier non supprimé");
+        }
     }
     Ok(true)
 }
@@ -186,8 +219,8 @@ pub async fn playlist(universe_id: ObjectId, spot: Spot) -> mongodb::error::Resu
 pub async fn delete_universe_music(universe_id: ObjectId) -> mongodb::error::Result<()> {
     let db = db().await;
     let tracks: Vec<MusicTrack> = collection(&db).find(doc! {"universe_id": universe_id}).await?.try_collect().await?;
-    for t in &tracks {
-        let _ = bucket(&db).delete(Bson::ObjectId(t.file_id)).await;
+    for file_id in tracks.iter().filter_map(|t| t.file_id) {
+        let _ = bucket(&db).delete(Bson::ObjectId(file_id)).await;
     }
     collection(&db).delete_many(doc! {"universe_id": universe_id}).await?;
     Ok(())
@@ -234,7 +267,7 @@ mod tests {
             let a = insert_track(new("Taverne")).await.unwrap();
             let b = insert_track(new("Forêt")).await.unwrap();
             assert_eq!(usage(universe_id).await.unwrap(), (2 * bytes.len() as u64, 2));
-            assert_eq!(read_track_file(a.file_id).await.unwrap(), bytes);
+            assert_eq!(read_track_file(a.file_id.unwrap()).await.unwrap(), bytes);
 
             assert!(update_track(universe_id, a.id, "Taverne", &[10, 11], &[]).await.unwrap());
             assert!(update_track(universe_id, b.id, "Forêt", &[11], &[500]).await.unwrap());
@@ -246,9 +279,15 @@ mod tests {
             assert_eq!(ids(list_tracks(universe_id).await.unwrap()), vec!["Forêt", "Taverne"]);
 
             assert!(delete_track(universe_id, a.id).await.unwrap());
-            assert!(read_track_file(a.file_id).await.is_err(), "the file is deleted too");
+            assert!(read_track_file(a.file_id.unwrap()).await.is_err(), "the file is deleted too");
             assert!(delete_track(universe_id, b.id).await.unwrap());
             assert_eq!(usage(universe_id).await.unwrap(), (0, 0));
+
+            // Vidéo YouTube : comptée, sans fichier ni place occupée.
+            let v = insert_youtube_track(universe_id, "Thème".into(), "dQw4w9WgXcQ".into(), 42, true).await.unwrap();
+            assert_eq!(usage(universe_id).await.unwrap(), (0, 1));
+            assert_eq!(get_track(universe_id, v.id).await.unwrap().unwrap().origin, TrackOrigin::Youtube { video_id: "dQw4w9WgXcQ".into() });
+            assert!(delete_track(universe_id, v.id).await.unwrap());
         });
     }
 }

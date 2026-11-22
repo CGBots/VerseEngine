@@ -8,7 +8,8 @@ Branche `feature/music` (créée depuis `feature/map-import`, accord du 22/11/20
 
 | # | Sujet | Décision |
 |---|---|---|
-| M1 | Liens YouTube | Le son est **récupéré avec yt-dlp** et devient un fichier audio comme un autre (choix de l'utilisateur). Garde-fous ajoutés (§ 3.3) : désactivé par défaut (variable d'environnement), case « j'ai les droits sur cette musique », mêmes contrôles qu'un fichier envoyé. |
+| M1 | Liens YouTube | ~~Son récupéré avec yt-dlp~~ (22/11/2026, remplacé par M5). |
+| M5 | Liens YouTube (révision du 22/11/2026) | **Rien n'est téléchargé** : la vidéo est lue par le **lecteur officiel de YouTube**, visible (200 × 200, exigence de YouTube). Chaque joueur peut cocher « Masquer » : seuls les fichiers audio envoyés par les admins sont alors joués (pas de pause). yt-dlp et Deno sont retirés. Raison : avec yt-dlp, le serveur copie la musique et contourne une protection de YouTube (risque juridique pour l'exploitant) ; avec le lecteur officiel, le son va directement de YouTube au joueur. |
 | M2 | En voyage | **Playlist des routes** : un morceau s'assigne à des lieux et/ou à des routes ; sur une route, on entend celle de la route. |
 | M3 | Ordre | **Aléatoire, en boucle** : ordre mélangé, aucun morceau répété avant que tous soient passés. |
 | M4 | Branche | `feature/music`, PR séparée. |
@@ -34,12 +35,11 @@ Risques signalés à l'utilisateur pour M1 (22/11/2026) : conditions d'utilisati
 - `GET /api/music/{id}` : session valide **dans l'univers du morceau**. En-têtes : type audio imposé, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`, `Content-Disposition: inline` sans nom de fichier.
 - Le jeton ne peut pas passer dans un `<audio src>` : le client télécharge le morceau avec son en-tête `Authorization` et le joue depuis une URL `blob:` locale (comme l'image de fond de carte).
 
-### 3.3 yt-dlp (M1)
-- Coupé par défaut : `MUSIC_YTDLP_ENABLED=true` pour l'activer ; binaire **en version figée** (somme de contrôle vérifiée dans l'image Docker).
-- Seul un identifiant de vidéo YouTube est accepté (11 caractères `[A-Za-z0-9_-]`, extrait d'une URL youtube.com / youtu.be / music.youtube.com) ; l'URL passée à yt-dlp est reconstruite par nous.
-- Lancé **sans shell**, avec des arguments fixes : pas de liste de lecture, pas de direct, durée max 15 min, taille max 25 Mio, meilleur flux audio seul (pas de ffmpeg), sortie dans un dossier temporaire à nous, délai max 3 min, une seule extraction à la fois par univers.
-- Le fichier obtenu passe par les contrôles du § 3.1.
-- L'admin coche « j'ai les droits sur cette musique » (enregistré avec le morceau).
+### 3.3 Vidéos YouTube (M5)
+- Seul l'**identifiant de la vidéo** est gardé (11 caractères `[A-Za-z0-9_-]`, extrait d'une URL youtube.com / youtu.be / music.youtube.com ; tout le reste est refusé). Rien n'est téléchargé, copié ni stocké par le bot. Titre saisi par l'admin, case « j'ai les droits » obligatoire.
+- Lecture dans l'activité par le lecteur officiel (`youtube-nocookie.com/embed`, `enablejsapi`), **visible, 200 × 200**, jamais recouvert ; piloté par messages (volume, fondus, fin de vidéo), sans charger de script de YouTube dans la page de l'activité.
+- Dans Discord, le lecteur passe par le proxy de l'activité (URL mapping `/youtube` → `www.youtube-nocookie.com`, `DEPLOY.md`) : il aurait alors la même origine que l'activité. Il est donc enfermé dans un cadre `sandbox` **sans** `allow-same-origin` (aucun accès au jeton). En accès direct (développement), il garde l'origine de YouTube. CSP de l'activité : `frame-src 'self' https://www.youtube-nocookie.com`.
+- « Masquer la vidéo » (par joueur, gardé dans le navigateur) : les vidéos sortent de la file, sans pause ; si l'endroit n'a que des vidéos, silence. Un lecteur qui ne se charge pas (15 s) est traité de même ; une vidéo en erreur (retirée, intégration interdite) est sautée.
 
 ## 4. Lecture dans l'activité
 - La playlist suit la position du joueur (lieu, ou route en voyage) ; changement en fondu (2 s).
@@ -55,7 +55,7 @@ Risques signalés à l'utilisateur pour M1 (22/11/2026) : conditions d'utilisati
 | S2 | API : envoi, liste, titre et assignations, suppression, diffusion, playlist de la position. |
 | S3 | Lecteur dans l'activité : suit la position, aléatoire en boucle, fondu, volume. |
 | S4 | Page admin « Musique » : bouton du panneau admin, bibliothèque, envoi, assignation aux lieux et routes, écoute. |
-| S5 | yt-dlp : extraction encadrée (§ 3.3), image Docker. |
+| S5 | ~~yt-dlp~~ → lecteur officiel de YouTube, visible, avec « Masquer » (§ 3.3, M5). |
 
 ## 6. S1 livrée : stockage et contrôle des fichiers (22/11/2026)
 
@@ -93,10 +93,10 @@ Risques signalés à l'utilisateur pour M1 (22/11/2026) : conditions d'utilisati
 - Bibliothèque : place occupée, titre modifiable, durée et taille, écoute, assignation aux **lieux et routes** (recherche sans accents ni casse, 150 résultats affichés au plus pour les grandes cartes), enregistrement seulement s'il y a un changement, suppression en deux temps (pas de boîte de dialogue du navigateur, souvent bloquée dans Discord).
 - Vérifié dans Chromium (`music-harness.html?view=admin`, `web/activity/e2e/music-admin-harness.cjs`) : envoi, recherche « kerival » qui trouve « Kérival » et la route « Kérival → Lorroc », enregistrement, écoute, suppression ; aucune erreur.
 
-## 10. S5 livrée : yt-dlp (22/11/2026)
+## 10. S5 révisée : lecteur officiel de YouTube (22/11/2026)
 
-- `src/music/ytdlp.rs` : identifiant de vidéo extrait des seules URL YouTube (youtube.com, m., music., youtu.be ; `watch`, `shorts`, `embed`), tout le reste refusé (listes de lecture, autres sites, URL trafiquées, options déguisées). Arguments fixes : pas de configuration, d'extensions, de composants distants, de liste de lecture, de commande après téléchargement ni de cache ; `--` avant l'URL reconstruite ; meilleur flux audio seul (M4A ou WebM/Opus, sans ffmpeg) ; 25 Mio, 15 min, pas de direct. Environnement **vidé** (ni jeton du bot ni accès à la base), dossier temporaire privé supprimé quoi qu'il arrive, délai de 3 min (processus tué), 2 extractions à la fois sur tout le bot, une par univers.
-- API : `POST /api/admin/music/youtube` (`{url, title?, rights}`) lance une tâche ; `GET /api/admin/music/youtube/{job}` la suit (gardée 15 min, visible du seul univers). Le son passe par `check_audio` comme un fichier envoyé. Coupé tant que `MUSIC_YTDLP_ENABLED` n'est pas `true` (403).
-- Image Docker : yt-dlp 2026.10.26, yt-dlp-ejs 0.8.0 et Deno 2.9.8 (moteur JavaScript recommandé par yt-dlp pour YouTube), installés par `pip --require-hashes` depuis `docker/yt-dlp-requirements.txt` ; `MUSIC_YTDLP_PATH` et `MUSIC_YTDLP_DENO` fixés. Le proxy HTTP de l'environnement n'est pas transmis à yt-dlp (environnement vidé).
-- Tests : analyse des URL, arguments, faux yt-dlp (réussite, échec, rien produit, trop lent, absent ; il échoue s'il voit `DISCORD_TOKEN`) ; le vrai yt-dlp, installé depuis la liste figée, accepte tous les arguments et ne bute que sur le réseau de la session (YouTube bloqué) ; page admin : formulaire, case des droits, suivi de la tâche (Chromium).
-- **À vérifier en vrai** (impossible ici) : un import YouTube réussi depuis le serveur de production ; YouTube peut bloquer les adresses de serveurs.
+- Première version (yt-dlp, son téléchargé par le bot) **retirée** à la demande de l'utilisateur, après la question des droits d'auteur : `src/music/ytdlp.rs`, `docker/yt-dlp-requirements.txt`, Python, yt-dlp et Deno dans l'image, `MUSIC_YTDLP_*`.
+- Serveur : `POST /api/admin/music/youtube` (`{url, title, rights}`) garde l'identifiant (`src/music/youtube.rs`) ; un morceau YouTube n'a pas de fichier (`file_id` absent, `/api/music/tracks/{id}` → 404) ; il compte dans le nombre de morceaux, pas dans la place occupée. La playlist envoyée au joueur précise `kind` (`file` ou `youtube`) et `video_id`.
+- Client : `music/youtubeEmbed.ts` (adresse, `sandbox`, protocole de messages), `YouTubeFrame` (lecteur visible), moteur (`player.ts`) qui alterne fichiers et vidéos, respecte « Masquer » et se replie sur les fichiers si le lecteur ne se charge pas ; commande et lecteur empilés en haut à droite de la carte (rien ne recouvre le lecteur). Page admin : formulaire « Ajouter une vidéo YouTube ».
+- Tests : moteur (vidéo affichée et volume transmis, « Masquer » sans pause, silence s'il n'y a que des vidéos, repli) ; protocole (adresse, `sandbox` sans `allow-same-origin` par le proxy, évènements) ; intégration MongoDB (ajout, lien refusé, pas de fichier, playlist mixte) ; Chromium avec la CSP réelle et un faux lecteur au même protocole : 200 × 200, commandes reçues, « Masquer », fichier qui prend le relais.
+- **À vérifier dans le vrai client Discord** (impossible ici, YouTube injoignable) : que le lecteur officiel se charge par le proxy de Discord dans un cadre isolé. Sinon, l'activité joue les seuls fichiers audio, automatiquement.

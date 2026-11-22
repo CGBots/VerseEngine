@@ -102,7 +102,7 @@ Conventions :
 | GET | `/api/admin/music` | — | bibliothèque musicale (admin revérifié auprès de Discord) |
 | POST | `/api/admin/music/upload` | — | envoi d'un fichier audio, 25 Mio, contrôlé par décodage |
 | PUT/DELETE | `/api/admin/music/{id}` | — | titre et assignations / suppression |
-| POST/GET | `/api/admin/music/youtube[/{job}]` | — | son d'une vidéo YouTube (yt-dlp, coupé par défaut) |
+| POST | `/api/admin/music/youtube` | — | ajout d'une vidéo YouTube (identifiant seul, lue par le lecteur officiel) |
 | POST | `/api/admin/import/plan` | d | aperçu de l'import |
 | POST | `/api/admin/import/execute` | d | création, après saisie du nom de l'univers |
 | GET | `/api/admin/import/jobs/{id}` | d | progression d'un import |

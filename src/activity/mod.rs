@@ -35,7 +35,7 @@ use config::{ActivityConfig, ConfigError};
 
 /// CSP des fichiers statiques : tout passe par le proxy Discord (même origine).
 const STATIC_CSP: &str = "default-src 'self'; img-src 'self' data: blob: https://cdn.discordapp.com https://media.discordapp.net; \
-connect-src 'self'; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; frame-ancestors https://discord.com https://*.discord.com https://*.discordsays.com";
+connect-src 'self'; media-src 'self' blob:; frame-src 'self' https://www.youtube-nocookie.com; style-src 'self' 'unsafe-inline'; frame-ancestors https://discord.com https://*.discord.com https://*.discordsays.com";
 
 /// CSP d'Azgaar (`/azgaar/`, étape E9). `sandbox` : le navigateur donne à la page une **origine
 /// opaque**, même ouverte directement ou dans un cadre sans attribut `sandbox`. Elle ne peut donc
@@ -140,6 +140,7 @@ mod tests {
             let csp = h.get(header::CONTENT_SECURITY_POLICY).unwrap().to_str().unwrap();
             assert!(!csp.contains("sandbox"), "the activity itself is not sandboxed");
             assert!(csp.contains("media-src 'self' blob:"), "music is played from blob: URLs");
+            assert!(csp.contains("frame-src 'self' https://www.youtube-nocookie.com;"), "only YouTube's official player may be framed");
             assert!(h.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
             // Une route inconnue du front renvoie la page de l'activité, pas Azgaar.
             let (_, h) = get(&app, "/somewhere").await;

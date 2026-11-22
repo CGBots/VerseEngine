@@ -1,9 +1,0 @@
-# yt-dlp et ce qu'il recommande pour YouTube (MUSIC_SPEC.md § 3.3), versions figées et vérifiées
-# par empreinte (pip --require-hashes). Changer une version demande de relire src/music/ytdlp.rs.
-yt-dlp==2026.10.26 \
-    --hash=sha256:a05c5b5d8562f7e8a62f5334348b406af4930d56d3a65f8021d14af0e22339ae
-yt-dlp-ejs==0.8.0 \
-    --hash=sha256:79300e5fca7f937a1eeede11f0456862c1b41107ce1d726871e0207424f4bdb4
-deno==2.9.8 \
-    --hash=sha256:b1d1318e7deda8efd593aefa8b565a827fe71cf83aeff09d3a5ceb047444ca18 \
-    --hash=sha256:3e286918a36f436134336c5c6ef37dfe3a27f16ea22cd6af452ab7daa4ef1da4

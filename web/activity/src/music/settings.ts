@@ -3,17 +3,19 @@ export interface MusicSettings {
   /** 0 à 1. */
   volume: number;
   muted: boolean;
+  /** Lecteur YouTube masqué : seuls les fichiers audio sont joués. */
+  videoHidden: boolean;
 }
 
 const KEY = 'verseengine.music';
-export const DEFAULT_SETTINGS: MusicSettings = { volume: 0.5, muted: false };
+export const DEFAULT_SETTINGS: MusicSettings = { volume: 0.5, muted: false, videoHidden: false };
 
 /** Lecture tolérante : valeur absente, illisible ou hors bornes → réglage par défaut. */
 export function parseSettings(raw: string | null): MusicSettings {
   try {
     const v = JSON.parse(raw ?? '') as Partial<MusicSettings>;
     const volume = typeof v.volume === 'number' && Number.isFinite(v.volume) ? Math.min(1, Math.max(0, v.volume)) : DEFAULT_SETTINGS.volume;
-    return { volume, muted: v.muted === true };
+    return { volume, muted: v.muted === true, videoHidden: v.videoHidden === true };
   } catch {
     return { ...DEFAULT_SETTINGS };
   }

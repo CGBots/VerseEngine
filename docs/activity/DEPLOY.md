@@ -32,12 +32,13 @@ Utilisez l'application **du bot** (D2) : https://discord.com/developers/applicat
 | **OAuth2** → *Redirects* | Ajouter `https://127.0.0.1`, puis enregistrer. | La doc l'exige, mais l'Embedded App SDK gère la redirection lui-même : cette valeur n'est jamais utilisée. |
 | **Installation** → *Installation Contexts* | Garder **Guild Install** coché. | L'activité ne fonctionne que dans un serveur relié à un univers. Le serveur refuse les autres emplacements (`activity__guild_only`). |
 | **Activities** → *Settings* | Cocher **Enable Activities**. | Discord crée alors la commande Entry Point « Launch ». Le bot la conserve quand il réenregistre ses commandes (`src/discord/commands_registration.rs`). |
-| **Activities** → *URL Mappings* | Une seule ligne : **PREFIX** `/`, **TARGET** `activity.example.com`. | Voir ci-dessous. |
+| **Activities** → *URL Mappings* | **PREFIX** `/`, **TARGET** `activity.example.com` ; et, pour les vidéos YouTube de la musique, **PREFIX** `/youtube`, **TARGET** `www.youtube-nocookie.com`. | Voir ci-dessous. |
 
 Règles de l'URL mapping (documentation Discord) :
 - La cible s'écrit **sans protocole** : `activity.example.com`, pas `https://activity.example.com`. Le mapping sert à tous les protocoles, `https` comme `wss`.
 - La cible doit désigner un répertoire, jamais un fichier comme `…/index.html`.
-- Un seul mapping `/` suffit : le front, l'API `/api/*` et la WebSocket `/api/ws` passent tous par lui.
+- Le mapping `/` sert le front, l'API `/api/*` et la WebSocket `/api/ws`.
+- Le mapping `/youtube` sert le lecteur officiel de YouTube (musique, `MUSIC_SPEC.md` § 3.3), appelé par `/.proxy/youtube/embed/…`. Sans lui, les vidéos YouTube ne se chargent pas et l'activité joue les seuls fichiers audio.
 - Aucun mapping n'est nécessaire pour les images. `https://cdn.discordapp.com/attachments/`, `/avatars/` et `/icons/` sont des exceptions documentées de la CSP des activités. L'API ne renvoie que des URL de pièces jointes de ce CDN (`src/activity/images.rs`).
 
 Le scope OAuth2 demandé par le front est `identify` uniquement. La guilde et les droits sont vérifiés par le bot (§ 6 d'`ARCHITECTURE.md`).
