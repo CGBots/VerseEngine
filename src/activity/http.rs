@@ -62,6 +62,8 @@ pub struct AppState {
     pub import_jobs: Arc<crate::activity::import_exec::ImportJobs>,
     /// Lien d'invitation du bot (ajout d'un serveur à l'import). `None` en test.
     pub bot_invite_url: Option<String>,
+    /// Envois de musique en cours (un par univers).
+    pub music_uploads: Arc<crate::activity::music_api::MusicUploads>,
 }
 
 impl AppState {
@@ -80,6 +82,7 @@ impl AppState {
             import_drafts: Arc::default(),
             import_jobs: Arc::default(),
             bot_invite_url: None,
+            music_uploads: Arc::default(),
         }
     }
 
@@ -120,7 +123,15 @@ pub fn router(state: AppState) -> Router {
 
     // Limite de 64 Kio partout, sauf l'envoi d'une carte Azgaar (32 Mio, route dédiée).
     let (admin, upload) = crate::activity::admin_import::routes();
-    let api = api.merge(admin).merge(crate::activity::import_exec::routes()).layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES)).merge(upload.layer(RequestBodyLimitLayer::new(crate::activity::admin_import::MAX_MAP_BYTES)));
+    // Musique : envoi d'un fichier audio (25 Mio, route dédiée).
+    let (music, music_upload) = crate::activity::music_api::routes();
+    let api = api
+        .merge(admin)
+        .merge(crate::activity::import_exec::routes())
+        .merge(music)
+        .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
+        .merge(upload.layer(RequestBodyLimitLayer::new(crate::activity::admin_import::MAX_MAP_BYTES)))
+        .merge(music_upload.layer(RequestBodyLimitLayer::new(crate::activity::music_api::MAX_UPLOAD_BODY)));
     Router::new()
         .nest("/api", api)
         .layer(SetResponseHeaderLayer::if_not_present(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")))

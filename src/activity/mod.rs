@@ -21,6 +21,7 @@ pub mod permissions;
 pub mod ratelimit;
 pub mod session;
 pub mod map_view;
+pub mod music_api;
 pub mod travel_view;
 
 use std::sync::Arc;

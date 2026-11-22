@@ -284,6 +284,13 @@ pub async fn apply_in_session(
             .session(&mut *session)
             .await?;
     }
+    // Musique : les lieux et routes supprimés sortent des playlists (même transaction).
+    if !place_ids.is_empty() || !road_ids.is_empty() {
+        db.collection::<mongodb::bson::Document>(crate::database::db_namespace::MUSIC_TRACKS_COLLECTION_NAME)
+            .update_many(doc! {"universe_id": universe_id}, doc! {"$pull": {"places": {"$in": as_str(&place_ids)}, "roads": {"$in": as_str(&road_ids)}}})
+            .session(&mut *session)
+            .await?;
+    }
     if !channels_of_places.is_empty() {
         db.collection::<mongodb::bson::Document>(AREAS_COLLECTION_NAME)
             .delete_many(doc! {"universe_id": universe_id, "channel_id": {"$in": as_str(channels_of_places)}})

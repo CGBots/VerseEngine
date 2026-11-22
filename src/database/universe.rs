@@ -465,6 +465,10 @@ impl Universe {
             || roads_res.is_err() || characters_res.is_err() || travels_res.is_err() {
             return Err("universe_delete__failed".into());
         }
+        // Musique de l'univers : morceaux et fichiers.
+        if let Err(e) = crate::database::music::delete_universe_music(self.universe_id).await {
+            tracing::warn!(error = %e, "universe: musique non supprimée");
+        }
 
         Ok("universe_delete__passed")
     }

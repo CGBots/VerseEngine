@@ -37,6 +37,8 @@ pub enum EventKind {
     /// Le bot a rejoint ou quitté un serveur : la liste des serveurs de l'import est à relire
     /// (administrateurs seulement).
     ServersUpdated,
+    /// Bibliothèque musicale de l'univers modifiée : les playlists sont à relire.
+    MusicUpdated,
     /// Des évènements ont pu être perdus : tout relire.
     Resync,
 }
@@ -60,7 +62,7 @@ impl Event {
             }
         }
         match self.kind {
-            EventKind::MapUpdated | EventKind::Resync => true,
+            EventKind::MapUpdated | EventKind::MusicUpdated | EventKind::Resync => true,
             EventKind::ServersUpdated => session.access == AccessLevel::Admin,
             EventKind::CharacterUpdated => self.users.contains(&session.user_id),
             EventKind::TravelUpdated => self.users.contains(&session.user_id) || session.access >= AccessLevel::Moderator,

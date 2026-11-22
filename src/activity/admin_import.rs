@@ -112,7 +112,7 @@ impl ImportDrafts {
 // ---------------------------------------------------------------------------
 
 /// Niveau d'accès de `user_id` sur `guild_id`, lu par le bot. `None` : pas membre.
-async fn access_on(discord: &dyn DiscordGateway, guild_id: u64, user_id: u64, server: Option<&Server>) -> ApiResult<Option<AccessLevel>> {
+pub(crate) async fn access_on(discord: &dyn DiscordGateway, guild_id: u64, user_id: u64, server: Option<&Server>) -> ApiResult<Option<AccessLevel>> {
     let member = discord.member(guild_id, user_id).await.map_err(|_| ApiError::upstream())?;
     Ok(member.map(|m| {
         compute_access(&AccessInput {

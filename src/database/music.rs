@@ -182,13 +182,14 @@ pub async fn playlist(universe_id: ObjectId, spot: Spot) -> mongodb::error::Resu
     Ok(tracks)
 }
 
-/// Un lieu ou une route disparaît : il est retiré des assignations.
-pub async fn forget_spot(universe_id: ObjectId, spot: Spot) -> mongodb::error::Result<()> {
-    let update = match spot {
-        Spot::Place(p) => doc! {"$pull": {"places": p.to_string()}},
-        Spot::Road(r) => doc! {"$pull": {"roads": r.to_string()}},
-    };
-    collection(&db().await).update_many(doc! {"universe_id": universe_id}, update).await?;
+/// L'univers est supprimé : tous ses morceaux et leurs fichiers.
+pub async fn delete_universe_music(universe_id: ObjectId) -> mongodb::error::Result<()> {
+    let db = db().await;
+    let tracks: Vec<MusicTrack> = collection(&db).find(doc! {"universe_id": universe_id}).await?.try_collect().await?;
+    for t in &tracks {
+        let _ = bucket(&db).delete(Bson::ObjectId(t.file_id)).await;
+    }
+    collection(&db).delete_many(doc! {"universe_id": universe_id}).await?;
     Ok(())
 }
 
@@ -220,7 +221,7 @@ mod tests {
         );
     }
 
-    /// Bout en bout contre MongoDB : envoi, quota, assignation, playlist, oubli d'un lieu, suppression.
+    /// Bout en bout contre MongoDB : envoi, quota, assignation, playlist, suppression.
     #[test]
     #[ignore = "integration test: needs MongoDB"]
     fn a_track_lives_and_dies_in_mongodb() {
@@ -243,9 +244,6 @@ mod tests {
             assert_eq!(ids(playlist(universe_id, Spot::Place(10)).await.unwrap()), vec!["Taverne"]);
             assert_eq!(ids(playlist(universe_id, Spot::Road(500)).await.unwrap()), vec!["Forêt"]);
             assert_eq!(ids(list_tracks(universe_id).await.unwrap()), vec!["Forêt", "Taverne"]);
-
-            forget_spot(universe_id, Spot::Place(11)).await.unwrap();
-            assert_eq!(ids(playlist(universe_id, Spot::Place(11)).await.unwrap()), Vec::<String>::new());
 
             assert!(delete_track(universe_id, a.id).await.unwrap());
             assert!(read_track_file(a.file_id).await.is_err(), "the file is deleted too");

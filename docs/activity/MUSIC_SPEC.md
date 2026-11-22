@@ -20,7 +20,7 @@ Risques signalés à l'utilisateur pour M1 (22/11/2026) : conditions d'utilisati
 - `music_tracks` : `{ _id, universe_id, title, origin: { kind: "file" } | { kind: "youtube", video_id }, file_id (GridFS), mime, codec, duration_ms, bytes, places: [category_id], roads: [channel_id], created_by, created_at }`.
 - Fichiers dans GridFS, bucket `music_files` (un morceau peut dépasser 16 Mo).
 - Playlist d'un lieu = morceaux dont `places` contient le lieu ; d'une route = morceaux dont `roads` contient la route. Un morceau sans lieu ni route reste dans la bibliothèque de l'univers.
-- Suppression d'un lieu ou d'une route (commandes, import E6) : retiré des assignations.
+- Suppression d'un lieu ou d'une route (import E6) : retiré des assignations dans la même transaction. Suppression d'un univers : ses morceaux et leurs fichiers.
 
 ## 3. Sécurité
 
@@ -31,7 +31,7 @@ Risques signalés à l'utilisateur pour M1 (22/11/2026) : conditions d'utilisati
 - Limitation de débit sur l'envoi.
 
 ### 3.2 Diffusion
-- `GET /api/music/{id}` : session valide **dans l'univers du morceau**. En-têtes : type audio imposé, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`, `Content-Disposition: inline` sans nom de fichier. Requêtes partielles (`Range`) pour l'avance rapide.
+- `GET /api/music/{id}` : session valide **dans l'univers du morceau**. En-têtes : type audio imposé, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`, `Content-Disposition: inline` sans nom de fichier.
 - Le jeton ne peut pas passer dans un `<audio src>` : le client télécharge le morceau avec son en-tête `Authorization` et le joue depuis une URL `blob:` locale (comme l'image de fond de carte).
 
 ### 3.3 yt-dlp (M1)
@@ -52,7 +52,7 @@ Risques signalés à l'utilisateur pour M1 (22/11/2026) : conditions d'utilisati
 | Étape | Contenu |
 |---|---|
 | S1 | Stockage et contrôle des fichiers : modèle, GridFS, validation (signature + décodage), quota. |
-| S2 | API : envoi, liste, titre et assignations, suppression, diffusion avec `Range`, playlist de la position. |
+| S2 | API : envoi, liste, titre et assignations, suppression, diffusion, playlist de la position. |
 | S3 | Lecteur dans l'activité : suit la position, aléatoire en boucle, fondu, volume. |
 | S4 | Page admin « Musique » : bouton du panneau admin, bibliothèque, envoi, assignation aux lieux et routes, écoute. |
 | S5 | yt-dlp : extraction encadrée (§ 3.3), image Docker. |
@@ -62,3 +62,18 @@ Risques signalés à l'utilisateur pour M1 (22/11/2026) : conditions d'utilisati
 - `src/music/audio.rs` : signature (MP3, OGG, FLAC, WAV, MP4/M4A, WebM) puis décodage complet par Symphonia 0.6 (+ `symphonia-opus`) ; refus d'un fichier avec une piste vidéo ou de sous-titres ; plus de 1 % de paquets illisibles = refus ; durée calculée sur les échantillons décodés (15 min max), taille 25 Mio max avant tout décodage.
 - Fichiers de test (`tests/fixtures/audio/`, 2 s de son, générés par ffmpeg) : les 7 formats acceptés sont lus et chronométrés (± 100 ms) ; refusés : une page HTML nommée `.mp3`, un OGG corrompu, un FLAC réduit à son en-tête, une vidéo MP4, un faux OGG (signature seule).
 - `src/database/music.rs` : collection `music_tracks`, bucket GridFS `music_files`, quota (500 Mio et 300 morceaux par univers), titres nettoyés (100 caractères), playlist d'un lieu ou d'une route, oubli d'un lieu ou d'une route, suppression du morceau et de son fichier. Test de bout en bout contre MongoDB (`a_track_lives_and_dies_in_mongodb`).
+
+## 7. S2 livrée : API (22/11/2026)
+
+| Route | Qui | Rôle |
+|---|---|---|
+| `GET /api/music/here` | joueur | Endroit du joueur (lieu, ou route en voyage) et sa playlist. |
+| `GET /api/music/tracks/{id}` | session de l'univers | Fichier : type contrôlé, `nosniff`, `sandbox`, sans nom de fichier ; un autre univers reçoit 404. |
+| `GET /api/admin/music` | admin | Bibliothèque, place occupée et limites, lieux et routes de l'univers, import YouTube activé ou non. |
+| `POST /api/admin/music/upload?title=…&rights=true` | admin | Envoi (corps brut, 25 Mio) ; contrôle hors de l'exécuteur async ; un envoi à la fois par univers. |
+| `PUT /api/admin/music/{id}` | admin | Titre, lieux, routes (tous vérifiés dans l'univers). |
+| `DELETE /api/admin/music/{id}` | admin | Morceau et fichier. |
+
+- Admin **revérifié auprès de Discord** à chaque requête (une session qui se dit admin ne suffit pas) ; écritures limitées (3 d'affilée, puis 1 par seconde).
+- Évènement temps réel `music_updated` (tout l'univers) après chaque changement : les lecteurs relisent leur playlist.
+- Test de bout en bout contre MongoDB avec un faux Discord (`admins_build_the_library_and_players_hear_their_place`) : session falsifiée refusée (403), droits non cochés (400), page HTML et vidéo refusées (422), lieu d'un autre univers refusé, joueur qui entend la playlist de son lieu et reçoit le fichier avec les bons en-têtes, étranger refusé, suppression.
