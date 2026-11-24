@@ -8,8 +8,8 @@ Dernière mise à jour : 19/11/2026 (session « import de carte », branche `fea
 |---|---|---|
 | `chore/hardening` | [#11](https://github.com/CGBots/VerseEngine/pull/11) | **Prête à fusionner.** CI verte (tests, intégration MongoDB, image Docker). Validée contre l'API REST Discord. |
 | `feature/map-import` | [#13](https://github.com/CGBots/VerseEngine/pull/13) | **Fusionnée** dans `feature/discord-activity` le 24/11/2026. Import et génération de carte : E1 à E9. |
-| `feature/music` | [#14](https://github.com/CGBots/VerseEngine/pull/14) | **Fusionnée** dans `feature/discord-activity` le 24/11/2026 (la PR, qui visait `feature/map-import`, reste ouverte sur GitHub). Musique ; affichage adapté à l'écran. |
-| `feature/discord-activity` | [#12](https://github.com/CGBots/VerseEngine/pull/12) (brouillon, vers `main`) | Contient #11, #13 et #14. Reste un essai réel dans Discord, qui demande l'hébergement. |
+| `feature/music` | [#14](https://github.com/CGBots/VerseEngine/pull/14) | **Fusionnée** dans `feature/discord-activity` le 24/11/2026 (PR fermée : elle visait `feature/map-import`). Musique ; affichage adapté à l'écran. |
+| `feature/discord-activity` | [#12](https://github.com/CGBots/VerseEngine/pull/12) (brouillon, vers `main`) | Contient #11, #13 et #14. **Seule branche de travail** désormais (décision du 24/11/2026). Reste un essai réel dans Discord, qui demande l'hébergement. |
 
 - `cargo test --locked` sur `feature/discord-activity` : 194 réussis, 18 ignorés (intégration).
 - `cargo test --locked -- --ignored --skip test_discord_bot_connection` : 17 réussis contre MongoDB 8.0 (replica set) et l'API REST Discord.
