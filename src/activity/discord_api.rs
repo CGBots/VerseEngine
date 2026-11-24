@@ -71,6 +71,20 @@ pub struct TokenGrant {
     pub scope: String,
 }
 
+/// Serveur où le bot est présent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GuildSummary {
+    pub id: u64,
+    pub name: String,
+}
+
+/// Nombre de salons et de rôles d'un serveur (budget de l'import, limites de Discord).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GuildCounts {
+    pub channels: u32,
+    pub roles: u32,
+}
+
 /// Abstraction pour pouvoir tester les routes sans appeler Discord.
 pub trait DiscordGateway: Send + Sync {
     fn exchange_code<'a>(&'a self, code: &'a str) -> BoxFuture<'a, Result<TokenGrant, DiscordError>>;
@@ -78,6 +92,10 @@ pub trait DiscordGateway: Send + Sync {
     fn activity_instance<'a>(&'a self, instance_id: &'a str) -> BoxFuture<'a, Result<ActivityInstance, DiscordError>>;
     /// `Ok(None)` si l'utilisateur n'est pas membre de la guilde.
     fn member<'a>(&'a self, guild_id: u64, user_id: u64) -> BoxFuture<'a, Result<Option<MemberInfo>, DiscordError>>;
+    /// Serveurs du bot (au plus `limit`).
+    fn bot_guilds<'a>(&'a self, limit: usize) -> BoxFuture<'a, Result<Vec<GuildSummary>, DiscordError>>;
+    /// Salons et rôles actuels d'un serveur.
+    fn guild_counts<'a>(&'a self, guild_id: u64) -> BoxFuture<'a, Result<GuildCounts, DiscordError>>;
 }
 
 pub struct LiveDiscord {
@@ -191,6 +209,36 @@ impl DiscordGateway for LiveDiscord {
                 guild_owner_id: guild.owner_id.get(),
                 guild_roles: guild.roles.values().map(|r| (r.id.get(), r.permissions.bits())).collect(),
             }))
+        })
+    }
+
+    fn bot_guilds<'a>(&'a self, limit: usize) -> BoxFuture<'a, Result<Vec<GuildSummary>, DiscordError>> {
+        Box::pin(async move {
+            let mut out = vec![];
+            let mut after = None;
+            while out.len() < limit {
+                let page = self
+                    .bot_http
+                    .get_guilds(after.map(serenity::all::GuildPagination::After), Some(200))
+                    .await
+                    .map_err(upstream)?;
+                let last = page.last().map(|g| g.id);
+                out.extend(page.into_iter().map(|g| GuildSummary { id: g.id.get(), name: g.name }));
+                match last {
+                    Some(id) if out.len() % 200 == 0 => after = Some(id),
+                    _ => break,
+                }
+            }
+            out.truncate(limit);
+            Ok(out)
+        })
+    }
+
+    fn guild_counts<'a>(&'a self, guild_id: u64) -> BoxFuture<'a, Result<GuildCounts, DiscordError>> {
+        Box::pin(async move {
+            let channels = self.bot_http.get_channels(GuildId::new(guild_id)).await.map_err(upstream)?.len() as u32;
+            let roles = self.bot_http.get_guild_roles(GuildId::new(guild_id)).await.map_err(upstream)?.len() as u32;
+            Ok(GuildCounts { channels, roles })
         })
     }
 }

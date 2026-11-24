@@ -247,5 +247,15 @@ pub(crate) mod tests {
             f.map.name.as_deref().unwrap_or("?"), f.version, f.map.width, f.map.height, f.map.burgs.len(), f.map.routes.len(),
             f.map.cells.len(), f.svg.as_ref().map_or(0, |s| s.len() / 1024), roads.len()
         );
+        // Densité du réseau complet : sert à dimensionner la répartition sur plusieurs serveurs.
+        let all: Vec<u64> = f.map.burgs.iter().map(|b| b.id).collect();
+        for sea in [false, true] {
+            let full = crate::activity::map::network::road_candidates(&f.map, &all, &Default::default(), sea, 6.0);
+            let linked: std::collections::HashSet<u64> = full.iter().flat_map(|r| [r.burg_a, r.burg_b]).collect();
+            eprintln!(
+                "réseau complet (maritime : {sea}) : {} routes, {} bourgs desservis, {:.2} routes par bourg desservi",
+                full.len(), linked.len(), 2.0 * full.len() as f64 / linked.len().max(1) as f64
+            );
+        }
     }
 }

@@ -61,10 +61,11 @@ jobs:
           done
           docker logs mongo
           exit 1
-      # Les tests qui parlent à Discord (`discord` dans leur nom) demandent un jeton : ils
-      # restent à lancer à la main (voir README).
+      # Les tests qui parlent à Discord (`discord` dans leur nom) demandent un jeton, et ceux
+      # qui lisent une vraie carte Azgaar (`a_real_`) demandent ses fichiers : ils restent à
+      # lancer à la main (voir docs/activity/PROGRESS.md).
       - name: Tests d'intégration (sans Discord)
-        run: cargo test --locked -- --ignored --skip discord
+        run: cargo test --locked -- --ignored --skip discord --skip a_real_
 
   activity-web:
     name: Front de l'activité

@@ -21,7 +21,7 @@ Hors périmètre : abonnements (seulement l'emplacement du bouton), PNJ IA, tout
 - **Ordonnanceurs en mémoire** : `travel::logic::{MOVES, SLEEPER}`, idem `craft::logic`, `loot::logic`, rechargés depuis Mongo dans `Handler::ready`. Toute action de voyage doit passer par `add_travel` / `stop_travel` / `remove_move` **dans le même processus**.
 - **La logique slash est mêlée au `poise::Context`** : `travel/start.rs::move_from_place/move_from_road` prennent un `&serenity::Context` mais n'utilisent que `ctx.http` ; `join.rs`/`leave.rs` construisent la logique directement dans la commande. → En phase b, ces fonctions seront extraites dans `travel/service.rs` (signature `Arc<Http>` + ids), appelées à la fois par les commandes slash et par l'API. **Aucune duplication.**
 - Les **routes référencent les lieux par `category_id` Discord** (`place_one_id`, `place_two_id` = `u64`), pas par `ObjectId`. Toute l'API carte utilise donc `category_id` comme identifiant de lieu (sérialisé en chaîne, cf. § 5).
-- `Place` : aucune coordonnée. `Road` : `distance` (km), `secret`.
+- `Place` : aucune coordonnée. `Road` : `distance` (km), `secret`. Depuis Q1 (`IMPORT_SPEC.md`), une route n'a plus de rôle : l'accès à son salon est une permission individuelle posée au départ et retirée à l'arrivée.
 - `Character` : ni description ni image. La description n'existe que dans l'embed de la fiche (champ n°0). Les fiches **en attente** ne sont **pas en base** : elles n'existent que comme messages Discord avec boutons (`create_character__accept_character`…). L'acceptation lit l'embed (titre = nom, footer = user id).
 - `ItemUsage::Wearable` existe, sans état « équipé ».
 - Logs : uniquement des messages dans `log_channel_id`.
@@ -95,7 +95,18 @@ Conventions :
 | POST | `/api/me/inventory/{inventory_id}/use` · `/consume` · `/equip` · `/unequip` | c | mêmes services que `/item use`, `/item consume` |
 | GET | `/api/ws` | a | WebSocket (cf. § 7) |
 | GET | `/api/i18n/{locale}` | a | fichier Fluent du bot (`fr`, `en-US`), public |
-| — | `/api/admin/*` | d | lieux, objets, fiches en attente, logs, positions des joueurs, import Azgaar |
+| GET | `/api/admin/import/servers` | d | serveurs utilisables pour l'import (voir `IMPORT_SPEC.md` § 13) |
+| POST | `/api/admin/import/map` | d | sauvegarde `.map` d'Azgaar, 32 Mio au plus |
+| GET | `/api/music/here` | — | playlist de l'endroit du joueur (lieu ou route) |
+| GET | `/api/music/tracks/{id}` | — | fichier d'un morceau de l'univers (type contrôlé, `sandbox`) |
+| GET | `/api/admin/music` | — | bibliothèque musicale (admin revérifié auprès de Discord) |
+| POST | `/api/admin/music/upload` | — | envoi d'un fichier audio, 25 Mio, contrôlé par décodage |
+| PUT/DELETE | `/api/admin/music/{id}` | — | titre et assignations / suppression |
+| POST | `/api/admin/music/youtube` | — | ajout d'une vidéo YouTube (identifiant seul, lue par le lecteur officiel) |
+| POST | `/api/admin/import/plan` | d | aperçu de l'import |
+| POST | `/api/admin/import/execute` | d | création, après saisie du nom de l'univers |
+| GET | `/api/admin/import/jobs/{id}` | d | progression d'un import |
+| — | `/api/admin/*` | d | lieux, objets, fiches en attente, logs, positions des joueurs |
 
 Validation des entrées : désérialisation stricte (`deny_unknown_fields`), ids parsés (`u64`/`ObjectId`) avant tout accès base, longueurs bornées (noms ≤ 100, descriptions ≤ 4000), corps limité à 64 Kio (import Azgaar : route admin dédiée à 32 Mio, traitée en flux).
 
@@ -139,7 +150,7 @@ Limitation de débit (en mémoire, seau à jetons, `src/activity/ratelimit.rs`) 
 - limite globale par IP : peu pertinente derrière le proxy Discord (qui masque l'IP) ; à faire au niveau de Caddy si besoin.
 Réponse `429` avec `Retry-After`.
 
-En-têtes : `Content-Security-Policy` stricte sur les fichiers statiques (`default-src 'self'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`. CORS : aucune origine externe (tout passe par le proxy Discord, même origine).
+En-têtes : `Content-Security-Policy` stricte sur les fichiers statiques (`default-src 'self'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`. Azgaar (`/azgaar/`, étape E9 de l'import) est servi avec `Content-Security-Policy: sandbox …` : origine opaque, aucun accès à l'activité ni à l'API (voir `IMPORT_SPEC.md` § 18). CORS : aucune origine externe (tout passe par le proxy Discord, même origine).
 
 ## 7. Temps réel
 

@@ -19,3 +19,4 @@ pub mod areas;
 pub mod known_roads;
 pub mod universe_maps;
 pub mod map_backgrounds;
+pub mod music;

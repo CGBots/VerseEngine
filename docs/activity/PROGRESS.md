@@ -1,12 +1,14 @@
 # Activité Discord — suivi entre les sessions
 
-Dernière mise à jour : 18/11/2026 (session « environnement de test Discord »). Ce fichier, `ARCHITECTURE.md` et `DEPLOY.md` (même dossier) sont la référence pour reprendre le travail.
+Dernière mise à jour : 19/11/2026 (session « import de carte », branche `feature/map-import`). Ce fichier, `ARCHITECTURE.md` et `DEPLOY.md` (même dossier) sont la référence pour reprendre le travail.
 
 ## État des branches
 
 | Branche | PR | État |
 |---|---|---|
 | `chore/hardening` | [#11](https://github.com/CGBots/VerseEngine/pull/11) | **Prête à fusionner.** CI verte (tests, intégration MongoDB, image Docker). Validée contre l'API REST Discord. |
+| `feature/map-import` | [#13](https://github.com/CGBots/VerseEngine/pull/13) (brouillon, vers `feature/discord-activity`) | Import et génération de carte : E1 à E9 livrées. |
+| `feature/music` | [#14](https://github.com/CGBots/VerseEngine/pull/14) (brouillon, vers `feature/map-import`) | Musique des lieux et des routes : S1 à S5 livrées (`MUSIC_SPEC.md`) ; YouTube par le lecteur officiel. |
 | `feature/discord-activity` | [#12](https://github.com/CGBots/VerseEngine/pull/12) (brouillon) | Contient #11 par fusion. Phase b terminée côté code ; reste un essai réel dans Discord, qui demande l'hébergement. |
 
 - `cargo test --locked` sur `feature/discord-activity` : 194 réussis, 18 ignorés (intégration).
@@ -17,7 +19,7 @@ Dernière mise à jour : 18/11/2026 (session « environnement de test Discord »
 ## Environnement de test (session cloud)
 
 - Le proxy injecte le jeton du bot de **test** sur toutes les requêtes `discord.com`, et remplace tout en-tête `Authorization` déjà présent, `Bot` comme `Bearer`. Conséquence : le flux OAuth utilisateur (`/users/@me` avec un jeton utilisateur) **ne peut pas** être testé ici, il renverrait le bot. La gateway n'est pas joignable non plus.
-- Serveur de test : « rpbot test » (`1080809463201677332`). Les tests REST créent puis suppriment leurs propres salons.
+- Serveurs de test : « rpbot test » (`1080809463201677332`) et « RpBotTest2 » (`1100433828931194931`, visible par l'utilisateur avec son compte principal ; utile pour les essais multi-serveurs). Les tests REST créent puis suppriment leurs propres salons. Le salon `test-1-test-2` de RpBotTest2 est antérieur à ces tests : ne pas le supprimer.
 - MongoDB local en replica set : binaires 8.0.4 (fastdl.mongodb.org) dans `/opt/mongodb`, `--replSet rs0 --auth --keyFile`. À réinstaller à chaque nouvelle session (le conteneur est éphémère).
 - Variables des tests d'intégration : `MONGODB_*`, `DISCORD_TOKEN=dummy` (le proxy remplace la valeur), `VERSEENGINE_TEST_GUILD_ID`. serenity n'accepte que les racines webpki : les tests ajoutent le CA de `SSL_CERT_FILE` (`test_support::discord_http`).
 - Les conteneurs Docker n'ont pas de DNS ici : l'image se construit en CI, pas en local.
@@ -52,12 +54,32 @@ PR #12 (`feature/discord-activity`) :
 - Le personnage **suit le tracé réel de la route** (polyligne Azgaar conservée par `road_candidates`, stockée dans `universe_maps.road_paths`, envoyée avec chaque route) ; sans tracé, ligne droite.
 - **À décider (visuels)** : la ligne 5 du `.map` contient le dessin SVG de la carte, mais Azgaar ne la lit plus et annonce sa suppression ; ses polices web ne se chargent pas sous la CSP Discord. Le fond PNG/JPEG/WebP déjà en place reste disponible.
 
-## Prochaine grande fonctionnalité : import et génération de carte
+## Import et génération de carte (branche `feature/map-import`, en cours)
+- Vérifications du § 6 faites, résultats dans `IMPORT_SPEC.md` § 7 : quota de 250 créations de rôles par serveur (≈ 6 h), 2 000 pour les salons, permission individuelle testée (204 ; non-membre 10009 ; retrait idempotent), algorithme de répartition retenu. Azgaar dans l'iframe : non vérifiable depuis le cloud, on livre d'abord le repli.
+- Découpage E1–E9 validé (`IMPORT_SPEC.md` § 8, décisions Q6–Q8 au § 9). **E1 livrée** (routes sans rôle, migration, `IMPORT_SPEC.md` § 10). **E2 livrée** (exécuteur de création avec journal et retour en arrière, services lieu, route, univers et installation de serveur, partagés avec les commandes slash, `IMPORT_SPEC.md` § 11). **E3 livrée** (plan d'import et répartition, `IMPORT_SPEC.md` § 12 ; Moria : 9 serveurs, 13,4 % de routes entre serveurs). **E4 livrée** (activité sans univers, droits recalculés, envoi du `.map`, aperçu, exécution en tâche de fond avec progression et retour en arrière, `IMPORT_SPEC.md` § 13). **E5 livrée** (écrans de l'import, vérifiés dans un navigateur avec Moria, `IMPORT_SPEC.md` § 14). **E6 livrée** (suppression des lieux existants : joueurs déplacés, objets rendus ou détruits, Discord nettoyé, `IMPORT_SPEC.md` § 15). **E7 livrée** (générateur déterministe, éditeur 2D avec vue 3D, `IMPORT_SPEC.md` § 16). **E8 livrée** (brouillard par univers, filtré côté serveur, brume animée en 3D et en 2D ; routes, points et noms des lieux envoyés au-dessus de la brume, cadrage et relief adaptés aux grandes cartes Azgaar, `IMPORT_SPEC.md` § 17). **E9 livrée** (Azgaar dans l'activité, isolé dans un bac à sable imposé par le serveur, `IMPORT_SPEC.md` § 18) ; reste l'essai dans le vrai client Discord. Limite de serveurs par univers supprimée (Q10), **à réintroduire plus tard comme fonctionnalité premium**.
+- Fichiers Moria redéposés : les deux tests réels passent. 60 lieux au plus par serveur (Q9).
+- `cargo test --locked` : 270 réussis ; intégration (`--ignored --skip test_discord_bot_connection --test-threads=1`, avec `AZGAAR_MAP_FILE` et `AZGAAR_FULL_JSON`) : 39 réussis, sur les deux serveurs de test. `--test-threads=1` : les tests d'installation utilisent le même serveur Discord ; `npm test` : 78 réussis.
+
+## Musique (branche `feature/music`, demande du 22/11/2026)
+- Cahier des charges : **`docs/activity/MUSIC_SPEC.md`** (décisions M1–M5 : playlists des routes, aléatoire en boucle, branche séparée ; YouTube par le lecteur officiel visible, avec « Masquer » — yt-dlp retiré le 22/11/2026 pour raisons juridiques).
+- S1 contrôle des fichiers (Symphonia) et stockage (GridFS) ; S2 API (admin revérifié auprès de Discord) ; S3 lecteur dans l'activité ; S4 page admin « Musique » ; S5 lecteur officiel de YouTube (200 × 200, isolé, « Masquer » → fichiers audio seulement).
+- Tests : `cargo test --locked` 281 ; intégration MongoDB `a_track_lives_and_dies_in_mongodb`, `admins_build_the_library_and_players_hear_their_place` ; `npm test` 108 ; scénarios Chromium `music-harness.cjs`, `music-admin-harness.cjs`.
+- À vérifier dans le vrai client Discord : lecture depuis `blob:` sous la CSP de Discord ; lecteur YouTube par le proxy (URL mapping `/youtube` à ajouter dans le portail).
+
+## Affichage adapté à l'écran (demande du 24/11/2026, branche `feature/music`)
+- Une seule interface sur tous les écrans, selon la place disponible (`web/activity/src/layout.ts`) : **large** (au moins 1000 × 520 px : ordinateur, Discord sur PC, Z Fold déplié en paysage, tablette en paysage) → fiche du personnage en colonne à gauche, repliable ; **compact** (téléphones, Z Fold plié ou déplié en portrait, écrans bas en paysage) → la même fiche en volet depuis la gauche (bouton fermer, Échap, fond). Le bouton avatar de la barre l'ouvre ou la ferme partout. L'ancienne fiche « qui descend du haut » est retirée.
+- Panneau de voyage repliable partout (résumé sur une ligne), replié au départ sur écran compact, pleine largeur sous 600 px, à droite sur toute la hauteur sur un écran bas.
+- Carte 3D : la vue de départ cadre les lieux selon le format de l'écran (plus de lieux coupés en portrait), vue plus plongeante sur un écran en hauteur, recadrage à la rotation ou au dépliage tant que le joueur n'a pas bougé la vue ; noms et épingle à taille fixe en pixels ; brouillard de profondeur qui suit la caméra.
+- Musique : la commande ne passe plus sur deux lignes ; à gauche sur un écran bas. Fenêtres admin en `dvh` (barres des navigateurs mobiles).
+- Vérifié dans Chromium (`app-harness.html`, l'activité entière avec une API simulée ; `web/activity/e2e/app-harness.cjs`) sur ordinateur, Discord PC, Z Fold 6 plié et déplié, en portrait et en paysage, iPhone et iPad : aucun débordement, volet et voyage ouverts et refermés.
+
+## Cahier des charges de l'import
 Cahier des charges complet et validé : **`docs/activity/IMPORT_SPEC.md`** (décisions I1–I17, Q1–Q5). À traiter dans une session dédiée. Points marquants : répartition de l'univers sur plusieurs serveurs (150 lieux au plus par serveur, création des serveurs par l'admin), plus de rôle par route (permissions individuelles), brouillard optionnel par univers, double vérification par le nom de l'univers, retour en arrière complet en cas d'erreur.
 
 ## Points ouverts
+- **Premium (plus tard, dépôt privé)** : réintroduire une limite de serveurs par univers (`MAX_SERVERS_PER_UNIVERSE`, `database/universe.rs`), supprimée le 19/11/2026 (Q10).
 - Déploiement : option 2 choisie (redirection d'un port vers le bot, HTTPS servi par le bot). À valider d'abord : Discord accepte-t-il un port dans le mapping (`activity.home.knifetail.eu:8484` s'enregistre ; le chargement réel n'est pas encore testé). Puis certificat par validation DNS (hébergeur DNS à connaître) et HTTPS dans le bot.
-- Mise en page téléphone : la fiche prend le haut de l'écran et le panneau de voyage couvre la carte. À revoir (onglets ou panneau à tirer, choix à faire).
+- ~~Mise en page téléphone~~ : faite le 24/11/2026 (voir « Affichage adapté à l'écran »).
 
 - **Hébergement** : on ne sait pas encore si l'infra a déjà un reverse proxy. `DEPLOY.md` décrit Caddy et les exigences pour un autre proxy.
 - Essai réel dans Discord (auth SDK, iframe, CSP, WebSocket via le proxy) : impossible depuis la session cloud.

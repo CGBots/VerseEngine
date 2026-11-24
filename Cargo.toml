@@ -37,6 +37,8 @@ sha2 = "0.10"
 # graphe de dépendances (versions identiques).
 flate2 = "1.1.11"
 base64 = "0.22.1"
+symphonia = { version = "0.6.1", features = ["mp3", "aac", "isomp4", "flac", "wav", "ogg", "vorbis", "mkv", "pcm"] }
+symphonia-opus = "0.1.3"
 
 [dev-dependencies]
 # Horloge virtuelle (`start_paused`) pour tester les minuteurs sans attendre.

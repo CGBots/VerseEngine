@@ -83,3 +83,45 @@ impl TempChannel {
         }
     }
 }
+
+/// Supprime d'un univers de test tout ce qu'il a sur Discord (lieux, routes, installation des
+/// serveurs) et en base.
+pub async fn delete_universe_everywhere(http: &Http, universe_id: mongodb::bson::oid::ObjectId) {
+    use crate::database::db_namespace::*;
+    use futures::TryStreamExt;
+    use mongodb::bson::doc;
+    use serenity::all::RoleId;
+    let places: Vec<crate::database::places::Place> = crate::database::places::get_places_by_universe_id(universe_id).await.unwrap().try_collect().await.unwrap();
+    let roads: Vec<crate::database::road::Road> = crate::database::road::get_roads_by_universe(universe_id).await.unwrap().try_collect().await.unwrap();
+    let servers: Vec<crate::database::server::Server> = crate::database::universe::get_servers_from_universe(&universe_id).await.unwrap().try_collect().await.unwrap();
+    for r in &roads {
+        let _ = ChannelId::new(r.channel_id).delete(http).await;
+    }
+    for p in &places {
+        if let Some(c) = p.central_channel_id {
+            let _ = ChannelId::new(c).delete(http).await;
+        }
+        let _ = ChannelId::new(p.category_id).delete(http).await;
+        let _ = http.delete_role(GuildId::new(p.server_id), RoleId::new(p.role), None).await;
+    }
+    for s in &servers {
+        // Salons avant catégories : l'ordre de `all_ids` met les catégories en premier, on inverse.
+        let ids: Vec<_> = s.all_ids().into_iter().cloned().collect();
+        for id in ids.iter().rev() {
+            match id.id_type {
+                crate::database::server::IdType::Role if id.id != s.server_id => {
+                    let _ = http.delete_role(GuildId::new(s.server_id), RoleId::new(id.id), None).await;
+                }
+                crate::database::server::IdType::Role => {}
+                _ => {
+                    let _ = ChannelId::new(id.id).delete(http).await;
+                }
+            }
+        }
+    }
+    let db = crate::database::db_client::get_db_client().await.database(VERSEENGINE_DB_NAME);
+    for name in [PLACES_COLLECTION_NAME, ROADS_COLLECTION_NAME, SERVERS_COLLECTION_NAME, STATS_COLLECTION_NAME, UNIVERSE_MAPS_COLLECTION_NAME, PROVISIONING_JOBS_COLLECTION_NAME] {
+        db.collection::<mongodb::bson::Document>(name).delete_many(doc! {"universe_id": universe_id}).await.unwrap();
+    }
+    db.collection::<mongodb::bson::Document>(UNIVERSES_COLLECTION_NAME).delete_one(doc! {"_id": universe_id}).await.unwrap();
+}

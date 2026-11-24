@@ -23,3 +23,12 @@ export const SunriseIcon = ({ size }: P) => (
 export const SunsetIcon = ({ size }: P) => (
   <svg {...base(size)}><path d="M17 18a5 5 0 0 0-10 0M12 9V2M4.2 10.2l1.4 1.4M1 18h2M21 18h2M18.4 11.6l1.4-1.4M23 22H1M16 5l-4 4-4-4" /></svg>
 );
+export const SpeakerIcon = ({ size }: P) => (
+  <svg {...base(size)}><path d="M11 5L6 9H2v6h4l5 4z" /><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14" /></svg>
+);
+export const MutedIcon = ({ size }: P) => (
+  <svg {...base(size)}><path d="M11 5L6 9H2v6h4l5 4z" /><path d="M23 9l-6 6M17 9l6 6" /></svg>
+);
+export const MusicIcon = ({ size }: P) => (
+  <svg {...base(size)}><path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" /></svg>
+);

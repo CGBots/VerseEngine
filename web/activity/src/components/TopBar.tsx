@@ -18,8 +18,6 @@ const PHASE_LABEL: Record<Phase, string> = {
   sunset: 'activity_ui__phase_sunset',
 };
 
-let pullStart: number | null = null;
-
 /** Heure de l'univers, recalculée chaque seconde à partir de l'heure du serveur. */
 function UniverseClock({ params, t }: { params: UniverseClockParams | null; t: Translator }) {
   const [now, setNow] = useState(() => clock.now());
@@ -39,8 +37,8 @@ function UniverseClock({ params, t }: { params: UniverseClockParams | null; t: T
 }
 
 interface Props {
-  /** Sur téléphone : bouton (photo du personnage) qui ouvre la fiche, et geste « tirer vers le bas ». */
-  characterButton?: { picture: string | null; open: boolean; onToggle: () => void; onPull: (startY: number, y: number) => void };
+  /** Bouton (photo du personnage) qui ouvre ou ferme la fiche, sur tous les écrans. */
+  characterButton?: { picture: string | null; open: boolean; onToggle: () => void };
   universeName: string;
   clockParams: UniverseClockParams | null;
   adminAvailable: boolean;
@@ -52,23 +50,13 @@ interface Props {
 
 export function TopBar({ characterButton, universeName, clockParams, adminAvailable, adminMode, onToggleAdmin, onOpenSettings, t }: Props) {
   return (
-    <header
-      className="toolbar"
-      onPointerDown={characterButton ? (e) => { pullStart = e.clientY; } : undefined}
-      onPointerMove={characterButton ? (e) => {
-        if (pullStart == null || !e.buttons) return;
-        // Geste amorcé vers le bas : on capture le pointeur (pas avant, pour garder les clics des boutons).
-        if (e.clientY - pullStart > 6 && !e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.setPointerCapture(e.pointerId);
-        characterButton.onPull(pullStart, e.clientY);
-      } : undefined}
-      onPointerUp={() => { pullStart = null; }}
-    >
+    <header className="toolbar">
       {characterButton && (
         <button
           type="button"
           className="character-button"
           aria-expanded={characterButton.open}
-          aria-controls="character-sheet"
+          aria-controls="character-panel"
           aria-label={t('activity_ui__character')}
           title={t('activity_ui__character')}
           onClick={characterButton.onToggle}
