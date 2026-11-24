@@ -1329,6 +1329,11 @@ activity_ui__azgaar_send = Envoyer cette carte à VerseEngine
 activity_ui__azgaar_loading = Chargement d'Azgaar…
 activity_ui__azgaar_sending = Envoi de la carte…
 activity_ui__working = Un instant…
+activity_ui__destination_count = { $count ->
+    [0] aucune destination
+    [one] 1 destination
+   *[other] { $count } destinations
+  }
 activity_ui__music = Musique
 activity_ui__music_enable = Activer la musique
 activity_ui__music_mute = Couper la musique

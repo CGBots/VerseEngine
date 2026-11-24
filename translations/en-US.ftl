@@ -1318,6 +1318,11 @@ activity_ui__azgaar_send = Send this map to VerseEngine
 activity_ui__azgaar_loading = Loading Azgaar…
 activity_ui__azgaar_sending = Sending the map…
 activity_ui__working = One moment…
+activity_ui__destination_count = { $count ->
+    [0] no destination
+    [one] 1 destination
+   *[other] { $count } destinations
+  }
 activity_ui__music = Music
 activity_ui__music_enable = Turn the music on
 activity_ui__music_mute = Mute the music

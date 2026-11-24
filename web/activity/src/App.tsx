@@ -8,10 +8,11 @@ import { TravelPanel } from './components/TravelPanel';
 import { TopBar } from './components/TopBar';
 import { SettingsPanel } from './components/SettingsPanel';
 import { MusicControl } from './components/MusicControl';
+import { CloseIcon } from './components/icons/Icons';
 import { roadPath, webglAvailable, type PlayerMotion } from './map/geometry';
 import { playerPictureUrl } from './map/player';
 import { connectRealtime } from './realtime';
-import { pullDecision, useIsPhone } from './sheet';
+import { useLayout } from './layout';
 
 type State =
   | { kind: 'loading' }
@@ -55,7 +56,8 @@ function usePlayerMotion(map: MapView | null, travel: TravelState | null): Playe
   }, [map, travel]);
 }
 
-export function App() {
+/** `connectFn` : connexion à Discord (remplacée par une page de développement pour l'essayer hors de Discord). */
+export function App({ connectFn = connect }: { connectFn?: typeof connect } = {}) {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [t, setT] = useState<Translator>(() => fallbackT);
   const [adminMode, setAdminMode] = useState(false);
@@ -63,8 +65,19 @@ export function App() {
   // Relecture de la playlist : déplacement, bibliothèque modifiée, reconnexion.
   const [musicVersion, setMusicVersion] = useState(0);
   const [musicAdminOpen, setMusicAdminOpen] = useState(false);
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const isPhone = useIsPhone();
+  const layout = useLayout();
+  // Fiche du personnage : colonne (écran large, ouverte par défaut) ou volet (écran compact, fermé
+  // par défaut). Le même bouton (avatar) l'ouvre ou la ferme partout.
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [columnOpen, setColumnOpen] = useState(true);
+  useEffect(() => setPanelOpen(false), [layout]);
+  // Échap ferme le volet, où que soit le focus.
+  useEffect(() => {
+    if (!panelOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setPanelOpen(false);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [panelOpen]);
   const [character, setCharacter] = useState<CharacterView | null>(null);
   const [characterError, setCharacterError] = useState<string | null>(null);
   const [map, setMap] = useState<MapView | null>(null);
@@ -109,7 +122,7 @@ export function App() {
   const start = useCallback(async () => {
     setState({ kind: 'loading' });
     try {
-      const { session, locale } = await connect();
+      const { session, locale } = await connectFn();
       setT(await loadTranslator(pickLocale(locale)).then((tr) => () => tr));
       setState({ kind: 'ready', session });
       setFogEnabled(session.fog_enabled);
@@ -118,7 +131,7 @@ export function App() {
     } catch (e) {
       setState({ kind: 'error', key: e instanceof ApiError ? e.key : 'activity__unauthorized' });
     }
-  }, [reloadAll]);
+  }, [reloadAll, connectFn]);
 
   useEffect(() => {
     void start();
@@ -209,45 +222,27 @@ export function App() {
   ) : (
     <aside className="side-panel"><p>{t(characterError ?? 'activity__no_character')}</p></aside>
   );
-  const pull = (startY: number, y: number) => {
-    const d = pullDecision(startY, y, sheetOpen);
-    if (d) setSheetOpen(d === 'open');
-  };
+  const open = layout === 'wide' ? columnOpen : panelOpen;
+  const togglePanel = () => (layout === 'wide' ? setColumnOpen((o) => !o) : setPanelOpen((o) => !o));
   return (
-    <div className={`layout${isPhone ? ' phone' : ''}`}>
-      {isPhone ? (
+    <div className={`layout ${layout}${layout === 'wide' && !columnOpen ? ' column-closed' : ''}`}>
+      {layout === 'wide' ? (
+        columnOpen && <div id="character-panel" className="side-column">{panel}</div>
+      ) : (
         <>
-          {/* Téléphone : la fiche se déroule depuis le haut de l'écran. */}
-          {sheetOpen && <div className="sheet-backdrop" onClick={() => setSheetOpen(false)} />}
-          <div
-            id="character-sheet"
-            className={`sheet${sheetOpen ? ' open' : ''}`}
-            aria-hidden={!sheetOpen}
-            onKeyDown={(e) => e.key === 'Escape' && setSheetOpen(false)}
-          >
-            {panel}
-            <button
-              type="button"
-              className="sheet-handle"
-              aria-label={t('activity_ui__close')}
-              onClick={() => setSheetOpen(false)}
-              onPointerDown={(e) => {
-                // Capture : le doigt quitte vite la poignée mais le geste doit continuer.
-                e.currentTarget.setPointerCapture(e.pointerId);
-                e.currentTarget.dataset.y = String(e.clientY);
-              }}
-              onPointerMove={(e) => { const y0 = Number(e.currentTarget.dataset.y); if (e.buttons && Number.isFinite(y0)) pull(y0, e.clientY); }}
-            >
-              <span aria-hidden />
+          {/* Écran compact : la même fiche, en volet par-dessus la carte. */}
+          {panelOpen && <div className="drawer-backdrop" onClick={() => setPanelOpen(false)} />}
+          <div id="character-panel" className={`drawer${panelOpen ? ' open' : ''}`} aria-hidden={!panelOpen}>
+            <button type="button" className="icon-button drawer-close" aria-label={t('activity_ui__close')} onClick={() => setPanelOpen(false)}>
+              <CloseIcon />
             </button>
+            {panel}
           </div>
         </>
-      ) : (
-        panel
       )}
       <main className="map-area">
         <TopBar
-          characterButton={isPhone ? { picture: mapProps.playerPicture ?? character?.image_url ?? null, open: sheetOpen, onToggle: () => setSheetOpen((o) => !o), onPull: pull } : undefined}
+          characterButton={{ picture: mapProps.playerPicture ?? character?.image_url ?? null, open, onToggle: togglePanel }}
           universeName={universe.name}
           clockParams={session.universe_clock}
           adminAvailable={session.admin_mode_available}
@@ -276,6 +271,7 @@ export function App() {
               busy={busy}
               message={message}
               speed={character?.speed ?? null}
+              compact={layout === 'compact'}
               t={t}
               onStart={(id) => void act(() => travelApi.start(id))}
               onStop={() => void act(travelApi.stop)}

@@ -60,11 +60,17 @@ button.small { min-height: 28px; padding: 2px 12px; }
 .icon-button.active { color: var(--yellow); background: rgb(240 178 50 / .14); }
 
 /* ---------- Mise en page ---------- */
-.layout { display: grid; grid-template-columns: minmax(260px, 320px) 1fr; height: 100%; }
+.layout { display: grid; grid-template-columns: 1fr; height: 100%; }
+/* Écran large : la fiche en colonne à gauche (repliable par le bouton avatar). */
+.layout.wide { grid-template-columns: 300px 1fr; }
+.layout.wide.column-closed { grid-template-columns: 1fr; }
+.side-column { display: flex; min-height: 0; min-width: 0; }
+.side-column .side-panel { flex: 1; min-width: 0; }
 .map-area { position: relative; display: flex; flex-direction: column; min-width: 0; background: var(--bg-primary); }
 
 /* ---------- Fiche du personnage : profil Discord ---------- */
-.side-panel { background: var(--bg-secondary); overflow-y: auto; display: flex; flex-direction: column; }
+.side-panel { background: var(--bg-secondary); overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; min-width: 0; }
+.profile-body > * { min-width: 0; }
 .profile { margin: 12px; border-radius: var(--radius); background: var(--bg-floating); overflow: hidden; flex: none; }
 .profile-banner { height: 60px; background: linear-gradient(135deg, #5865f2, #3c45a5); }
 .identity { position: relative; display: flex; align-items: flex-end; gap: 12px; padding: 0 16px; margin-top: -36px; }
@@ -83,7 +89,7 @@ section p { margin: 0; font-size: 14px; line-height: 18px; }
 /* Effets actifs : pastilles comme les rôles Discord. */
 .statuses { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 4px; }
 .statuses li {
-  display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 4px;
+  display: inline-flex; align-items: center; flex-wrap: wrap; max-width: 100%; gap: 6px; padding: 2px 8px; border-radius: 4px;
   background: var(--bg-secondary); font-size: 12px; line-height: 16px; font-weight: 500; color: var(--text-normal);
 }
 .statuses li::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--green); flex: none; }
@@ -112,7 +118,8 @@ section p { margin: 0; font-size: 14px; line-height: 18px; }
 }
 
 /* ---------- Fenêtre (paramètres) : modale Discord ---------- */
-.dialog-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / .7); display: grid; place-items: center; padding: 16px; z-index: 10; }
+.dialog-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / .7); display: grid; place-items: center; padding: 16px; z-index: 10; overflow-y: auto; }
+@media (max-width: 600px) { .dialog-backdrop { padding: 8px; } .dialog { padding: 12px; } }
 .dialog {
   width: min(440px, 100%); background: var(--bg-primary); border-radius: var(--radius); padding: 16px;
   display: grid; gap: 16px; box-shadow: 0 8px 16px rgb(0 0 0 / .24);
@@ -149,28 +156,47 @@ section p { margin: 0; font-size: 14px; line-height: 18px; }
 .travel-panel .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .travel-message { margin: 0; padding: 8px 10px; border-radius: 4px; background: var(--bg-tertiary); color: var(--text-normal); }
 
-/* ---------- Téléphone : fiche qui se déroule depuis le haut ---------- */
-.layout.phone { grid-template-columns: 1fr; }
+/* ---------- Écran compact : la même fiche, en volet depuis la gauche ---------- */
 .character-button {
   width: 32px; height: 32px; min-height: 0; padding: 0; border-radius: 50%; overflow: hidden; flex: none;
   background: var(--secondary); display: grid; place-items: center; box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--brand);
 }
+.character-button[aria-expanded="false"] { box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--secondary-hover); }
 .character-button img { width: 100%; height: 100%; object-fit: cover; }
-.toolbar { touch-action: pan-x; }
-.sheet {
-  position: fixed; top: 0; left: 0; right: 0; z-index: 20; max-height: 88vh; display: flex; flex-direction: column;
-  background: var(--bg-secondary); border-radius: 0 0 12px 12px; box-shadow: 0 8px 24px rgb(0 0 0 / .45);
-  transform: translateY(-105%); transition: transform .25s ease; visibility: hidden;
+.drawer {
+  position: fixed; top: 0; bottom: 0; left: 0; z-index: 20; width: min(340px, 88vw); display: flex;
+  background: var(--bg-secondary); box-shadow: 8px 0 24px rgb(0 0 0 / .45);
+  transform: translateX(-105%); transition: transform .25s ease; visibility: hidden;
 }
-.sheet.open { transform: none; visibility: visible; }
-.sheet .side-panel { overflow-y: auto; flex: 1; min-height: 0; }
-.sheet-handle { min-height: 0; height: 28px; padding: 0; border-radius: 0 0 12px 12px; background: transparent; display: grid; place-items: center; touch-action: none; }
-.sheet-handle:hover { background: var(--bg-hover); }
-.sheet-handle span { width: 40px; height: 5px; border-radius: 3px; background: var(--secondary-hover); }
-.sheet-backdrop { position: fixed; inset: 0; z-index: 19; background: rgb(0 0 0 / .5); }
-@media (max-width: 640px) {
+.drawer.open { transform: none; visibility: visible; }
+.drawer .side-panel { flex: 1; min-width: 0; padding-top: env(safe-area-inset-top); }
+.drawer-backdrop { position: fixed; inset: 0; z-index: 19; background: rgb(0 0 0 / .5); }
+.drawer-close { position: absolute; top: 8px; right: 8px; z-index: 1; background: rgb(17 18 20 / .6); color: var(--header-primary); }
+
+/* ---------- Panneau de voyage repliable (tous les écrans) ---------- */
+.panel-toggle {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 0; margin: 0;
+  background: transparent; color: inherit; text-align: left; font-weight: inherit;
+}
+.panel-toggle:hover { background: transparent; }
+.panel-toggle h2 { margin: 0; flex: none; }
+.panel-toggle .muted { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.panel-toggle .chevron { margin-left: auto; color: var(--header-secondary); }
+.travel-panel.collapsed { padding: 8px 12px; gap: 0; }
+/* Écran étroit : panneaux sur toute la largeur, en bas. */
+@media (max-width: 600px) {
   .travel-panel { left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 45%; }
+  .layout .admin-actions { left: 8px; top: 8px; bottom: auto; }
+  .map-view .music-dock { right: 8px; top: 8px; }
   .universe-clock { padding: 0 8px; }
+  .toolbar { padding: 0 4px 0 8px; gap: 6px; }
+}
+/* Écran bas (téléphone en paysage) : le voyage occupe la hauteur à droite. */
+@media (max-height: 520px) {
+  .travel-panel { top: 12px; bottom: 12px; max-height: none; height: fit-content; max-width: 320px; }
+  .travel-panel.collapsed { top: auto; }
+  /* La musique passe à gauche : la droite est au voyage. */
+  .map-view .music-dock { left: 12px; right: auto; align-items: flex-start; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
@@ -179,7 +205,7 @@ section p { margin: 0; font-size: 14px; line-height: 18px; }
 /* ---------- Import de carte (vue admin) ---------- */
 .import-page { height: 100%; overflow-y: auto; padding: 16px; display: grid; gap: 12px; align-content: start; }
 .import-open { position: absolute; left: 16px; bottom: 16px; z-index: 5; }
-.import-dialog { width: min(1100px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; }
+.import-dialog { width: min(1100px, 100%); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; }
 .import-wizard { display: grid; gap: 12px; }
 .import-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .import-header h2 { margin: 0; font-size: 20px; color: var(--header-primary); }
@@ -233,10 +259,11 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { flex-wra
 .import-preview text, .import-preview .map-label { user-select: none; -webkit-user-select: none; }
 
 /* Musique : petite commande en haut à droite de la carte (le bas droit est au voyage). */
-.music-control { display: flex; align-items: center; gap: 6px; max-width: min(360px, calc(100% - 24px)); padding: 4px 8px; border-radius: 999px; background: var(--bg-floating, rgba(17, 18, 20, 0.85)); color: var(--text-normal); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); }
+.music-control { display: flex; align-items: center; gap: 6px; max-width: 360px; padding: 4px 8px; border-radius: 999px; background: var(--bg-floating, rgba(17, 18, 20, 0.85)); color: var(--text-normal); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); }
 .music-title { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .music-control input[type=range] { width: 80px; flex: none; }
 .music-control .icon-button { flex: none; }
+.music-control button { white-space: nowrap; }
 .music-control { flex-wrap: wrap; border-radius: 16px; }
 .music-hide-video { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); }
 /* Lecteur YouTube : visible, 200 × 200 au moins (règles de YouTube), jamais recouvert. */
@@ -244,7 +271,7 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { flex-wra
 .music-video { flex: none; width: 200px; height: 200px; border: 0; border-radius: 8px; background: #000; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); }
 
 /* Page admin « Musique ». */
-.music-dialog { width: min(820px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; }
+.music-dialog { width: min(820px, 100%); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; }
 .music-admin { display: grid; gap: 12px; }
 .music-admin section { display: grid; gap: 8px; }
 .music-admin h3 { margin: 0; font-size: 16px; color: var(--header-primary); }

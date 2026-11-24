@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MapView } from '../api';
-import { initialBox, lerpPoint, markerScale, pointAlong, positionOnRoad, roadPath, roadProgress, SCENE_SIZE, smoothToward, splitAlong, terrainHeight, toScene, traveledAt } from './geometry';
+import { fitDistance, viewElevation, initialBox, lerpPoint, markerScale, placesFrame, pointAlong, positionOnRoad, roadPath, roadProgress, SCENE_SIZE, smoothToward, splitAlong, terrainHeight, toScene, traveledAt } from './geometry';
 
 const map: MapView = {
   source: 'Computed',
@@ -158,5 +158,34 @@ describe('markerScale', () => {
     const fogged = { ...dense(2, 500), fog: { radius: 12, discovered: ['0'], glimpsed: [], roads: [] } };
     // Écart 12 / 0,6 = 20 : comme la carte dense ci-dessus.
     expect(markerScale(fogged)).toBeCloseTo(0.48);
+  });
+});
+
+describe('3D framing', () => {
+  const frame = { x: 0, z: 0, w: 100, d: 100 };
+  it('moves the camera back on a tall screen so the width still fits', () => {
+    const wide = fitDistance(frame, 45, 16 / 9, 0.75);
+    const tall = fitDistance(frame, 45, 0.45, 0.75);
+    expect(tall).toBeGreaterThan(wide * 2.5);
+    // Écran large : c'est la profondeur qui limite.
+    expect(wide).toBeCloseTo((50 * 0.75) / Math.tan(Math.PI / 8) * 1.08, 5);
+  });
+
+  it('frames the places, not the whole sea around them', () => {
+    const f = placesFrame(map);
+    expect(f.w).toBeLessThanOrEqual(SCENE_SIZE);
+    expect(f.x).toBeCloseTo(0);
+    const one = placesFrame({ ...map, places: map.places.slice(0, 1) });
+    expect(one.w).toBe(SCENE_SIZE);
+  });
+});
+
+describe('viewElevation', () => {
+  it('looks down more steeply on a tall screen', () => {
+    expect(viewElevation(16 / 9)).toBe(48);
+    expect(viewElevation(0.45)).toBe(72);
+    const mid = viewElevation(0.95);
+    expect(mid).toBeGreaterThan(48);
+    expect(mid).toBeLessThan(72);
   });
 });

@@ -66,13 +66,20 @@ PR #12 (`feature/discord-activity`) :
 - Tests : `cargo test --locked` 281 ; intégration MongoDB `a_track_lives_and_dies_in_mongodb`, `admins_build_the_library_and_players_hear_their_place` ; `npm test` 108 ; scénarios Chromium `music-harness.cjs`, `music-admin-harness.cjs`.
 - À vérifier dans le vrai client Discord : lecture depuis `blob:` sous la CSP de Discord ; lecteur YouTube par le proxy (URL mapping `/youtube` à ajouter dans le portail).
 
+## Affichage adapté à l'écran (demande du 24/11/2026, branche `feature/music`)
+- Une seule interface sur tous les écrans, selon la place disponible (`web/activity/src/layout.ts`) : **large** (au moins 1000 × 520 px : ordinateur, Discord sur PC, Z Fold déplié en paysage, tablette en paysage) → fiche du personnage en colonne à gauche, repliable ; **compact** (téléphones, Z Fold plié ou déplié en portrait, écrans bas en paysage) → la même fiche en volet depuis la gauche (bouton fermer, Échap, fond). Le bouton avatar de la barre l'ouvre ou la ferme partout. L'ancienne fiche « qui descend du haut » est retirée.
+- Panneau de voyage repliable partout (résumé sur une ligne), replié au départ sur écran compact, pleine largeur sous 600 px, à droite sur toute la hauteur sur un écran bas.
+- Carte 3D : la vue de départ cadre les lieux selon le format de l'écran (plus de lieux coupés en portrait), vue plus plongeante sur un écran en hauteur, recadrage à la rotation ou au dépliage tant que le joueur n'a pas bougé la vue ; noms et épingle à taille fixe en pixels ; brouillard de profondeur qui suit la caméra.
+- Musique : la commande ne passe plus sur deux lignes ; à gauche sur un écran bas. Fenêtres admin en `dvh` (barres des navigateurs mobiles).
+- Vérifié dans Chromium (`app-harness.html`, l'activité entière avec une API simulée ; `web/activity/e2e/app-harness.cjs`) sur ordinateur, Discord PC, Z Fold 6 plié et déplié, en portrait et en paysage, iPhone et iPad : aucun débordement, volet et voyage ouverts et refermés.
+
 ## Cahier des charges de l'import
 Cahier des charges complet et validé : **`docs/activity/IMPORT_SPEC.md`** (décisions I1–I17, Q1–Q5). À traiter dans une session dédiée. Points marquants : répartition de l'univers sur plusieurs serveurs (150 lieux au plus par serveur, création des serveurs par l'admin), plus de rôle par route (permissions individuelles), brouillard optionnel par univers, double vérification par le nom de l'univers, retour en arrière complet en cas d'erreur.
 
 ## Points ouverts
 - **Premium (plus tard, dépôt privé)** : réintroduire une limite de serveurs par univers (`MAX_SERVERS_PER_UNIVERSE`, `database/universe.rs`), supprimée le 19/11/2026 (Q10).
 - Déploiement : option 2 choisie (redirection d'un port vers le bot, HTTPS servi par le bot). À valider d'abord : Discord accepte-t-il un port dans le mapping (`activity.home.knifetail.eu:8484` s'enregistre ; le chargement réel n'est pas encore testé). Puis certificat par validation DNS (hébergeur DNS à connaître) et HTTPS dans le bot.
-- Mise en page téléphone : la fiche prend le haut de l'écran et le panneau de voyage couvre la carte. À revoir (onglets ou panneau à tirer, choix à faire).
+- ~~Mise en page téléphone~~ : faite le 24/11/2026 (voir « Affichage adapté à l'écran »).
 
 - **Hébergement** : on ne sait pas encore si l'infra a déjà un reverse proxy. `DEPLOY.md` décrit Caddy et les exigences pour un autre proxy.
 - Essai réel dans Discord (auth SDK, iframe, CSP, WebSocket via le proxy) : impossible depuis la session cloud.

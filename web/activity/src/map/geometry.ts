@@ -194,3 +194,48 @@ export function markerScale(map: MapView): number {
   const scene = (spacing / side) * SCENE_SIZE;
   return Math.min(1, Math.max(0.2, (scene * 0.3) / 1.25));
 }
+
+/** Rectangle de la scène 3D (centre et dimensions, unités de scène). */
+export interface SceneFrame {
+  x: number;
+  z: number;
+  w: number;
+  d: number;
+}
+
+/**
+ * Zone à cadrer au départ : les lieux (avec une marge), pas toute la carte, qui est surtout de la
+ * mer sur bien des cartes. Toute la carte s'il y a moins de deux lieux.
+ */
+export function placesFrame(map: MapView, margin = 0.15): SceneFrame {
+  const side = Math.max(map.width, map.height) || 1;
+  const full: SceneFrame = { x: 0, z: 0, w: (map.width / side) * SCENE_SIZE, d: (map.height / side) * SCENE_SIZE };
+  if (map.places.length < 2) return full;
+  const pts = map.places.map((p) => toScene(p.x, p.y, map.width, map.height));
+  const xs = pts.map((p) => p.x), zs = pts.map((p) => p.z);
+  const [x0, x1, z0, z1] = [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)];
+  const w = Math.max(x1 - x0, 1), d = Math.max(z1 - z0, 1);
+  const m = margin * Math.max(w, d);
+  return { x: (x0 + x1) / 2, z: (z0 + z1) / 2, w: Math.min(full.w, w + 2 * m), d: Math.min(full.d, d + 2 * m) };
+}
+
+/**
+ * Distance de la caméra pour que `frame` tienne dans la vue, quel que soit le format de l'écran
+ * (`aspect` = largeur / hauteur) : la largeur contre le champ horizontal, la profondeur (vue de
+ * biais, d'où `elevationSin`) contre le champ vertical.
+ */
+export function fitDistance(frame: SceneFrame, fovDeg: number, aspect: number, elevationSin: number): number {
+  const tanV = Math.tan((fovDeg * Math.PI) / 360);
+  const tanH = tanV * Math.max(aspect, 0.1);
+  return Math.max(frame.w / 2 / tanH, ((frame.d / 2) * elevationSin) / tanV) * 1.08;
+}
+
+/**
+ * Inclinaison de la vue (angle au-dessus de l'horizon, en degrés) selon le format de l'écran : vue
+ * de trois quarts sur un écran large, plus plongeante sur un écran en hauteur, pour que la carte
+ * remplisse l'écran au lieu d'une bande au milieu.
+ */
+export function viewElevation(aspect: number): number {
+  const t = Math.min(1, Math.max(0, (1.3 - aspect) / 0.7));
+  return 48 + t * 24;
+}
