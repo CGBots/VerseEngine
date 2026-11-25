@@ -1,3 +1,4 @@
+import { isoBands } from './seaBands';
 import type { BurgIcon, MapStyleView } from '../api';
 import { biomeColor, LAND, type Heightmap } from './procedural';
 import type { MapPoint } from './geometry';
@@ -150,6 +151,9 @@ export interface StyleOptions {
   /** Terres peintes comme la mer côtière : les contours vectoriels (`style.vector`) dessinent
    *  les terres par-dessus, sans double côte. */
   landAsSea?: boolean;
+  /** Mer d'une seule couleur (la plus profonde) : les bandes sont dessinées en vecteurs
+   *  (`seaLayers`) par-dessus, sans escaliers dessous. */
+  flatSea?: boolean;
 }
 
 /** Nature d'une case : eau, terre, inconnue (sous le brouillard). */
@@ -351,7 +355,7 @@ export function styleRaster(style: MapStyleView, terrain: Heightmap | null, opts
         color = oceanColor(0);
         cells.kind[k] = WATER;
       } else if (v >= SURFACE_OCEAN) {
-        color = v === SURFACE_LAKE ? LAKE : oceanColor(depth[k]);
+        color = v === SURFACE_LAKE ? LAKE : opts.flatSea ? oceanColor(Infinity) : oceanColor(depth[k]);
         if (v === SURFACE_LAKE) depth[k] = NaN;
         cells.kind[k] = WATER;
       } else {
@@ -518,4 +522,48 @@ export function declutterLabels(candidates: LabelCandidate[]): Set<string> {
     shown.add(c.id);
   }
   return shown;
+}
+
+/**
+ * Bandes de la mer en vecteurs (courbes lisses, nettes de près) : régions à moins de 18, 10, 5 et
+ * 2 cases de la terre, de la plus large à la plus étroite, aux couleurs d'Azgaar. Les cases
+ * cachées (brouillard, hors zone) n'entrent dans aucune bande.
+ */
+export function seaLayers(style: MapStyleView, width: number, height: number, paper: boolean): { d: string; fill: string }[] {
+  const { cols, rows } = style;
+  const n = cols * rows;
+  const surface = decodeRuns(style.surface, n, SURFACE_HIDDEN);
+  const depth = distanceToLand((k) => surface[k] < SURFACE_OCEAN, cols, rows);
+  const field = new Float32Array(n);
+  for (let k = 0; k < n; k++) field[k] = surface[k] === SURFACE_HIDDEN ? -1e9 : -depth[k];
+  const bands = OCEAN_BANDS.filter(([max]) => Number.isFinite(max)).reverse();
+  const color = (c: Rgb) => {
+    const v = paper ? parchment(c) : c;
+    return `rgb(${Math.round(v[0])} ${Math.round(v[1])} ${Math.round(v[2])})`;
+  };
+  return isoBands(field, cols, rows, bands.map(([max]) => -max), width, height).map((b) => ({
+    d: b.d,
+    fill: color(bands.find(([max]) => -max === b.level)![1]),
+  }));
+}
+
+/**
+ * Ombrage du relief seul (noir et blanc translucides), `widthPx` pixels de large : posé sur les
+ * biomes vectoriels, il redonne les montagnes. Le relief caché (brouillard) est plat : sans ombre.
+ */
+export function reliefShade(hm: Heightmap, widthPx: number, heightPx: number): Raster {
+  const W = Math.max(1, Math.round(widthPx)), H = Math.max(1, Math.round(heightPx));
+  const data = new Uint8ClampedArray(W * H * 4);
+  for (let Y = 0; Y < H; Y++) {
+    for (let X = 0; X < W; X++) {
+      const s = hillshade(hm, (X + 0.5) / W, (Y + 0.5) / H);
+      const o = (Y * W + X) * 4;
+      if (s < 1) {
+        data.set([25, 22, 35, Math.min(255, (1 - s) * 255 * 1.5)], o);
+      } else {
+        data.set([255, 252, 235, Math.min(255, (s - 1) * 255 * 1.3)], o);
+      }
+    }
+  }
+  return { width: W, height: H, data };
 }

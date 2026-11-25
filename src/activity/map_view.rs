@@ -287,7 +287,11 @@ mod real_vector {
         let pack = style.pack.as_ref().expect("exact pack");
         let map = UniverseMap {
             id: mongodb::bson::oid::ObjectId::new(), universe_id: mongodb::bson::oid::ObjectId::new(), source: MapSource::Azgaar,
-            width: f.map.width, height: f.map.height, positions: vec![], terrain: None, zone: None, graph_hash: None,
+            width: f.map.width, height: f.map.height, positions: vec![],
+            terrain: crate::activity::map::azgaar::resample_terrain(&f.map, crate::activity::map::azgaar::MAX_TERRAIN_SIDE).map(|t| crate::database::universe_maps::MapTerrain {
+                cols: t.cols as u32, rows: t.rows as u32, heights: t.heights.iter().map(|&h| ((h.min(100) as u32 * 255) / 100) as u8).collect(),
+            }),
+            zone: None, graph_hash: None,
             road_paths: vec![], background: None, style: Some(style.clone()), updated_at: 1,
         };
         let t = std::time::Instant::now();

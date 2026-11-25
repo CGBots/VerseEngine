@@ -11,7 +11,9 @@ use serde_json::Value;
 /// Hauteur minimale d'une cellule de terre dans Azgaar.
 pub const LAND_HEIGHT: u8 = 20;
 /// Taille max (colonnes ou lignes) de la heightmap rééchantillonnée.
-pub const MAX_TERRAIN_SIDE: usize = 128;
+/// Côté de la heightmap : assez fin pour l'ombrage du relief de la carte 2D (Azgaar a ~10 000
+/// cellules ; la moyenne par case puis un flou évite les marches).
+pub const MAX_TERRAIN_SIDE: usize = 384;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Burg {
@@ -305,7 +307,34 @@ pub fn resample_terrain(map: &AzgaarMap, max_side: usize) -> Option<Terrain> {
             }
         }
     }
-    Some(Terrain { cols, rows, heights: heights.into_iter().map(|h| h.unwrap_or(0)).collect() })
+    let mut heights: Vec<f32> = heights.into_iter().map(|h| h.unwrap_or(0) as f32).collect();
+    // Flou binomial 5 × 5 (2 passes) : plus de cases que de cellules d'Azgaar, sans flou chaque
+    // cellule ferait une marche dans l'ombrage.
+    if max_side > 64 {
+        for _ in 0..2 {
+            heights = blur5(&heights, cols, rows);
+        }
+    }
+    Some(Terrain { cols, rows, heights: heights.into_iter().map(|h| h.round().clamp(0.0, 255.0) as u8).collect() })
+}
+
+/// Flou binomial 5 × 5 séparable (bords recopiés).
+fn blur5(v: &[f32], cols: usize, rows: usize) -> Vec<f32> {
+    const W: [f32; 5] = [1.0, 4.0, 6.0, 4.0, 1.0];
+    let at = |c: i64, r: i64, src: &[f32]| src[(r.clamp(0, rows as i64 - 1) as usize) * cols + c.clamp(0, cols as i64 - 1) as usize];
+    let mut tmp = vec![0f32; v.len()];
+    for r in 0..rows as i64 {
+        for c in 0..cols as i64 {
+            tmp[r as usize * cols + c as usize] = (0..5).map(|k| W[k] * at(c + k as i64 - 2, r, v)).sum::<f32>() / 16.0;
+        }
+    }
+    let mut out = vec![0f32; v.len()];
+    for r in 0..rows as i64 {
+        for c in 0..cols as i64 {
+            out[r as usize * cols + c as usize] = (0..5).map(|k| W[k] * at(c, r + k as i64 - 2, &tmp)).sum::<f32>() / 16.0;
+        }
+    }
+    out
 }
 
 /// Normalise un nom pour la comparaison : minuscules, sans accents, alphanumérique.

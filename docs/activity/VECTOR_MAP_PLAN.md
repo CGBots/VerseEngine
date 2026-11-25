@@ -40,7 +40,9 @@ jamais le serveur.
 7. [x] « Mettre à jour le rendu seulement » (`activity/render_refresh.rs`, `POST /admin/import/render`) :
        renvoyer le même `.map` recalcule le rendu sans toucher à Discord (vérifie dimensions + bourgs).
        Le `.map` d'origine n'est pas conservé : sans le fichier, pas de rendu exact (Morgisnoy/TestBot3).
-8. [ ] Pistes : ombrage du relief par-dessus les biomes ; vue 3D ; icônes de relief façon Azgaar.
+8. [x] Ombrage du relief sur les biomes (heightmap 384 de large + flou, `reliefShade`, découpé par les
+       terres) ; mer en bandes vectorielles (`seaBands.ts`, isolignes de la distance à la côte).
+9. [ ] Pistes : vue 3D ; icônes de relief façon Azgaar.
 
 ## Sauvegardes
 
@@ -56,3 +58,4 @@ Instantanés locaux du code (sans toucher la branche ni l'index) : branche `wip/
 - 2026-11-24 : mise à jour du rendu seule (option 1) ; aucun .map trouvé pour Morgisnoy (TestBot3).
 - 2026-11-24 : Morgisnoy (TestBot3) laissé tel quel ; l'utilisateur refera une carte (vers le 2026-11-26). Pas de reconstruction approchée.
 - 2026-11-24 : sauvegarde des .map (GridFS map_sources, 3 par univers, graine lue dans le fichier) + envoi en MP au créateur après import ou mise à jour du rendu (activity/map_source.rs).
+- 2026-11-25 : relief + mer vectorielle ; scratchpad effacé (redémarrage) → outils durables dans ~/.verseengine-dev.

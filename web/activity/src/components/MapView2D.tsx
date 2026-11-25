@@ -5,7 +5,7 @@ import { useAnimatedPosition } from '../map/useMotion';
 import { initials, pinPath } from '../map/player';
 import { Fog2D } from './Fog2D';
 import { fitRect, fogFocus } from '../map/fog';
-import { anchorPath, burgFont, burgRadius, declutterLabels, reliefRaster, riverOutline, seaCss, styleRaster, upscaleFactor, type Raster } from '../map/azgaarStyle';
+import { anchorPath, burgFont, burgRadius, declutterLabels, reliefRaster, reliefShade, riverOutline, seaCss, seaLayers, styleRaster, upscaleFactor, type Raster } from '../map/azgaarStyle';
 import { vectorLayers } from '../map/azgaarVector';
 import { proceduralTerrain, type Heightmap } from '../map/procedural';
 import type { Translator } from '../i18n';
@@ -221,7 +221,9 @@ export function MapView2D({ map, currentPlaceId, reachable, motion, playerPictur
       : `${JSON.stringify(map.terrain?.heights ?? map.places.map((p) => [p.id, p.x, p.y]))}|${map.width}x${map.height}|${paper}`;
   const terrainUrl = useMemo(() => {
     if (map.background) return null;
-    if (map.style) return rasterUrl(styleRaster(map.style, map.terrain, { states: political, parchment: paper, landAsSea: !!map.style.vector }, upscaleFactor(map.style.cols)));
+    if (map.style) return rasterUrl(styleRaster(map.style, map.terrain, { states: political, parchment: paper, landAsSea: !!map.style.vector, flatSea: !!map.style.vector },
+      // Carte vectorielle : l'image ne porte plus que la mer unie et le brouillard, pas besoin de finesse.
+      map.style.vector ? 2 : upscaleFactor(map.style.cols)));
     const hm = fallbackHeightmap(map);
     return rasterUrl(reliefRaster(hm, { parchment: paper, soft: hm !== map.terrain }, upscaleFactor(hm.cols)));
     // `rasterKey` résume tout ce qui est lu ici.
@@ -244,6 +246,13 @@ export function MapView2D({ map, currentPlaceId, reachable, motion, playerPictur
   const sea = seaCss(paper);
   const vectorId = useId();
   const vector = useMemo(() => (map.style?.vector && !map.background ? vectorLayers(map.style, { states: political, parchment: paper }) : null), [map.style, political, paper]);
+  // Carte vectorielle : mer en bandes lisses et ombrage du relief sur les terres.
+  const seaBands = useMemo(() => (vector && map.style ? seaLayers(map.style, map.width, map.height, paper) : []), [vector, map.style, map.width, map.height, paper]);
+  const shadeUrl = useMemo(() => {
+    if (!vector || !map.terrain || map.terrain.cols < 2) return null;
+    const w = Math.min(1800, map.terrain.cols * 4);
+    return rasterUrl(reliefShade(map.terrain, w, (w * map.height) / map.width));
+  }, [vector, map.terrain, map.width, map.height]);
   // Sous brouillard, les routes envoyées (empruntées, ou vers une destination) sont dessinées
   // par-dessus la brume : le serveur n'envoie que celles-là.
   const aboveFog = (road: MapView['roads'][number]) => !!map.fog && !!road;
@@ -290,6 +299,7 @@ export function MapView2D({ map, currentPlaceId, reachable, motion, playerPictur
           {/* Le large autour de la carte : les marges du cadrage ne sont pas un vide. */}
           <rect x={-map.width} y={-map.height} width={map.width * 3} height={map.height * 3} fill={sea} />
           {terrainUrl && <image href={terrainUrl} x={0} y={0} width={map.width} height={map.height} preserveAspectRatio="none" />}
+          {seaBands.map((b, i) => <path key={`sea${i}`} d={b.d} fill={b.fill} fillRule="evenodd" pointerEvents="none" />)}
           {vector && (
             <g pointerEvents="none">
               {vector.land && <clipPath id={`${vectorId}-land`}><path d={vector.land} /></clipPath>}
@@ -297,6 +307,7 @@ export function MapView2D({ map, currentPlaceId, reachable, motion, playerPictur
                 <rect x={0} y={0} width={map.width} height={map.height} fill={vector.landFill} />
                 {vector.biomes.map((b, i) => <path key={i} d={b.d} fill={b.fill} stroke={b.fill} strokeWidth={0.6 * unit} strokeLinejoin="round" />)}
                 {vector.states.map((s, i) => <path key={i} d={s.d} fill={s.fill} fillOpacity={s.opacity} />)}
+                {shadeUrl && <image href={shadeUrl} x={0} y={0} width={map.width} height={map.height} preserveAspectRatio="none" opacity={0.75} />}
               </g>
               {vector.lakes && <path d={vector.lakes.d} fill={vector.lakes.fill} stroke={vector.lakes.stroke} strokeWidth={0.8 * unit} strokeLinejoin="round" />}
               {vector.coast && <path d={vector.coast.d} fill="none" stroke={vector.coast.stroke} strokeWidth={1.2 * unit} strokeLinejoin="round" strokeLinecap="round" />}
