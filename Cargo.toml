@@ -28,3 +28,21 @@ dotenv = "0.15.0"
 reqwest = { version = "0.13.2", features = ["json"] }
 uuid = { version = "1.17.0", features = ["v4"] }
 rand = "0.10.0"
+# --- Activité Discord (API HTTP embarquée, cf. docs/activity/ARCHITECTURE.md) ---
+axum = { version = "0.8", features = ["ws"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs", "set-header", "limit", "compression-gzip"] }
+sha2 = "0.10"
+# Lecture des sauvegardes Azgaar (.map) : gzip et ancien encodage base64. Déjà présents dans le
+# graphe de dépendances (versions identiques).
+flate2 = "1.1.11"
+base64 = "0.22.1"
+symphonia = { version = "0.6.1", features = ["mp3", "aac", "isomp4", "flac", "wav", "ogg", "vorbis", "mkv", "pcm"] }
+symphonia-opus = "0.1.3"
+
+[dev-dependencies]
+# Horloge virtuelle (`start_paused`) pour tester les minuteurs sans attendre.
+tokio = { version = "1.49.0", features = ["test-util"] }
+# Même version que celle de serenity : sert uniquement aux tests d'intégration REST à faire
+# confiance à un CA supplémentaire (proxy HTTPS de l'environnement de test, `SSL_CERT_FILE`).
+reqwest_serenity = { package = "reqwest", version = "0.12.28", default-features = false, features = ["rustls-tls"] }

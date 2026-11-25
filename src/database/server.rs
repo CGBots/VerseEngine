@@ -1,6 +1,5 @@
 use futures::{TryStreamExt};
 use std::cmp::PartialEq;
-use log::{log, Level};
 use mongodb::bson::{doc, to_document};
 use mongodb::bson::oid::ObjectId;
 use mongodb::Cursor;
@@ -13,7 +12,6 @@ use crate::database::characters::{get_character_by_user_id, Character};
 use crate::database::road::{get_road, Road};
 use crate::database::travel::TravelGroup;
 use crate::database::universe::get_servers_from_universe;
-use crate::discord::poise_structs::{Context, Error};
 
 /// Represents the type of a Discord identifier.
 ///
@@ -47,53 +45,6 @@ impl From<(u64, IdType)> for Id {
 impl From<u64> for Id {
     fn from(value: u64) -> Self {
         Id { id: value, id_type: IdType::Channel }  // Default to Channel type
-    }
-}
-
-/// Extension trait for deleting Discord entities represented by `Option<Id>`.
-pub trait IdExt {
-    async fn delete(&mut self, ctx: &Context<'_>) -> Result<&'static str, Error>;
-}
-
-// Implement the trait for Option<Id>
-impl IdExt for Option<Id> {
-    /// Deletes the Discord entity (role or channel) and sets `self` to `None` on success.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - `self` is `None` (`"id__nothing_to_delete"`)
-    /// - Not in a guild context (`"guild_only"`)
-    /// - The deletion fails (`"id__role_delete_failed"` or `"id__channel_delete_failed"`)
-    async fn delete(&mut self, ctx: &Context<'_>) -> Result<&'static str, Error> {
-        match self {
-            None => Err("id__nothing_to_delete".into()),
-            Some(id) => {
-                let guild_id = ctx.guild_id().ok_or_else(|| -> Error { "guild_only".into() })?;
-                let http = ctx.http();
-
-                match id.id_type {
-                    IdType::Role => {
-                        // Use HTTP via GuildId; do NOT borrow ctx.guild() (cache) across await.
-                        match guild_id.delete_role(http, id.id).await {
-                            Ok(_) => {
-                                *self = None;
-                                Ok("id__role_delete_success")
-                            }
-                            Err(_) => Err("id__role_delete_failed".into()),
-                        }
-                    }
-                    _ => {
-                        if http.delete_channel(id.id.into(), None).await.is_ok() {
-                            *self = None;
-                            Ok("id__channel_delete_sucess")
-                        } else {
-                            Err("id__channel_delete_failed".into())
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -149,6 +100,14 @@ pub struct Server {
     pub rp_character_channel_id: Option<Id>,
 
     pub universal_time_channel_id: Option<Id>,
+
+    /// Identifier of the message the bot keeps editing in the universal time channel
+    /// (the day/night announcement). `None` until the first announcement, and for servers
+    /// created before this field existed.
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    #[serde(default)]
+    pub universal_time_message_id: Option<u64>,
+
     pub universal_invite_url: Option<String>,
 }
 
@@ -174,6 +133,7 @@ impl Default for Server {
             nrp_general_channel_id: None,
             rp_character_channel_id: None,
             universal_time_channel_id: None,
+            universal_time_message_id: None,
             universal_invite_url: None,
         }
     }
@@ -209,6 +169,7 @@ impl Server {
             nrp_general_channel_id: self.nrp_general_channel_id.clone(),
             rp_character_channel_id: self.rp_character_channel_id.clone(),
             universal_time_channel_id: self.universal_time_channel_id.clone(),
+            universal_time_message_id: self.universal_time_message_id,
             universal_invite_url: self.universal_invite_url.clone(),
         }
     }
@@ -337,188 +298,6 @@ impl Server {
     /// Sets the RP character channel ID. Returns `self` for method chaining.
     pub fn rp_character_channel_id(&mut self, rp_character_channel_id: impl Into<Id>) -> &mut Self {self.rp_character_channel_id = Some(rp_character_channel_id.into()); self}
 
-    /// Rolls back the current server configuration to a previous snapshot state.
-    ///
-    /// This asynchronous method compares the current server configuration with a provided
-    /// snapshot and deletes any roles, categories, or channels that differ between them.
-    /// All deletion operations are executed concurrently using `join_all`, and any errors
-    /// encountered during deletion are logged.
-    ///
-    /// # Parameters
-    ///
-    /// - `ctx`: A reference to the Discord context, used for performing Discord API operations
-    ///   such as deleting roles and channels.
-    /// - `snapshot`: A previous state of the `Server` instance to which the current state should
-    ///   be rolled back. Fields that differ from the snapshot will be deleted.
-    ///
-    /// # Behavior
-    ///
-    /// The method performs the following steps:
-    /// 1. Creates an array of mutable references to the current server's role/channel fields
-    ///    paired with their corresponding snapshot values.
-    /// 2. Filters the fields to identify those that differ between the current state and the snapshot.
-    /// 3. Collects futures for deleting the differing fields using the `IdExt::delete` method.
-    /// 4. Executes all deletion operations concurrently using `join_all`.
-    /// 5. Logs any errors that occur during deletion with error-level logging, including
-    ///    the universe ID, server ID, and error message.
-    ///
-    /// # Fields Rolled Back
-    ///
-    /// The following fields are checked and potentially rolled back:
-    /// - `admin_role_id`
-    /// - `moderator_role_id`
-    /// - `spectator_role_id`
-    /// - `player_role_id`
-    /// - `admin_category_id`
-    /// - `nrp_category_id`
-    /// - `rp_category_id`
-    /// - `road_category_id`
-    /// - `rp_wiki_channel_id`
-    /// - `log_channel_id`
-    /// - `moderation_channel_id`
-    /// - `commands_channel_id`
-    /// - `nrp_general_channel_id`
-    /// - `rp_character_channel_id`
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut server = Server::default();
-    /// let snapshot = server.clone();
-    /// // ... modify server ...
-    /// server.rollback(&ctx, snapshot).await;
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Errors during deletion operations are logged but do not cause the function to return
-    /// an error. This allows the rollback to proceed even if some deletions fail.
-    ///
-    /// # Notes
-    ///
-    /// - This method requires the `futures` crate for `join_all`.
-    /// - Errors are logged using the `log` crate at the `Error` level.
-    pub async fn rollback(&mut self, ctx: &Context<'_>, snapshot: Self) {
-        use futures::future::join_all;
-
-        let mut fields = [
-            (&mut self.admin_role_id, snapshot.admin_role_id),
-            (&mut self.moderator_role_id, snapshot.moderator_role_id),
-            (&mut self.spectator_role_id, snapshot.spectator_role_id),
-            (&mut self.player_role_id, snapshot.player_role_id),
-            (&mut self.admin_category_id, snapshot.admin_category_id),
-            (&mut self.nrp_category_id, snapshot.nrp_category_id),
-            (&mut self.rp_category_id, snapshot.rp_category_id),
-            (&mut self.road_category_id, snapshot.road_category_id),
-            (&mut self.rp_wiki_channel_id, snapshot.rp_wiki_channel_id),
-            (&mut self.log_channel_id, snapshot.log_channel_id),
-            (&mut self.moderation_channel_id, snapshot.moderation_channel_id),
-            (&mut self.commands_channel_id, snapshot.commands_channel_id),
-            (&mut self.nrp_general_channel_id, snapshot.nrp_general_channel_id),
-            (&mut self.rp_character_channel_id, snapshot.rp_character_channel_id),
-            (&mut self.universal_time_channel_id, snapshot.universal_time_channel_id),
-        ];
-
-        let delete_futures: Vec<_> = fields
-            .iter_mut()
-            .filter_map(|(field, snapshot_field)| {
-                if **field != *snapshot_field {
-                    Some(field.delete(ctx))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let results = join_all(delete_futures).await;
-        results.iter().for_each(|r| {
-            if let Err(err) = r {
-                log!(
-                    Level::Error,
-                    "Error during setup and rollback.\nuniverse_id: {}\nserver_id: {}\n error: {}",
-                    self.universe_id,
-                    self.server_id,
-                    err
-                );
-            }
-        });
-    }
-
-    /// Creates a validated snapshot of the current server configuration.
-    ///
-    /// Verifies that all role and channel IDs still exist in the Discord guild.
-    /// Any IDs that no longer exist are set to `None` in the returned snapshot.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the guild ID cannot be retrieved or if the HTTP requests to
-    /// retrieve guild roles or channels fail.
-    pub async fn snaphot(self, ctx: &Context<'_>) -> Self {
-        let mut snapshot = self.clone();
-        let guild_id = ctx.guild_id().unwrap();
-        let roles = ctx.http().get_guild_roles(guild_id.into()).await.unwrap();
-        let channels = ctx.http().get_channels(guild_id.into()).await.unwrap();
-
-
-        let role_exists = |id: u64| roles.iter().any(|r| r.id.get() == id);
-
-        if snapshot.admin_role_id.map(|x| role_exists(x.id)) == Some(false) {
-            snapshot.admin_role_id = None;
-        }
-        if snapshot.moderator_role_id.map(|x| role_exists(x.id)) == Some(false) {
-            snapshot.moderator_role_id = None;
-        }
-        if snapshot.spectator_role_id.map(|x| role_exists(x.id)) == Some(false) {
-            snapshot.spectator_role_id = None;
-        }
-        if snapshot.player_role_id.map(|x| role_exists(x.id)) == Some(false) {
-            snapshot.player_role_id = None;
-        }
-        if snapshot.everyone_role_id.map(|x| role_exists(x.id)) == Some(false) {
-            snapshot.everyone_role_id = None;
-        }
-
-        let channel_exists = |id: u64| channels.iter().any(|r| r.id.get() == id);
-
-        // ---- Channels/categories: check via get_channel ----
-
-        if snapshot.road_category_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.road_category_id = None;
-        }
-        if snapshot.admin_category_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.admin_category_id = None;
-        }
-        if snapshot.nrp_category_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.nrp_category_id = None;
-        }
-        if snapshot.rp_category_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.rp_category_id = None;
-        }
-        if snapshot.log_channel_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.log_channel_id = None;
-        }
-        if snapshot.commands_channel_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.commands_channel_id = None;
-        }
-        if snapshot.moderation_channel_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.moderation_channel_id = None;
-        }
-        if snapshot.nrp_general_channel_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.nrp_general_channel_id = None;
-        }
-        if snapshot.rp_character_channel_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.rp_character_channel_id = None;
-        }
-        if snapshot.rp_wiki_channel_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.rp_wiki_channel_id = None;
-        }
-        if snapshot.universal_time_channel_id.map(|x| channel_exists(x.id)) == Some(false) {
-            snapshot.universal_time_channel_id = None;
-        }
-
-        snapshot
-    }
-
     pub async fn get_character_by_user_id(self, user_id: u64) -> mongodb::error::Result<Option<Character>> {
         get_character_by_user_id(self.universe_id, user_id).await
     }
@@ -612,51 +391,78 @@ pub async fn get_server_by_id(
         .await
 }
 
+/// Remembers (or forgets, with `None`) the id of the day/night announcement message of a server.
+///
+/// Only this field is written (`$set`): the rest of the server document is left untouched, so this
+/// can safely run while a setup command is updating the same server.
+///
+/// # Errors
+///
+/// Returns a MongoDB error if the update fails.
+pub async fn set_universal_time_message_id(
+    server_id: u64,
+    message_id: Option<u64>,
+) -> mongodb::error::Result<()> {
+    let db_client = get_db_client().await;
+    let filter = doc! {"server_id": server_id.to_string()};
+    let update = doc! {"$set": {"universal_time_message_id": message_id.map(|id| id.to_string())}};
+    db_client
+        .database(VERSEENGINE_DB_NAME)
+        .collection::<Server>(SERVERS_COLLECTION_NAME)
+        .update_one(filter, update)
+        .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod test {
-    use crate::database::universe::Universe;
-    use std::time::SystemTime;
-    use lazy_static::lazy_static;
     use super::*;
 
-    static _SERVER_ID: u64 = 1;
-
-    lazy_static! {
-        pub static ref UNIVERSE_ID: ObjectId = ObjectId::new();
+    #[test]
+    fn time_message_id_is_optional_in_existing_documents() {
+        // Un serveur enregistré avant l'ajout du champ doit toujours pouvoir être lu.
+        let mut document = to_document(&Server::default()).unwrap();
+        document.remove("universal_time_message_id");
+        let server: Server = mongodb::bson::from_document(document).unwrap();
+        assert_eq!(server.universal_time_message_id, None);
     }
 
-    async fn insert_universe() -> Result<InsertOneResult, String> {
-        let _ = get_db_client().await;
-        let universe = Universe {
-            universe_id: *UNIVERSE_ID,
-            name: "test".to_string(),
-            creator_id: 0,
-            global_time_modifier: 100,
-            time_origin_timestamp: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
-            creation_timestamp: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
-        };
-        match universe.insert_universe().await {
-            Ok(universe) => Ok(universe),
-            Err(e) => {
-                println!("{}", e);
-                Err(e.to_string())
-            }
-        }
+    #[test]
+    fn time_message_id_is_stored_as_a_string_like_the_other_discord_ids() {
+        let server = Server { universal_time_message_id: Some(1_234_567_890_123_456_789), ..Server::default() };
+        let document = to_document(&server).unwrap();
+        assert_eq!(document.get_str("universal_time_message_id").unwrap(), "1234567890123456789");
+
+        let read_back: Server = mongodb::bson::from_document(document).unwrap();
+        assert_eq!(read_back.universal_time_message_id, Some(1_234_567_890_123_456_789));
     }
 
-    #[tokio::test]
-    async fn test_insert_server() {
-        insert_universe().await.unwrap();
-        let result = Server::default()
-            .insert_server()
-            .await;
+    #[test]
+    #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
+    fn the_time_message_id_is_saved_without_touching_the_rest() {
+        use crate::test_support::{block_on, random_id};
+        block_on(async {
+            let server_id = random_id();
+            let mut server = Server::default();
+            server.server_id(server_id).universal_time_channel_id(42u64);
+            server.insert_server().await.expect("insert the test server");
 
-        assert!(result.is_ok());
+            set_universal_time_message_id(server_id, Some(7)).await.unwrap();
+            let saved = get_server_by_id(server_id).await.unwrap().unwrap();
+            set_universal_time_message_id(server_id, None).await.unwrap();
+            let cleared = get_server_by_id(server_id).await.unwrap().unwrap();
+
+            get_db_client()
+                .await
+                .database(VERSEENGINE_DB_NAME)
+                .collection::<Server>(SERVERS_COLLECTION_NAME)
+                .delete_one(doc! {"server_id": server_id.to_string()})
+                .await
+                .unwrap();
+
+            assert_eq!(saved.universal_time_message_id, Some(7));
+            assert_eq!(saved.universal_time_channel_id.map(|c| c.id), Some(42));
+            assert_eq!(cleared.universal_time_message_id, None);
+        });
     }
 }

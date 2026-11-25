@@ -86,6 +86,19 @@ impl Tool {
         Ok(results)
     }
 
+    /// Outils posés dans un lieu, tous salons de sa catégorie confondus (activité : le joueur
+    /// n'est dans aucun salon précis).
+    pub async fn get_by_category_id(universe_id: ObjectId, category_id: u64) -> mongodb::error::Result<Vec<Tool>> {
+        let db_client = get_db_client().await;
+        db_client
+            .database(VERSEENGINE_DB_NAME)
+            .collection::<Tool>(PLACED_ITEMS_COLLECTION_NAME)
+            .find(doc! { "universe_id": universe_id, "category_id": category_id as i64 })
+            .await?
+            .try_collect()
+            .await
+    }
+
     pub async fn get_by_id(tool_id: ObjectId) -> mongodb::error::Result<Option<Tool>> {
         let db_client = get_db_client().await;
         let collection = db_client

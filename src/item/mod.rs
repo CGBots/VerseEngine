@@ -5,6 +5,7 @@ pub mod use_subcommand;
 pub mod consume_subcommand;
 pub mod delete_subcommand;
 pub mod populate_test_subcommand;
+pub mod service;
 
 use crate::item::create_item_subcommand::create;
 use crate::item::lookup_subcommand::lookup_subcommand;

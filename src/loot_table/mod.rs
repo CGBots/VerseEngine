@@ -1,4 +1,5 @@
 pub mod edit_subcommand;
+pub mod service;
 use crate::loot_table::edit_subcommand::edit;
 use crate::discord::poise_structs::{Context, Error, Data};
 

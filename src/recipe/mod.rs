@@ -10,6 +10,7 @@ use serenity::json::json;
 pub mod create_subcommand;
 pub mod craft_subcommand;
 pub mod craft_stop_subcommand;
+pub mod service;
 
 pub struct RecipeModal {
     pub content: String,

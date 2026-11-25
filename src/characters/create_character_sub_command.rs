@@ -756,13 +756,17 @@ pub async fn handle_accept_character_modal(ctx: SerenityContext, m: ModalInterac
         universe_id: server.universe_id,
         name: character_name,
         stats: extracted_stats,
+        // Le premier champ de l'embed est la description (cf. handle_character_creation_modal).
+        description: embed.fields.first().map(|f| f.value.clone()).filter(|d| !d.trim().is_empty()),
+        image: None,
     };
 
     let mut session = get_db_client().await.start_session().await?;
     session.start_transaction().await?;
 
     let upsert_result = character.clone().upsert_with_session(&mut session).await;
-    if upsert_result.is_err() {
+    if let Err(e) = &upsert_result {
+        tracing::error!(user = character_user_id, error = %e, "acceptation du personnage : écriture refusée");
         session.abort_transaction().await?;
         return Err("create_character__database_error".into());
     }

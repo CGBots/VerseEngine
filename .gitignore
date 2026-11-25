@@ -1,5 +1,10 @@
 /.env
 /target/
 /.output.txt
-/Cargo.lock
 /.cargo/
+
+# Journaux (bot, tests, outils) : jamais versionnés
+*.log
+/logs/
+# IDE (RustRover / IntelliJ)
+/.idea/

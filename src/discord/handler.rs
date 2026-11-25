@@ -44,6 +44,18 @@ use crate::travel::logic::manage_roles;
 pub struct Handler;
 #[async_trait]
 impl EventHandler for Handler {
+    /// Le bot rejoint un serveur : les écrans d'import de l'activité relisent la liste.
+    async fn guild_create(&self, _ctx: Context, _guild: serenity::all::Guild, is_new: Option<bool>) {
+        if is_new == Some(true) {
+            crate::activity::events::notify_servers_changed();
+        }
+    }
+
+    /// Le bot quitte un serveur (ou en est retiré).
+    async fn guild_delete(&self, _ctx: Context, _incomplete: serenity::all::UnavailableGuild, _full: Option<serenity::all::Guild>) {
+        crate::activity::events::notify_servers_changed();
+    }
+
     ///  Handles the `ready` event in an asynchronous context for testing purposes.
     ///
     ///  This function is executed when the bot successfully connects to Discord
@@ -85,9 +97,23 @@ impl EventHandler for Handler {
         }
     }
 
+    /// Discord fait attendre le bot (limite de débit) : la bibliothèque attend en silence ; on le
+    /// journalise et l'import l'affiche.
+    async fn ratelimit(&self, data: serenity::http::RatelimitInfo) {
+        crate::provisioning::note_discord_wait(data.timeout, &data.path, data.global);
+    }
+
     #[cfg(not(test))]
-    async fn ready(&self, _ctx: Context, ready: Ready) {
+    async fn ready(&self, ctx: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
+        // Tâches de création interrompues par un arrêt (import de carte) : tout est défait (I13).
+        if let Err(e) = crate::provisioning::rollback_interrupted_jobs(&ctx.http).await {
+            eprintln!("[provisioning] cannot roll back interrupted jobs: {e:?}");
+        }
+        // Routes à rôle → permissions individuelles (Q1, Q7). Idempotent, reprise au démarrage.
+        if let Err(e) = crate::roads::migration::migrate_road_roles(&ctx.http).await {
+            eprintln!("[road migration] failed: {e:?}");
+        }
         let _ = crate::travel::logic::setup().await;
         let _ = crate::craft::logic::setup().await;
         let _ = crate::loot::logic::setup().await;
@@ -106,6 +132,7 @@ impl EventHandler for Handler {
             };
 
             if let Err(e) = result {
+                tracing::warn!(modal = modal_data, user = modal.user.id.get(), error = %e, "fenêtre refusée");
                 let locale = modal.locale.as_str();
                 let content = tr_locale!(locale, &e.to_string());
                 let _ = modal.create_response(ctx, CreateInteractionResponse::Message(
@@ -290,9 +317,7 @@ impl EventHandler for Handler {
                         // On vérifie si la route actuelle est bien sur ce serveur ou si c'est le road_server_id
                         let road_server_id = player_move.road_server_id.unwrap_or(player_move.server_id);
                         if road_server_id == guild_id {
-                            if let Some(road_role) = player_move.road_role_id {
-                                manage_roles(ctx.http.clone(), guild_id, user_id, Some(road_role), None).await;
-                            }
+                            crate::travel::logic::grant_road_access(&ctx.http, player_move.actual_space_id, user_id).await;
                         }
                     }
                 }

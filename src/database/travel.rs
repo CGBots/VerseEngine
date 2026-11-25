@@ -1,4 +1,3 @@
-use log::log;
 use mongodb::bson::{doc, to_document};
 use mongodb::bson::oid::ObjectId;
 use mongodb::results::{DeleteResult, InsertOneResult, UpdateResult};
@@ -7,8 +6,6 @@ use serde_with::DisplayFromStr;
 use serde_with::serde_as;
 use crate::database::db_client::{get_db_client};
 use crate::database::db_namespace::{TRAVELS_COLLECTION_NAME, VERSEENGINE_DB_NAME};
-use crate::database::modifiers::Modifier;
-use crate::database::stats::{get_stat_by_name, StatValue, SPEED_STAT};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub enum SpaceType{
@@ -33,6 +30,9 @@ pub struct TravelGroup {
     pub step_start_timestamp: Option<u64>,
     pub step_end_timestamp: Option<u64>,
 
+    /// Ancien rôle de la route : plus jamais renseigné (Q1), conservé pour relire les anciens
+    /// documents. L'accès au salon se fait par permission individuelle.
+    #[serde(default)]
     pub road_role_id: Option<u64>,
     pub road_id: Option<u64>,
     pub road_server_id: Option<u64>,
@@ -51,6 +51,27 @@ pub struct TravelGroup {
     pub members: Vec<u64>,
     #[serde_as(as = "DisplayFromStr")]
     pub server_id: u64,
+}
+
+/// Groupes arrêtés dans un lieu (`category_id` de sa catégorie Discord).
+pub async fn get_groups_at_place(universe_id: ObjectId, category_id: u64) -> mongodb::error::Result<Vec<TravelGroup>> {
+    use futures::TryStreamExt;
+    get_db_client().await
+        .database(VERSEENGINE_DB_NAME)
+        .collection::<TravelGroup>(TRAVELS_COLLECTION_NAME)
+        .find(doc! {"universe_id": universe_id, "actual_space_type": "Place", "actual_space_id": category_id as i64})
+        .await?
+        .try_collect()
+        .await
+}
+
+/// Groupe de voyage d'un joueur dans un univers.
+pub async fn get_group_of_user(universe_id: ObjectId, user_id: u64) -> mongodb::error::Result<Option<TravelGroup>> {
+    get_db_client().await
+        .database(VERSEENGINE_DB_NAME)
+        .collection::<TravelGroup>(TRAVELS_COLLECTION_NAME)
+        .find_one(doc! {"members": user_id.to_string(), "universe_id": universe_id})
+        .await
 }
 
 impl TravelGroup {
@@ -91,7 +112,7 @@ impl TravelGroup {
     }
 
     pub async fn upsert(&self) -> mongodb::error::Result<UpdateResult> {
-        let mut doc = to_document(self).unwrap();
+        let mut doc = to_document(self)?;
         doc.remove("_id");
         let filter = doc! {"_id": self._id};
         let update = doc! {"$set": doc};
@@ -106,7 +127,7 @@ impl TravelGroup {
     }
 
     pub async fn upsert_with_session(&self, session: &mut mongodb::ClientSession) -> mongodb::error::Result<UpdateResult> {
-        let mut doc = to_document(self).unwrap();
+        let mut doc = to_document(self)?;
         doc.remove("_id");
         let filter = doc! {"_id": self._id};
         let update = doc! {"$set": doc};
@@ -135,16 +156,5 @@ impl TravelGroup {
             moves.push(m);
         }
         Ok(moves)
-    }
-
-    pub async fn next_step(self) -> Option<(StatValue, Option<Modifier>)>{
-        if !self.is_end && !self.members.is_empty() {
-            let Ok(Some(stat)) = get_stat_by_name(self.universe_id, SPEED_STAT).await else {
-                log!(log::Level::Error, "Failed to get stat. [{:?}]", self);
-                return None;
-            };
-            let Ok((_speed, _shortest_modifier)) = stat.resolve(self.actual_space_id, self.members[0]).await else { todo!() };
-        };
-        None
     }
 }

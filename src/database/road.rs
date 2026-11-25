@@ -19,8 +19,12 @@ pub struct Road{
     pub server_id: u64,
     pub server_two_id: Option<String>,
     pub road_name: String,
-    #[serde_as(as = "DisplayFromStr")]
-    pub role_id: u64,
+    /// Ancien rôle d'accès au salon de la route. Les nouvelles routes n'en ont plus : l'accès se
+    /// donne par une permission individuelle sur le salon (Q1). Seule la migration
+    /// ([`crate::roads::migration`]) lit encore ce champ, puis le retire.
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_id: Option<u64>,
     #[serde_as(as = "DisplayFromStr")]
     pub channel_id: u64,
     #[serde_as(as = "DisplayFromStr")]
@@ -92,6 +96,32 @@ pub async fn get_road_by_source(universe_id: ObjectId, destination_id: u64) -> m
             { "place_two_id": destination_id.to_string(), "universe_id": universe_id },
         ],
         "secret": false
+    };
+    db_client.database(VERSEENGINE_DB_NAME)
+        .collection::<Road>(ROADS_COLLECTION_NAME)
+        .find(filter)
+        .await
+}
+
+/// Toutes les routes d'un univers, **secrètes comprises** (carte, côté serveur uniquement).
+pub async fn get_roads_by_universe(universe_id: ObjectId) -> mongodb::error::Result<Cursor<Road>> {
+    get_db_client().await
+        .database(VERSEENGINE_DB_NAME)
+        .collection::<Road>(ROADS_COLLECTION_NAME)
+        .find(doc! {"universe_id": universe_id})
+        .await
+}
+
+/// Toutes les routes d'un lieu, **secrètes comprises** : à filtrer avec
+/// `travel::service::road_is_visible` avant de les montrer à un joueur.
+pub async fn get_roads_of_place(universe_id: ObjectId, place_id: u64) -> mongodb::error::Result<Cursor<Road>> {
+    let db_client = get_db_client().await;
+    let filter = doc! {
+        "universe_id": universe_id,
+        "$or": [
+            { "place_one_id": place_id.to_string() },
+            { "place_two_id": place_id.to_string() },
+        ],
     };
     db_client.database(VERSEENGINE_DB_NAME)
         .collection::<Road>(ROADS_COLLECTION_NAME)

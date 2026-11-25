@@ -7,8 +7,8 @@ use crate::database::server::{get_server_by_id, Server};
 use crate::discord::channels::ITEM_TAG;
 use crate::discord::poise_structs::{Context, Error};
 use crate::item::{ItemUsage, execute_item_effect_modal};
+use crate::item::service::{create_item, ItemFields};
 use crate::utility::effect_parser::EffectParser;
-use crate::tr;
 use crate::utility::reply::{reply, reply_with_args, reply_with_args_and_ephemeral};
 use crate::utility::loot_table_parser::VALID_NAME_RE;
 use fluent::FluentArgs;
@@ -69,79 +69,24 @@ pub async fn create(
     let effects_raw = modal_result.map(|m| m.content).unwrap_or_default();
 
     if is_admin {
-        let effects = if !effects_raw.is_empty() {
-            EffectParser::parse(&effects_raw, universe_id, universe_id).await.map_err(|e| Error::from(e))?
-        } else {
-            vec![]
-        };
-
-        let result = Item{
-            _id: Default::default(),
-            universe_id: universe_id,
-            item_name: name.clone(),
-            item_usage: usage.clone(),
-            effects,
+        let fields = ItemFields {
+            usage: usage.clone(),
             description: item_description.clone(),
+            secret: secret_informations,
             image: url.clone(),
-            wiki_post_id: None,
-            secret_informations: secret_informations,
-            inventory_id: None,
             inventory_size: inventory_size.unwrap_or(0),
-        }.save().await;
-
-        match result{
-            Ok(_) => {}
-            Err(_) => { let _ = reply(ctx, Err("create_item__db_error".into())).await; return Ok(()) }
-        }
-
-        let mut embed = CreateEmbed::new()
-            .title(name.clone())
-            .description(item_description.clone().unwrap_or("".to_string()))
-            .field(tr!(ctx.clone(), "item_usage_title"), tr!(ctx.clone(), usage.name()), true)
-            .field(tr!(ctx.clone(), "item_inventory_size"), inventory_size.unwrap_or(0).to_string(), true)
-            .colour(Colour::from_rgb(25, 125, 255))
-            .thumbnail(url.clone().unwrap_or("".to_string()));
-
-        if !effects_raw.is_empty() {
-            embed = embed.field(tr!(ctx.clone(), "item_effects_title"), effects_raw.clone(), false);
-        }
-
-        if into_wiki {
-            let Ok(servers_cursor) = server.get_other_servers().await else {return Err("item_db_error".into())};
-            let servers = servers_cursor.try_collect::<Vec<Server>>().await.unwrap();
-
-            for server in servers{
-                if let Some(wiki_channel_id) = server.rp_wiki_channel_id{
-                    let Ok(wiki_channel) = ctx.http().get_channel(wiki_channel_id.id.into()).await else {continue};
-                    let mut channel = wiki_channel.guild().unwrap().clone();
-                    let mut item_tag = channel.available_tags.iter().find(|tag| {
-                        tag.name.to_lowercase() == ITEM_TAG.to_lowercase() || tag.name == "Objet"
-                    }).map(|t| t.id);
-
-                    if item_tag.is_none() {
-                        let mut tags: Vec<serenity::all::CreateForumTag> = channel.available_tags.iter().map(|tag| {
-                            let mut t = serenity::all::CreateForumTag::new(tag.name.clone());
-                            t = t.moderated(tag.moderated);
-                            t
-                        }).collect();
-                        tags.push(serenity::all::CreateForumTag::new("Objet"));
-                        let edit = serenity::all::EditChannel::new().available_tags(tags);
-                        if let Ok(updated_channel) = channel.id.edit(ctx, edit).await {
-                            channel = updated_channel;
-                            item_tag = channel.available_tags.iter().find(|tag| tag.name == "Objet").map(|t| t.id);
-                        }
-                    }
-
-                    let mut post = CreateForumPost::new(name.clone(), CreateMessage::new().embed(embed.clone()));
-                    if let Some(tag_id) = item_tag {
-                        post = post.add_applied_tag(tag_id);
-                    }
-                    let _ = channel.create_forum_post(ctx, post).await?;
-                }
-            }
+            effects_raw,
         };
-
-        ctx.send(CreateReply::default().embed(embed)).await?;
+        match create_item(ctx.serenity_context(), universe_id, &name, fields, into_wiki, ctx.locale().unwrap_or("fr")).await {
+            Ok((_, embed)) => {
+                ctx.send(CreateReply::default().embed(embed)).await?;
+            }
+            Err(e) if matches!(e.to_string().as_str(), "create_item__db_error" | "create_item__already_exists") => {
+                let _ = reply(ctx, Err(e)).await;
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        }
     } else {
         // Pour les joueurs, on envoie aux logs de l'univers pour validation
         submit_item_for_approval(

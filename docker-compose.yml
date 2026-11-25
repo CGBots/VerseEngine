@@ -1,15 +1,89 @@
+# Les secrets (DISCORD_TOKEN, MONGODB_USER, MONGODB_PASSWORD) viennent du fichier `.env`
+# (copier `.env.example`), jamais de l'image.
+#
+# MongoDB est lancé en replica set à un seul nœud : le bot utilise des transactions
+# multi-documents, qui n'existent pas sur un `mongod` « standalone ».
+# Si vous utilisez votre propre MongoDB, il doit lui aussi être un replica set.
+
 services:
   bot:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Identifiant public de l'application, intégré au front de l'activité.
+        VITE_DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
     environment:
-      - DISCORD_TOKEN=${DISCORD_TOKEN}
-      - MONGODB_USER=${MONGODB_USER}
-      - MONGODB_PASSWORD=${MONGODB_PASSWORD}
-      - MONGODB_AUTH_SOURCE=${MONGODB_AUTH_SOURCE:-admin}
-      - MONGODB_HOST=${MONGODB_HOST:-127.0.0.1}
-      - MONGODB_PORT=${MONGODB_PORT:-27017}
+      DISCORD_TOKEN: ${DISCORD_TOKEN:?Renseignez DISCORD_TOKEN dans .env}
+      MONGODB_USER: ${MONGODB_USER:?Renseignez MONGODB_USER dans .env}
+      MONGODB_PASSWORD: ${MONGODB_PASSWORD:?Renseignez MONGODB_PASSWORD dans .env}
+      MONGODB_AUTH_SOURCE: ${MONGODB_AUTH_SOURCE:-admin}
+      MONGODB_HOST: ${MONGODB_HOST:-mongo}
+      MONGODB_PORT: ${MONGODB_PORT:-27017}
+      # Activité Discord (désactivée par défaut). Voir docs/activity/DEPLOY.md.
+      ACTIVITY_ENABLED: ${ACTIVITY_ENABLED:-false}
+      # Dans le conteneur, on écoute sur toutes les interfaces : c'est la publication du port
+      # ci-dessous qui le limite à la machine hôte (reverse proxy TLS).
+      ACTIVITY_BIND: 0.0.0.0:8787
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      ACTIVITY_SESSION_TTL_SECS: ${ACTIVITY_SESSION_TTL_SECS:-3600}
+    # Joignable uniquement depuis la machine hôte (Caddy) : jamais exposé directement.
+    ports:
+      - "127.0.0.1:8787:8787"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    # Permet de viser un MongoDB lancé sur la machine hôte : MONGODB_HOST=host.docker.internal
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    restart: always
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  mongo:
+    image: mongo:8
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER:?Renseignez MONGODB_USER dans .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:?Renseignez MONGODB_PASSWORD dans .env}
+    # Un replica set avec authentification exige un keyFile : il est généré au premier démarrage
+    # et conservé dans un volume.
+    command:
+      - bash
+      - -c
+      - |
+        if [ ! -f /keyfile/mongo.key ]; then
+          openssl rand -base64 756 > /keyfile/mongo.key
+        fi
+        chmod 400 /keyfile/mongo.key
+        chown mongodb:mongodb /keyfile/mongo.key
+        exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /keyfile/mongo.key --bind_ip_all
+    volumes:
+      - mongo-data:/data/db
+      - mongo-keyfile:/keyfile
+    healthcheck:
+      # Initialise le replica set au premier passage, puis vérifie qu'il répond.
+      test:
+        - CMD-SHELL
+        - |
+          mongosh --quiet -u "$$MONGO_INITDB_ROOT_USERNAME" -p "$$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "
+            try { rs.status().ok } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'mongo:27017'}]}).ok }
+          " | grep -q 1
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    # Le port n'est volontairement pas publié : seul le bot y accède, via le réseau Docker.
+    # Pour inspecter la base depuis la machine hôte, ajouter temporairement :
+    # ports:
+    #   - "127.0.0.1:27017:27017"
+
+volumes:
+  mongo-data:
+  mongo-keyfile:

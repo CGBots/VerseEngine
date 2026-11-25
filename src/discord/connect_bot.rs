@@ -24,6 +24,7 @@ use crate::loot_table::loot_table;
 use crate::tip::support_command::support_command;
 use crate::universe::universe;
 use crate::travel::travel__sub_command::travel;
+use crate::teleport::teleport;
 
 #[cfg(not(test))]
 static SHARD_NUMBER: u32 = 1;
@@ -63,7 +64,7 @@ pub(crate) static TEST_PASSED: Mutex<VecDeque<bool>> = Mutex::new(VecDeque::new(
 /// - If the framework or client creation fails.
 ///
 /// # Configuration
-/// - `GatewayIntents` are configured to include `GUILD_MESSAGES`, `DIRECT_MESSAGES`, and `MESSAGE_CONTENT`.
+/// - `GatewayIntents` are configured to include `GUILDS`, `GUILD_MESSAGES`, `DIRECT_MESSAGES`, `MESSAGE_CONTENT` and `GUILD_MEMBERS`.
 /// - Translations are applied using the `apply_translations` function with the data read by `read_ftl`.
 ///
 /// # Environment Variables
@@ -94,14 +95,16 @@ pub async fn connect_bot() -> Result<Client, ()>{
     tracing_subscriber::fmt::init();
     
     
-    let mut commands= vec![ping(), universe(), start(), place(), road(), character(), travel(), support_command(), item(), loot_table(), loot(), recipe()];
+    let mut commands= vec![ping(), universe(), start(), place(), road(), character(), travel(), support_command(), item(), loot_table(), loot(), recipe(), teleport()];
     
     
     let translations = translation::read_ftl().expect("failed to read translation files");
     translation::apply_translations(&translations, &mut commands);
     
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
-    let intents = GatewayIntents::GUILD_MESSAGES
+    // GUILDS : arrivée et départ du bot d'un serveur (liste des serveurs de l'import de carte).
+    let intents = GatewayIntents::GUILDS
+        | GatewayIntents::GUILD_MESSAGES
         | GatewayIntents::DIRECT_MESSAGES
         | GatewayIntents::MESSAGE_CONTENT
         | GatewayIntents::GUILD_MEMBERS;
@@ -125,7 +128,8 @@ pub async fn connect_bot() -> Result<Client, ()>{
         })
         .setup(|ctx, _ready, framework| {
             Box::pin(async move {
-                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                // Conserve la commande « Launch » de l'activité (voir commands_registration).
+                crate::discord::commands_registration::register_globally(&ctx.http, &framework.options().commands).await?;
                 Ok(Data {translations})
             })
         })
@@ -180,6 +184,9 @@ pub async fn connect_bot() -> Result<Client, ()>{
             *http_client = Some(client.http.clone());
         }
 
+        // API de l'activité Discord (no-op si ACTIVITY_ENABLED n'est pas défini).
+        crate::activity::spawn(client.http.clone());
+
         if let Err(why) = client.start_shards(SHARD_NUMBER).await {
             println!("Client error: {why:?}");
         }
@@ -192,6 +199,7 @@ mod test {
     use crate::discord::connect_bot::{connect_bot, TEST_PASSED};
 
     #[tokio::test]
+    #[ignore = "integration test: needs DISCORD_TOKEN and MongoDB; run with --ignored"]
     async fn test_discord_bot_connection(){
         let _ = connect_bot().await;
         assert_eq!(TEST_PASSED.try_lock().unwrap().pop_front().unwrap(), true);

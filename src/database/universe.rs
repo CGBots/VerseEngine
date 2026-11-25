@@ -23,7 +23,17 @@ use crate::discord::poise_structs::Error;
 
 pub static FREE_LIMIT_UNIVERSE: usize = 2;
 
-pub static FREE_LIMIT_SERVERS_PER_UNIVERSE: usize = 2;
+/// Nombre maximal de serveurs par univers. `None` : pas de limite.
+///
+/// Supprimée le 19/11/2026 (la répartition d'une carte importée peut demander beaucoup de
+/// serveurs, 60 lieux au plus par serveur). **À réintroduire plus tard comme fonctionnalité
+/// premium**, dans le dépôt privé : c'était 2 serveurs par univers.
+pub static MAX_SERVERS_PER_UNIVERSE: Option<usize> = None;
+
+/// Vrai si un univers qui a déjà `count` serveurs peut en recevoir un de plus.
+pub fn within_server_limit(count: u64, limit: Option<usize>) -> bool {
+    limit.is_none_or(|max| count < max as u64)
+}
 
 /// Represents a Universe entity with associated metadata.
 ///
@@ -73,6 +83,11 @@ pub struct Universe {
 
     #[serde_as(as = "DisplayFromStr")]
     pub creation_timestamp: u128,
+
+    /// Brouillard sur la carte des joueurs (I17, au choix du créateur). Absent des univers
+    /// créés avant : désactivé.
+    #[serde(default)]
+    pub fog_enabled: bool,
 }
 
 impl Universe {
@@ -322,6 +337,7 @@ impl Universe {
             global_time_modifier: self.global_time_modifier.clone(),
             time_origin_timestamp: self.time_origin_timestamp.clone(),
             creation_timestamp: self.creation_timestamp.clone(),
+            fog_enabled: self.fog_enabled,
         }
     }
 
@@ -449,6 +465,10 @@ impl Universe {
             || roads_res.is_err() || characters_res.is_err() || travels_res.is_err() {
             return Err("universe_delete__failed".into());
         }
+        // Musique de l'univers : morceaux et fichiers.
+        if let Err(e) = crate::database::music::delete_universe_music(self.universe_id).await {
+            tracing::warn!(error = %e, "universe: musique non supprimée");
+        }
 
         Ok("universe_delete__passed")
     }
@@ -520,7 +540,7 @@ impl Universe {
     ///   `SERVER_COLLECTION_NAME`.
     ///
     /// # Notes
-    /// - The limit for the number of servers per universe is defined by the constant `FREE_LIMIT_UNIVERSE`.
+    /// - The limit for the number of servers per universe is [`MAX_SERVERS_PER_UNIVERSE`] (none for now).
     /// - This function clones the database client for use in querying.
     ///
     /// # Example
@@ -540,6 +560,9 @@ impl Universe {
     /// }
     /// ```
     pub async fn check_server_limit(self) -> Result<bool, &'static str> {
+        if MAX_SERVERS_PER_UNIVERSE.is_none() {
+            return Ok(true);
+        }
         let db_client = get_db_client().await;
         let filter = doc!{"universe_id": self.universe_id};
         let servers_result_request = db_client
@@ -550,7 +573,7 @@ impl Universe {
 
         match servers_result_request {
             Ok(server_count) => {
-                Ok(server_count < FREE_LIMIT_SERVERS_PER_UNIVERSE as u64)
+                Ok(within_server_limit(server_count, MAX_SERVERS_PER_UNIVERSE))
             }
             Err(e) => { println!("{:?}", e); return Err("universe__check_server_limit_failed".into()) }
         }
@@ -757,135 +780,132 @@ pub async fn get_universe_by_server_id(
 }
 #[cfg(test)]
 mod test {
-    use crate::database::db_client::{get_db_client};
-    use crate::database::db_namespace::{VERSEENGINE_DB_NAME, UNIVERSES_COLLECTION_NAME};
+    //! Tests d'intégration : ils écrivent dans le MongoDB désigné par `MONGODB_*`.
+    //! Chaque test utilise des identifiants aléatoires et nettoie ce qu'il crée : ils peuvent
+    //! tourner en parallèle et sur une base qui contient déjà des données.
+
+    #[test]
+    fn there_is_no_server_limit_for_now() {
+        assert_eq!(super::MAX_SERVERS_PER_UNIVERSE, None);
+        assert!(super::within_server_limit(1_000, None));
+        assert!(super::within_server_limit(1, Some(2)));
+        assert!(!super::within_server_limit(2, Some(2)));
+    }
+    use crate::database::db_client::get_db_client;
+    use crate::database::db_namespace::{SERVERS_COLLECTION_NAME, UNIVERSES_COLLECTION_NAME, VERSEENGINE_DB_NAME};
+    use crate::database::server::Server;
     use crate::database::universe::{get_universe_by_id, get_universe_by_server_id, Universe};
+    use crate::test_support::{block_on, random_id};
     use mongodb::bson::doc;
-    use mongodb::results::{DeleteResult, InsertOneResult};
+    use mongodb::bson::oid::ObjectId;
     use std::time::SystemTime;
 
-    static SERVER_ID: u64 = 1;
-
-    async fn insert_universe() -> Result<InsertOneResult, String> {
-        let _ = get_db_client().await;
-        let universe = Universe {
-            universe_id: Default::default(),
-            name: "test".to_string(),
-            creator_id: 0,
-            global_time_modifier: 100,
-            time_origin_timestamp: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
-            creation_timestamp: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
-        };
-        match universe.insert_universe().await {
-            Ok(universe) => Ok(universe),
-            Err(e) => {
-                println!("{}", e);
-                Err(e.to_string())
-            }
-        }
+    fn now_ms() -> u128 {
+        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis()
     }
 
-    async fn delete_previously_setup() -> DeleteResult {
-        let db_client = get_db_client().await;
-        let filter = doc! { "server_ids": {"$in": [SERVER_ID.to_string()] } };
-        db_client
+    /// Insère un univers de test appartenant à `creator_id` et retourne son identifiant.
+    async fn insert_universe(creator_id: u64) -> ObjectId {
+        let universe = Universe {
+            universe_id: ObjectId::new(),
+            name: "test".to_string(),
+            creator_id,
+            global_time_modifier: 100,
+            time_origin_timestamp: now_ms(),
+            creation_timestamp: now_ms(), fog_enabled: false
+        };
+        universe.insert_universe().await.expect("insert the test universe");
+        universe.universe_id
+    }
+
+    async fn delete_universe(universe_id: ObjectId) -> u64 {
+        get_db_client()
+            .await
             .database(VERSEENGINE_DB_NAME)
             .collection::<Universe>(UNIVERSES_COLLECTION_NAME)
-            .delete_many(filter)
+            .delete_one(doc! {"_id": universe_id})
             .await
             .unwrap()
+            .deleted_count
     }
 
-    #[tokio::test]
-    async fn test_create_universe() {
-        let insertion_result = insert_universe().await;
-        match insertion_result {
-            Ok(_) => {
-                assert!(true)
-            }
-            Err(e) => {
-                println!("{}", e);
-                assert!(false)
-            }
-        }
-        delete_previously_setup().await;
+    #[test]
+    #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
+    fn a_universe_can_be_inserted_and_deleted() {
+        block_on(async {
+            let id = insert_universe(random_id()).await;
+            assert_eq!(delete_universe(id).await, 1);
+        });
     }
 
-    #[tokio::test]
-    async fn test_delete_previously_setup() {
-        let _ = insert_universe().await;
-        let result = delete_previously_setup().await;
-        assert_ne!(result.deleted_count, 0);
+    #[test]
+    #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
+    fn a_universe_is_found_by_its_id() {
+        block_on(async {
+            let id = insert_universe(random_id()).await;
+            let found = get_universe_by_id(id).await;
+            delete_universe(id).await;
+            assert_eq!(found.unwrap().expect("universe found").universe_id, id);
+        });
     }
 
-    #[tokio::test]
-    async fn test_recover_universe_data() {
-        let _ = insert_universe().await;
-        let result = get_universe_by_server_id(1).await;
-        delete_previously_setup().await;
-        match result {
-            Ok(data) => {
-                match data{
-                    None => {assert!(false, "no universe found")}
-                    Some(universe_data) => {println!("{:?}", universe_data)}
-                }
-            }
-            Err(_) => {
-                assert!(false, "get data failed")
-            }
-        }
+    #[test]
+    #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
+    fn an_unknown_universe_id_gives_none() {
+        block_on(async {
+            assert!(get_universe_by_id(ObjectId::new()).await.unwrap().is_none());
+        });
     }
 
-    /// Tests that universes can be retrieved by their creator ID.
-    #[tokio::test]
-    async fn test_recover_universe_by_creator_id() {
-        let _ = insert_universe().await;
-        let result = Universe::get_creator_universes(0).await;
-        delete_previously_setup().await;
-        if result.is_empty(){
-            println!("no universes found");
-            assert!(false)
-        }
-        println!("{:?}", result)
+    #[test]
+    #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
+    fn universes_are_found_by_creator() {
+        block_on(async {
+            let creator = random_id();
+            let id = insert_universe(creator).await;
+            let found = Universe::get_creator_universes(creator).await;
+            let none = Universe::get_creator_universes(random_id()).await;
+            delete_universe(id).await;
+            assert_eq!(found.iter().map(|u| u.universe_id).collect::<Vec<_>>(), vec![id]);
+            assert!(none.is_empty());
+        });
     }
 
-    /// Tests that a universe can be retrieved by its ObjectId.
-    #[tokio::test]
-    async fn test_recover_universe_by_id() {
-        let universe = insert_universe().await;
-        let id = universe
-            .unwrap()
-            .inserted_id
-            .as_object_id()
-            .unwrap();
-        let result = get_universe_by_id(id).await;
-        println!("{:?}", result);
-        delete_previously_setup().await;
-        match result {
-            Ok(data) => {
-                let universe_data = data.unwrap();
-                println!("{:?}", universe_data)
-            }
-            Err(_) => {
-                assert!(false, "get data failed")
-            }
-        }
-    }
+    #[test]
+    #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
+    fn the_universe_of_a_server_is_found() {
+        block_on(async {
+            let universe_id = insert_universe(random_id()).await;
+            let server_id = random_id();
+            let mut server = Server::default();
+            server.server_id(server_id).universe_id(universe_id);
+            server.insert_server().await.expect("insert the test server");
 
-    #[tokio::test]
-    async fn test_recover_unexisting_universe_by_id() {
-        let _ = insert_universe().await;
-        let result = Universe::get_creator_universes(1).await;
-        if !result.is_empty(){
-            println!("universes found {:?}", result);
-            assert!(false)
-        }
-        delete_previously_setup().await;
+            let found = get_universe_by_server_id(server_id).await;
+            let unknown = get_universe_by_server_id(random_id()).await;
+
+            get_db_client()
+                .await
+                .database(VERSEENGINE_DB_NAME)
+                .collection::<Server>(SERVERS_COLLECTION_NAME)
+                .delete_one(doc! {"server_id": server_id.to_string()})
+                .await
+                .unwrap();
+            delete_universe(universe_id).await;
+
+            assert_eq!(found.unwrap().expect("universe found").universe_id, universe_id);
+            assert!(unknown.unwrap().is_none());
+        });
     }
+}
+
+/// Active ou coupe le brouillard d'un univers (E8).
+pub async fn set_fog_enabled(universe_id: ObjectId, enabled: bool) -> mongodb::error::Result<()> {
+    get_db_client()
+        .await
+        .database(VERSEENGINE_DB_NAME)
+        .collection::<Universe>(UNIVERSES_COLLECTION_NAME)
+        .update_one(doc! {"_id": universe_id}, doc! {"$set": {"fog_enabled": enabled}})
+        .await?;
+    Ok(())
 }

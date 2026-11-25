@@ -1,0 +1,615 @@
+/*
+ * Direction artistique alignée sur le client Discord (thème sombre) : mêmes couleurs, mêmes
+ * composants (profil, pastilles de rôle, embeds, boutons). La carte a ses propres couleurs.
+ * Police : « gg sans » est celle de Discord mais elle n'est pas redistribuable ; on la nomme
+ * en premier au cas où elle serait installée, puis des équivalents libres ou système.
+ */
+:root {
+  --bg-tertiary: #1e1f22;      /* barre des serveurs, séparateurs */
+  --bg-secondary: #2b2d31;     /* barres latérales */
+  --bg-primary: #313338;       /* zone principale */
+  --bg-floating: #111214;      /* fenêtres flottantes, profils */
+  --bg-card: #232428;          /* cartes dans un profil */
+  --bg-hover: rgb(78 80 88 / .3);
+  --text-normal: #dbdee1;
+  --header-primary: #f2f3f5;
+  --header-secondary: #b5bac1;
+  --text-muted: #949ba4;
+  --brand: #5865f2;
+  --brand-hover: #4752c4;
+  --secondary: #4e5058;
+  --secondary-hover: #6d6f78;
+  --danger: #da373c;
+  --danger-hover: #a12828;
+  --green: #23a55a;
+  --yellow: #f0b232;
+  --red: #f23f43;
+  --divider: rgb(78 80 88 / .48);
+  --radius: 8px;
+  color-scheme: dark;
+  font-family: "gg sans", "Noto Sans", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.375;
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; background: var(--bg-primary); color: var(--text-normal); }
+.center { height: 100%; display: grid; place-content: center; gap: 12px; text-align: center; padding: 16px; color: var(--header-secondary); }
+.muted { color: var(--text-muted); }
+
+/* ---------- Boutons (Discord) ---------- */
+button {
+  font: inherit; font-size: 14px; font-weight: 500; line-height: 16px;
+  min-height: 32px; padding: 2px 16px; border: 0; border-radius: 4px;
+  background: var(--brand); color: #fff; cursor: pointer;
+  transition: background-color .17s ease, color .17s ease;
+}
+button:hover { background: var(--brand-hover); }
+button:focus-visible { outline: 2px solid #00a8fc; outline-offset: 2px; }
+button:disabled, button:disabled:hover { opacity: .5; cursor: not-allowed; background: var(--brand); }
+button.secondary { background: var(--secondary); }
+button.secondary:hover { background: var(--secondary-hover); }
+button.secondary:disabled { background: var(--secondary); }
+button.danger { background: var(--danger); }
+button.danger:hover { background: var(--danger-hover); }
+button.small { min-height: 28px; padding: 2px 12px; }
+.icon-button {
+  display: inline-grid; place-items: center; width: 32px; height: 32px; min-height: 0; padding: 0;
+  border-radius: 4px; background: transparent; color: var(--header-secondary);
+}
+.icon-button:hover { background: var(--bg-hover); color: var(--text-normal); }
+.icon-button.active { color: var(--yellow); background: rgb(240 178 50 / .14); }
+
+/* ---------- Mise en page ---------- */
+.layout { display: grid; grid-template-columns: 1fr; height: 100%; }
+/* Écran large : la fiche en colonne à gauche (repliable par le bouton avatar). */
+.layout.wide { grid-template-columns: 300px 1fr; }
+.layout.wide.column-closed { grid-template-columns: 1fr; }
+.side-column { display: flex; min-height: 0; min-width: 0; }
+.side-column .side-panel { flex: 1; min-width: 0; }
+.map-area { position: relative; display: flex; flex-direction: column; min-width: 0; background: var(--bg-primary); }
+
+/* ---------- Fiche du personnage : profil Discord ---------- */
+.side-panel { background: var(--bg-secondary); overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; min-width: 0; }
+.profile-body > * { min-width: 0; }
+.profile { margin: 12px; border-radius: var(--radius); background: var(--bg-floating); overflow: hidden; flex: none; }
+.profile-banner { height: 60px; background: linear-gradient(135deg, #5865f2, #3c45a5); }
+.identity { position: relative; display: flex; align-items: flex-end; gap: 12px; padding: 0 16px; margin-top: -36px; }
+.portrait { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; flex: none; border: 6px solid var(--bg-floating); background: var(--bg-floating); }
+.portrait.placeholder { background: var(--secondary); }
+.identity h1 { font-size: 20px; line-height: 24px; font-weight: 700; color: var(--header-primary); margin: 0 0 8px; overflow-wrap: anywhere; }
+.profile-body { margin: 12px; padding: 12px; border-radius: var(--radius); background: var(--bg-card); display: grid; gap: 12px; }
+.profile-body section + section { border-top: 1px solid var(--divider); padding-top: 12px; }
+section h2, .dialog h3 {
+  font-size: 12px; line-height: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
+  color: var(--header-secondary); margin: 0 0 6px;
+}
+section p { margin: 0; font-size: 14px; line-height: 18px; }
+.description { white-space: pre-wrap; }
+.countdown { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--header-primary); }
+/* Effets actifs : pastilles comme les rôles Discord. */
+.statuses { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.statuses li {
+  display: inline-flex; align-items: center; flex-wrap: wrap; max-width: 100%; gap: 6px; padding: 2px 8px; border-radius: 4px;
+  background: var(--bg-secondary); font-size: 12px; line-height: 16px; font-weight: 500; color: var(--text-normal);
+}
+.statuses li::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--green); flex: none; }
+.statuses li.negative::before { background: var(--red); }
+.statuses strong { font-weight: 600; color: var(--header-primary); }
+.statuses li .muted { white-space: nowrap; }
+.actions { margin: auto 12px 12px; display: grid; gap: 8px; }
+.actions button { min-height: 38px; }
+/* Bouton de l'occupation en cours : il reste coloré, les autres sont grisés (`:disabled`). */
+.actions button.active { box-shadow: inset 0 0 0 2px var(--yellow); }
+.actions button.active:disabled { opacity: .75; background: var(--secondary); color: var(--header-primary); }
+.occupation-progress { display: grid; gap: 6px; padding: 8px 10px; border-radius: 4px; background: var(--bg-tertiary); font-size: 14px; line-height: 18px; }
+.occupation-progress p { margin: 0; }
+.occupation-progress .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.action-message { margin: 0; padding: 8px 10px; border-radius: 4px; background: var(--bg-tertiary); font-size: 14px; line-height: 18px; overflow-wrap: anywhere; }
+
+/* ---------- Barre du haut : en-tête de salon ---------- */
+.toolbar {
+  display: flex; align-items: center; gap: 8px; padding: 0 8px 0 16px; min-height: 48px;
+  /* Encoche et fondu de Discord sur téléphone : Discord donne la zone sûre dans
+     --discord-safe-area-inset-top (le env() du navigateur vaut 0 dans son iframe). */
+  padding-top: max(var(--discord-safe-area-inset-top, 0px), env(safe-area-inset-top, 0px));
+  background: var(--bg-primary); box-shadow: 0 1px 0 rgb(2 2 2 / .2), 0 1.5px 0 rgb(6 6 7 / .05), 0 2px 0 rgb(2 2 2 / .05);
+  position: relative; z-index: 1;
+}
+.universe-name { font-size: 16px; font-weight: 600; color: var(--header-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toolbar-right { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.universe-clock {
+  display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; height: 32px; border-radius: 4px;
+  background: var(--bg-tertiary); color: var(--header-secondary); font-size: 14px; font-variant-numeric: tabular-nums;
+}
+.universe-clock .time { font-weight: 600; color: var(--header-primary); }
+.admin-badge {
+  font-size: 12px; font-weight: 700; line-height: 16px; text-transform: uppercase; color: #1e1f22;
+  background: var(--yellow); border-radius: 4px; padding: 2px 6px; white-space: nowrap;
+}
+
+/* ---------- Fenêtre (paramètres) : modale Discord ---------- */
+.dialog-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / .7); display: grid; place-items: center; padding: 16px; z-index: 10; overflow-y: auto; }
+@media (max-width: 600px) { .dialog-backdrop { padding: 8px; } .dialog { padding: 12px; } }
+.dialog {
+  width: min(440px, 100%); background: var(--bg-primary); border-radius: var(--radius); padding: 16px;
+  display: grid; gap: 16px; box-shadow: 0 8px 16px rgb(0 0 0 / .24);
+}
+.dialog header { display: flex; align-items: center; justify-content: space-between; }
+.dialog h2 { margin: 0; font-size: 20px; line-height: 24px; font-weight: 700; color: var(--header-primary); }
+.dialog section { display: grid; gap: 8px; justify-items: start; }
+.dialog section p { font-size: 14px; }
+
+/* ---------- Carte ---------- */
+.map-placeholder { flex: 1; display: grid; place-content: center; color: var(--text-muted); }
+.map-view { position: relative; flex: 1; min-height: 0; }
+.map-view canvas, .map-2d { position: absolute; inset: 0; width: 100%; height: 100%; }
+.map-2d { touch-action: none; cursor: grab; background: #16324f; user-select: none; }
+.map-2d:active { cursor: grabbing; }
+.map-2d.with-background { background: var(--bg-tertiary); }
+.map-label { fill: #f2f3f5; font-weight: 600; pointer-events: none; }
+/* Police des noms d'Azgaar (Almendra SC, OFL), servie par notre domaine avec Azgaar compilé
+   (`web/azgaar/build.sh` : /azgaar/fonts/). Absente (développement) : polices du système. */
+@font-face {
+  font-family: "Almendra SC";
+  src: url("/azgaar/fonts/almendrasc-v13-Iure6Yx284eebowr7hbyTaZOrLQ.woff2") format("woff2");
+  font-display: swap;
+}
+/* Noms façon Azgaar : police à empattement (aucune police externe sous la CSP de l'activité),
+   texte sombre sur un halo clair. */
+.map-label.azgaar {
+  fill: #2e2c35; stroke: #f7f1df; stroke-opacity: 0.9; letter-spacing: 0.02em;
+  font-family: "Almendra SC", "Palatino Linotype", "Book Antiqua", Palatino, "URW Palladio L", Georgia, "Times New Roman", serif;
+}
+.map-label.azgaar.capital { font-variant: small-caps; font-weight: 700; }
+.map-style-controls { position: absolute; top: 12px; left: 12px; display: flex; gap: 6px; z-index: 2; }
+.map-style-controls button {
+  padding: 4px 10px; border-radius: 4px; border: 1px solid rgba(0, 0, 0, 0.35); cursor: pointer;
+  background: rgba(30, 31, 34, 0.78); color: var(--text-normal); font-size: 12px;
+}
+.map-style-controls button.active { background: rgba(88, 101, 242, 0.9); color: #fff; }
+.map-place { cursor: pointer; }
+.map-pin, .map-progress { pointer-events: none; }
+
+/* ---------- Fenêtres ouvertes depuis le panneau (voyage, craft) : embeds Discord ---------- */
+/* Ancrées en haut à gauche de la carte, à côté du panneau qui les ouvre. */
+.floating-window {
+  position: absolute; left: 12px; top: 12px; z-index: 2; max-height: calc(100% - 24px); overflow-y: auto;
+  background: var(--bg-secondary); border-left: 4px solid var(--brand); border-radius: 4px; padding: 12px 16px;
+  display: grid; gap: 10px; align-content: start; box-shadow: 0 8px 16px rgb(0 0 0 / .24); font-size: 14px; line-height: 18px;
+}
+.window-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.window-header h2 { margin: 0; }
+.travel-panel { width: min(360px, calc(100% - 24px)); }
+.travel-panel h2 { margin: 0; }
+.travel-panel .eta { margin: 0; color: var(--text-normal); }
+.destinations { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.destinations li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px; margin: 0 -8px; border-radius: 4px; }
+.destinations li:hover { background: var(--bg-hover); }
+.destinations li.selected { background: rgb(88 101 242 / .16); }
+.destinations .name { color: var(--header-primary); font-weight: 500; }
+.travel-panel .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.travel-message { margin: 0; padding: 8px 10px; border-radius: 4px; background: var(--bg-tertiary); color: var(--text-normal); }
+
+/* ---------- Fenêtre de craft : inventaire et livre de recettes ---------- */
+.craft-window { width: min(560px, calc(100% - 24px)); bottom: 12px; }
+.fold { border-top: 1px solid var(--divider); padding-top: 8px; }
+.fold > summary {
+  cursor: pointer; font-size: 12px; line-height: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
+  color: var(--header-secondary); padding: 4px 0; list-style-position: inside;
+}
+.fold[open] > summary { margin-bottom: 8px; }
+.item-cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.item-card, .recipe { display: grid; gap: 6px; align-content: start; padding: 8px 10px; border-radius: var(--radius); background: var(--bg-floating); }
+.item-card header, .recipe header { display: flex; align-items: baseline; gap: 8px; }
+.item-card .name, .recipe .name { color: var(--header-primary); font-weight: 600; overflow-wrap: anywhere; }
+.item-card .qty { margin-left: auto; font-weight: 700; color: var(--header-primary); font-variant-numeric: tabular-nums; }
+.item-card p { margin: 0; }
+.usage { font-size: 11px; line-height: 14px; font-weight: 700; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; background: var(--secondary); color: var(--header-primary); white-space: nowrap; }
+.usage-consumable { background: rgb(35 165 90 / .3); }
+.usage-usable { background: rgb(88 101 242 / .35); }
+.usage-placeable { background: rgb(240 178 50 / .3); }
+.usage-wearable { background: rgb(235 69 158 / .3); }
+.secret { font-style: italic; }
+.recipes { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.recipe header .muted { margin-left: auto; white-space: nowrap; }
+/* Réalisable : coloré ; non réalisable : grisé. */
+.recipe.craftable { border-left: 4px solid var(--green); }
+.recipe.unavailable { opacity: .55; filter: grayscale(.8); }
+.recipe-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.recipe-lines li::before { content: "• "; }
+.recipe-lines li.ok::before { content: "✓ "; color: var(--green); }
+.recipe-lines li.missing::before { content: "✗ "; color: var(--red); }
+.recipe-results { margin: 0; color: var(--header-secondary); }
+.recipe-craft { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.recipe-craft label { display: flex; align-items: center; gap: 6px; }
+.recipe-craft input { width: 72px; }
+.recipe-craft button { margin-left: auto; }
+.recipes-divider { margin: 12px 0 6px; }
+
+/* ---------- Écran compact : la même fiche, en volet depuis la gauche ---------- */
+.character-button {
+  width: 32px; height: 32px; min-height: 0; padding: 0; border-radius: 50%; overflow: hidden; flex: none;
+  background: var(--secondary); display: grid; place-items: center; box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--brand);
+}
+.character-button[aria-expanded="false"] { box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--secondary-hover); }
+.character-button img { width: 100%; height: 100%; object-fit: cover; }
+.drawer {
+  position: fixed; top: 0; bottom: 0; left: 0; z-index: 20; width: min(340px, 88vw); display: flex;
+  background: var(--bg-secondary); box-shadow: 8px 0 24px rgb(0 0 0 / .45);
+  transform: translateX(-105%); transition: transform .25s ease; visibility: hidden;
+}
+.drawer.open { transform: none; visibility: visible; }
+.drawer .side-panel { flex: 1; min-width: 0; padding-top: max(var(--discord-safe-area-inset-top, 0px), env(safe-area-inset-top, 0px)); }
+.drawer-backdrop { position: fixed; inset: 0; z-index: 19; background: rgb(0 0 0 / .5); }
+.drawer-close { position: absolute; top: 8px; right: 8px; z-index: 1; background: rgb(17 18 20 / .6); color: var(--header-primary); }
+
+/* ---------- Panneau de voyage repliable (tous les écrans) ---------- */
+.panel-toggle {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 0; margin: 0;
+  background: transparent; color: inherit; text-align: left; font-weight: inherit;
+}
+.panel-toggle:hover { background: transparent; }
+.panel-toggle h2 { margin: 0; flex: none; }
+.panel-toggle .muted { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.panel-toggle .chevron { margin-left: auto; color: var(--header-secondary); }
+.travel-panel.collapsed { padding: 8px 12px; gap: 0; }
+/* Écran étroit : panneaux sur toute la largeur, en bas. */
+@media (max-width: 600px) {
+  /* Les fenêtres deviennent des panneaux en bas de l'écran (le voyage, plus bas, garde sa hauteur). */
+  .floating-window { left: 8px; right: 8px; top: auto; bottom: 8px; width: auto; max-height: 55%; }
+  .craft-window { top: 8px; max-height: none; }
+  .item-cards { grid-template-columns: 1fr; }
+  .actions button { min-height: 44px; }
+  .travel-panel { left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 45%; }
+  .map-view .music-dock { right: 8px; top: 8px; }
+  .universe-clock { padding: 0 8px; }
+  .toolbar { padding: 0 4px 0 8px; gap: 6px; }
+}
+/* Téléphone : au moins 28 px sous le haut de l'écran, même si Discord ne donne pas la zone sûre. */
+.layout.compact .toolbar { padding-top: max(28px, var(--discord-safe-area-inset-top, 0px), env(safe-area-inset-top, 0px)); }
+/* Écran bas (téléphone en paysage) : le voyage occupe la hauteur à droite. */
+@media (max-height: 520px) {
+  .travel-panel { top: 12px; bottom: 12px; max-height: none; height: fit-content; max-width: 320px; }
+  .travel-panel.collapsed { top: auto; }
+  /* La musique passe à gauche : la droite est au voyage. */
+  .map-view .music-dock { left: 12px; right: auto; align-items: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+
+/* ---------- Import de carte (vue admin) ---------- */
+.import-page { height: 100%; overflow-y: auto; padding: 16px; display: grid; gap: 12px; align-content: start; }
+/* Import : presque tout l'écran (Azgaar et l'aperçu ont besoin de place). */
+.import-dialog { width: min(1800px, 100%); max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); overflow-y: auto; }
+.import-wizard { display: grid; gap: 12px; }
+.import-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.import-header h2 { margin: 0; font-size: 20px; color: var(--header-primary); }
+.import-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.import-upload ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+/* Azgaar (E9) : cadre isolé, le plus grand possible. */
+.azgaar-studio { display: grid; gap: 8px; }
+.azgaar-studio[hidden] { display: none; }
+.azgaar-hint { margin: 0; color: var(--text-muted); font-size: 13px; }
+.azgaar-frame { width: 100%; height: max(420px, calc(100vh - 170px)); height: max(420px, calc(100dvh - 170px)); border: 0; border-radius: var(--radius); background: #000; }
+.file-input { position: relative; display: inline-grid; place-items: center; justify-self: start; min-height: 40px; padding: 8px 20px; border-radius: 4px; background: var(--brand); color: #fff; font-weight: 500; cursor: pointer; }
+.file-input:hover { background: var(--brand-hover); }
+.file-input:focus-within { outline: 2px solid #00a8fc; outline-offset: 2px; }
+/* Champ natif masqué mais accessible au clavier et aux lecteurs d'écran. */
+.file-input input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.import-options { display: grid; grid-template-columns: 1fr minmax(260px, 340px); gap: 12px; align-items: start; }
+/* Hauteur fixe : la carte entière tient dans l'aperçu, même très haute (Moria). */
+.import-preview { width: 100%; height: min(72vh, 720px); position: sticky; top: 0; border-radius: var(--radius); background: var(--bg-tertiary); touch-action: none; cursor: grab; }
+.preview-road { cursor: pointer; }
+.import-settings { display: grid; gap: 10px; align-content: start; }
+.import-settings fieldset, .import-confirm fieldset { border: 1px solid var(--divider); border-radius: var(--radius); padding: 8px 10px; display: grid; gap: 6px; margin: 0; }
+.import-settings legend, .import-confirm legend { padding: 0 4px; color: var(--header-secondary); font-size: 13px; }
+.import-settings label, .import-confirm label { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.server-slot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.server-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.attach-row { justify-content: space-between; }
+select, input[type="text"], input:not([type]), input[type="number"] {
+  font: inherit; font-size: 14px; padding: 4px 8px; border-radius: 4px; border: 0; background: var(--bg-tertiary); color: var(--text-normal);
+}
+.import-summary { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.import-nav { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.import-error { margin: 0; color: var(--red); }
+.import-warning { margin: 0; color: var(--yellow); }
+.small-text { font-size: 13px; margin: 0; }
+.import-confirm, .import-progress { display: grid; gap: 10px; max-width: 560px; }
+.progress { height: 10px; border-radius: 5px; background: var(--bg-tertiary); overflow: hidden; }
+.progress-bar { height: 100%; background: var(--brand); transition: width .4s ease; }
+.progress-bar.rollback { background: var(--danger); }
+@media (max-width: 700px) {
+  .import-options { grid-template-columns: 1fr; }
+  .import-preview { height: 55vh; position: static; }
+}
+.import-progress button, .import-confirm .import-nav button { justify-self: start; }
+label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { flex-wrap: nowrap; align-items: flex-start; }
+.generate-canvas { min-height: 360px; height: min(72vh, 720px); border-radius: var(--radius); overflow: hidden; background: var(--bg-tertiary); }
+.generate-canvas .import-preview { height: 100%; position: static; }
+.generate-add_place { cursor: crosshair; }
+.generate-delete .map-place, .generate-delete .preview-road { cursor: not-allowed; }
+.road-handle { fill: #f0b232; stroke: #111214; stroke-width: 2; cursor: move; }
+@media (max-width: 700px) { .generate-canvas { height: 55vh; } }
+.import-preview text, .import-preview .map-label { user-select: none; -webkit-user-select: none; }
+
+/* Musique : petite commande en haut à droite de la carte (le bas droit est au voyage). */
+.music-control { display: flex; align-items: center; gap: 6px; max-width: 360px; padding: 4px 8px; border-radius: 999px; background: var(--bg-floating, rgba(17, 18, 20, 0.85)); color: var(--text-normal); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); }
+.music-title { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.music-control input[type=range] { width: 80px; flex: none; }
+.music-control .icon-button { flex: none; }
+.music-control button { white-space: nowrap; }
+.music-control { flex-wrap: wrap; border-radius: 16px; }
+.music-hide-video { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); }
+/* Lecteur YouTube : visible, 200 × 200 au moins (règles de YouTube), jamais recouvert. */
+.music-dock { position: absolute; right: 12px; top: 12px; z-index: 4; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; max-width: calc(100% - 24px); }
+.music-video { flex: none; width: 200px; height: 200px; border: 0; border-radius: 8px; background: #000; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); }
+
+/* Page admin « Musique ». */
+.music-dialog { width: min(820px, 100%); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; }
+.music-admin { display: grid; gap: 12px; }
+.music-admin section { display: grid; gap: 8px; }
+.music-admin h3 { margin: 0; font-size: 16px; color: var(--header-primary); }
+.music-upload label { display: grid; gap: 4px; }
+.music-upload label.music-rights { display: flex; align-items: center; gap: 6px; }
+.music-upload > button { justify-self: start; }
+.music-tracks { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.music-track { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--divider); border-radius: var(--radius); }
+.music-track-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.music-track-head input { flex: 1 1 200px; min-width: 0; }
+.music-spots { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chip { min-height: 24px; padding: 2px 10px; border-radius: 999px; font-size: 13px; background: var(--bg-tertiary); color: var(--text-normal); }
+.chip.road { border: 1px dashed var(--divider); }
+.music-picker { display: grid; gap: 6px; }
+.music-picker ul { list-style: none; margin: 0; padding: 4px 8px; max-height: 220px; overflow-y: auto; border: 1px solid var(--divider); border-radius: var(--radius); }
+.music-picker label { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+
+/* ---------- Naissance d'un univers (fin d'import, UniverseGenesis) ---------- */
+.genesis { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; overflow: hidden; cursor: pointer; }
+/* Espace : noir profond et quelques étoiles, masque la carte qui se charge derrière. */
+.genesis-space {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(1px 1px at 12% 22%, rgb(255 255 255 / .7), transparent 60%),
+    radial-gradient(1px 1px at 78% 14%, rgb(255 255 255 / .5), transparent 60%),
+    radial-gradient(1.5px 1.5px at 64% 72%, rgb(255 255 255 / .6), transparent 60%),
+    radial-gradient(1px 1px at 30% 84%, rgb(255 255 255 / .4), transparent 60%),
+    radial-gradient(1px 1px at 90% 58%, rgb(255 255 255 / .5), transparent 60%),
+    radial-gradient(1px 1px at 46% 38%, rgb(255 255 255 / .3), transparent 60%),
+    radial-gradient(ellipse at center, #0b0c1a 0%, #000 70%);
+}
+/* Barre de message façon Discord. */
+.genesis-input {
+  position: relative; z-index: 1;
+  width: min(560px, calc(100vw - 32px)); box-sizing: border-box;
+  min-height: 44px; padding: 11px 16px; border-radius: 8px;
+  background: #383a40; color: var(--text-normal); font-size: 16px; line-height: 22px;
+  white-space: pre-wrap; word-break: break-word; text-align: left;
+  box-shadow: 0 8px 32px rgb(0 0 0 / .6);
+}
+.genesis-command { color: #c9cdfb; font-weight: 600; }
+.genesis-option {
+  display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 4px;
+  background: #4e5058; color: var(--header-secondary); font-size: 14px;
+}
+.genesis-value { color: var(--header-primary); }
+.genesis-caret {
+  display: inline-block; width: 2px; height: 18px; margin-left: 1px; vertical-align: -3px;
+  background: var(--header-primary); animation: genesis-blink 1s steps(1) infinite;
+}
+@keyframes genesis-blink { 50% { opacity: 0; } }
+/* Entrée : la barre se resserre en un point de lumière. */
+.genesis-enter .genesis-input { animation: genesis-collapse 520ms cubic-bezier(.6, 0, .9, .4) forwards; }
+.genesis-enter .genesis-caret { display: none; }
+@keyframes genesis-collapse {
+  0% { transform: scale(1); }
+  20% { transform: scale(1.03); background: #4a4d55; }
+  65% { transform: scale(1, .06); background: #fff; color: transparent; box-shadow: 0 0 40px 12px #fff; }
+  100% { transform: scale(0, 0); background: #fff; color: transparent; box-shadow: 0 0 60px 30px #fff; }
+}
+.genesis-bang .genesis-input, .genesis-white .genesis-input, .genesis-reveal .genesis-input { visibility: hidden; }
+/* Big bang : un point blanc qui envahit l'écran, avec une onde de choc. */
+.genesis-flash, .genesis-shockwave {
+  position: absolute; left: 50%; top: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px;
+  border-radius: 50%; transform: scale(0); pointer-events: none;
+}
+.genesis-flash { z-index: 2; background: radial-gradient(circle, #fff 0%, #fff 55%, #fff8e7 75%, rgb(255 255 255 / 0) 100%); }
+.genesis-shockwave { z-index: 3; border: 2px solid rgb(255 255 255 / .9); box-shadow: 0 0 24px 6px rgb(190 200 255 / .6); }
+.genesis-bang .genesis-flash { animation: genesis-bang 900ms cubic-bezier(.75, 0, .85, .25) forwards; }
+.genesis-bang .genesis-shockwave { animation: genesis-wave 700ms cubic-bezier(.2, .6, .3, 1) forwards; }
+@keyframes genesis-bang { 0% { transform: scale(.4); } 25% { transform: scale(2); } 100% { transform: scale(260); } }
+@keyframes genesis-wave { 0% { transform: scale(.5); opacity: 1; } 100% { transform: scale(70); opacity: 0; } }
+.genesis-white .genesis-flash, .genesis-reveal .genesis-flash { transform: scale(260); }
+/* Blanc : le nom de l'univers apparaît, puis tout se dissipe sur la carte. */
+.genesis-title {
+  position: absolute; z-index: 4; margin: 0; padding: 0 16px; text-align: center;
+  color: #1e1f22; font-size: clamp(24px, 5vw, 44px); font-weight: 800; letter-spacing: .18em; text-transform: uppercase;
+  opacity: 0; transform: scale(.96); transition: opacity 600ms ease, transform 1800ms ease-out;
+}
+.genesis-white .genesis-title { opacity: 1; transform: scale(1); }
+.genesis-reveal { pointer-events: none; }
+.genesis-reveal .genesis-space { display: none; }
+.genesis-reveal .genesis-flash { opacity: 0; transition: opacity 1400ms ease-in-out; }
+.genesis-reveal .genesis-title { opacity: 0; transform: scale(1.04); transition: opacity 900ms ease, transform 1400ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .genesis *, .genesis-input { animation: none !important; }
+}
+
+/* ---------- Menu de gauche : inventaire et mode admin ---------- */
+/* L'import de carte était un bouton flottant (`position: absolute` sans ancêtre positionné, donc
+   placé par rapport à la page) : il recouvrait le bas du panneau de gauche. Il fait maintenant
+   partie de la barre d'actions admin, dans le flux du panneau. */
+.side-panel-message { margin: 12px; font-size: 14px; }
+.admin-actions .action-travel { margin-top: 4px; }
+/* Inventaire : à droite de la carte, pour laisser voir la fenêtre de voyage pendant un trajet. */
+.inventory-window { left: auto; right: 12px; width: min(420px, calc(100% - 24px)); }
+.inventory-window h2 { margin: 0; }
+.admin-window { width: min(560px, calc(100% - 24px)); }
+.editor-window { bottom: 12px; }
+.teleport-window { width: min(440px, calc(100% - 24px)); }
+.admin-section { display: grid; gap: 6px; }
+.admin-section h3 { margin: 0; font-size: 12px; line-height: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; color: var(--header-secondary); }
+.admin-section > button { justify-self: start; }
+/* Fenêtre ouverte depuis la barre : bouton souligné (l'occupation en cours reste en jaune). */
+.actions button[aria-pressed="true"]:not(.active) { box-shadow: inset 0 0 0 2px rgb(255 255 255 / .55); }
+.admin-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.admin-toolbar input[type="search"] { flex: 1 1 160px; min-width: 0; }
+.admin-window input, .admin-window select, .admin-window textarea {
+  font: inherit; font-size: 14px; color: var(--text-normal); background: var(--bg-tertiary);
+  border: 1px solid var(--bg-tertiary); border-radius: 4px; padding: 6px 8px; min-height: 32px; max-width: 100%;
+}
+.admin-window input:focus-visible, .admin-window select:focus-visible, .admin-window textarea:focus-visible { outline: 2px solid #00a8fc; outline-offset: 0; }
+.admin-window textarea { resize: vertical; width: 100%; }
+.admin-window .mono { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; }
+.admin-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 50vh; overflow-y: auto; }
+.admin-row {
+  width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; text-align: left; min-height: 36px;
+  padding: 6px 8px; background: var(--bg-floating); color: var(--text-normal); font-weight: 400;
+}
+.admin-row:hover { background: var(--bg-hover); }
+.admin-row .name { color: var(--header-primary); font-weight: 600; }
+.admin-row .statuses { flex-basis: 100%; }
+/* Case, nom et badge sur la première ligne ; la position dessous, alignée sur le nom. */
+.player-list label { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 2px 8px; padding: 6px 8px; border-radius: 4px; background: var(--bg-floating); cursor: pointer; }
+.player-list label > .muted { grid-column: 2 / -1; font-size: 13px; }
+.player-list label > .usage { grid-column: 3; grid-row: 1; }
+.player-list label:hover { background: var(--bg-hover); }
+.player-list .name { color: var(--header-primary); font-weight: 600; }
+.player-list input[type="checkbox"] { min-height: 0; width: 16px; height: 16px; margin: 0; flex: none; }
+.admin-results { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.admin-results li.ok::before { content: "✓ "; color: var(--green); }
+.admin-results li.missing::before { content: "✗ "; color: var(--red); }
+.admin-actions-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.admin-form { display: grid; gap: 10px; }
+.admin-form > .row { display: flex; align-items: center; gap: 8px; }
+.admin-form .form-title { margin: 0; overflow-wrap: anywhere; }
+.admin-form fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 10px; min-width: 0; }
+.admin-form label { display: grid; gap: 4px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; color: var(--header-secondary); }
+.admin-form label > * { text-transform: none; letter-spacing: normal; font-weight: 400; }
+.admin-form label.checkbox { display: flex; align-items: center; gap: 8px; }
+.admin-form label.checkbox input { min-height: 0; width: 16px; height: 16px; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.delay-input { display: flex; gap: 6px; }
+.delay-input input { width: 90px; }
+.recipe-edit-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.recipe-edit-lines li { display: flex; gap: 6px; align-items: center; }
+.recipe-edit-lines select { flex: 1 1 auto; min-width: 0; }
+.recipe-edit-lines input { width: 80px; }
+.small-text { font-size: 12px; line-height: 16px; margin: 0; }
+@media (max-width: 640px) {
+  .inventory-window { left: 8px; right: 8px; top: 8px; width: auto; max-height: none; }
+  .admin-window { left: 8px; right: 8px; top: 8px; bottom: 8px; width: auto; max-height: none; }
+  .admin-list { max-height: none; }
+  .admin-window input, .admin-window select, .admin-window textarea { min-height: 40px; font-size: 16px; }
+}
+
+/* ---------- Fiche d'un lieu (mode admin) et texte publié (joueurs) ---------- */
+/* À droite de la carte : les fenêtres du panneau (voyage, craft) restent à gauche. */
+.place-sheet { left: auto; right: 12px; width: min(440px, calc(100% - 24px)); bottom: 12px; border-left-color: var(--yellow); }
+.place-facts { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; }
+.place-facts dt { color: var(--header-secondary); font-weight: 600; }
+.place-facts dd { margin: 0; overflow-wrap: anywhere; }
+.place-facts a, .publish-report a { color: #00a8fc; }
+.place-description { display: grid; gap: 4px; }
+.place-description .label { font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--header-secondary); }
+.place-description textarea, .loot-dialog input:not([type="checkbox"]), .newcomer-field input, .newcomer-field textarea {
+  box-sizing: border-box; width: 100%; padding: 8px 10px; border: 0; border-radius: 4px;
+  background: var(--bg-tertiary); color: var(--text-normal); font: inherit;
+}
+.place-description textarea { resize: vertical; min-height: 120px; }
+.place-description .counter { justify-self: end; font-size: 12px; }
+.place-description .counter.over { color: var(--red); }
+.place-sheet .row, .loot-dialog .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.loot-dialog .row.end { justify-content: flex-end; }
+.publish-report { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.publish-report li { padding: 4px 8px; border-radius: 4px; background: var(--bg-tertiary); border-left: 3px solid var(--green); }
+.publish-report li.status-no_forum, .publish-report li.status-failed { border-left-color: var(--red); }
+.publish-report li.status-recreated { border-left-color: var(--yellow); }
+.publish-report .name { color: var(--header-primary); font-weight: 600; }
+.place-lore {
+  position: absolute; right: 12px; top: 12px; z-index: 2; width: min(340px, calc(100% - 24px)); max-height: 45%; overflow-y: auto;
+  background: var(--bg-secondary); border-left: 4px solid var(--green); border-radius: 4px; padding: 12px 16px;
+  display: grid; gap: 8px; box-shadow: 0 8px 16px rgb(0 0 0 / .24); font-size: 14px; line-height: 18px;
+}
+.lore-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Éditeur de table de butin : modale large, lignes qui passent à la ligne sur téléphone. */
+.loot-dialog { width: min(900px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; display: grid; gap: 10px; font-size: 14px; }
+.loot-targets { display: flex; gap: 8px; }
+.loot-settings { display: flex; gap: 12px; flex-wrap: wrap; }
+.loot-settings label { display: grid; gap: 4px; width: 180px; }
+.loot-entries { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.loot-entry { display: grid; gap: 6px; padding: 8px 10px; border-radius: var(--radius); background: var(--bg-floating); justify-items: start; }
+.loot-row { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; width: 100%; }
+.loot-row label { display: grid; gap: 2px; width: 84px; font-size: 12px; color: var(--header-secondary); }
+.loot-row label.grow { flex: 1 1 200px; width: auto; }
+.loot-row label.check { display: flex; align-items: center; gap: 4px; width: auto; min-height: 36px; }
+.loot-set-items { display: grid; gap: 6px; width: 100%; box-sizing: border-box; padding-left: 16px; border-left: 2px solid var(--divider); justify-items: start; }
+@media (max-width: 640px) {
+  .place-sheet { left: 8px; right: 8px; top: auto; bottom: 8px; width: auto; max-height: 60%; }
+  .place-lore { left: 8px; right: 8px; top: 8px; width: auto; max-height: 35%; }
+  .loot-dialog { max-height: calc(100vh - 16px); padding: 12px; }
+  .loot-row label { width: calc(33% - 8px); }
+  .loot-row label.grow { flex-basis: 100%; }
+  .loot-dialog .row button, .place-sheet .row button { min-height: 44px; }
+}
+
+/* Joueur sans personnage : création de personnage, mode spectateur. */
+.newcomer { display: grid; gap: 12px; padding: 16px; }
+.newcomer h2 { margin: 0; font-size: 18px; color: var(--header-primary); }
+.newcomer p { margin: 0; }
+.newcomer-field { display: grid; gap: 4px; }
+.newcomer-field .label { font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--header-secondary); }
+.newcomer-field textarea { resize: vertical; }
+.newcomer-field .counter { justify-self: end; font-size: 12px; }
+.newcomer .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.newcomer .actions { padding: 0; }
+
+/* Fenêtre de voyage : groupe (membres, invitations, créer / rejoindre). */
+.group-section { display: grid; gap: 8px; border-top: 1px solid var(--divider); padding-top: 10px; }
+.group-section h3 { margin: 0; font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--header-secondary); }
+.group-section p { margin: 0; }
+.group-section .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.group-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.group-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; border-radius: 4px; background: var(--bg-tertiary); }
+.group-list .name { color: var(--header-primary); font-weight: 500; }
+.group-list.invites li { border-left: 3px solid var(--yellow); }
+
+/* Notification de butin (fin de fouille), en haut au centre de la carte. */
+.loot-toast {
+  position: absolute; top: 64px; left: 50%; transform: translateX(-50%); z-index: 6; width: min(320px, calc(100% - 24px));
+  background: var(--bg-floating, #111214); border-left: 4px solid var(--green); border-radius: 6px; padding: 10px 12px 12px;
+  box-shadow: 0 8px 16px rgb(0 0 0 / .32); display: grid; gap: 6px; font-size: 14px; overflow: hidden;
+  animation: loot-toast-in .2s ease-out;
+}
+.loot-toast header { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--header-primary); }
+.loot-toast ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.loot-toast .qty { font-weight: 700; color: var(--header-primary); font-variant-numeric: tabular-nums; }
+.loot-toast p { margin: 0; }
+.loot-toast-timer { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; background: var(--green); transform-origin: left; animation: loot-toast-timer linear forwards; }
+@keyframes loot-toast-in { from { opacity: 0; transform: translate(-50%, -8px); } }
+@keyframes loot-toast-timer { to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) { .loot-toast, .loot-toast-timer { animation: none; } }
+
+/* Inventaire : objet choisi et son action (« Utiliser »). */
+.item-card.selectable { cursor: pointer; }
+.item-card.selectable:hover { background: var(--bg-modifier-hover, rgb(78 80 88 / .3)); }
+.item-card.selected { outline: 2px solid var(--brand, #5865f2); outline-offset: -2px; }
+.item-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.group-speed { margin: 0; }
+.group-speed strong { color: var(--header-primary); }
+
+/* Lecteur de musique flottant : déplacé par sa poignée, aimanté aux bords (`music/dock.ts`). */
+.map-view .music-dock.placed { right: auto; bottom: auto; align-items: flex-start; }
+.music-grip { cursor: grab; touch-action: none; font-size: 16px; line-height: 1; width: 28px; height: 28px; user-select: none; }
+.music-grip:active { cursor: grabbing; }
+
+/* Aperçu de l'import : outil lasso (zone à importer). */
+.import-preview-wrap { display: grid; gap: 6px; min-width: 0; }
+.lasso-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.import-preview.lasso { cursor: crosshair; user-select: none; -webkit-user-select: none; }
+.dialog-backdrop:has(.import-dialog) { padding: 8px; }
+.map-source { display: grid; gap: 6px; padding: 10px 12px; border-radius: 6px; background: var(--bg-tertiary); }
+.map-source h3 { margin: 0; font-size: 14px; color: var(--header-primary); }
+.map-source p { margin: 0; }

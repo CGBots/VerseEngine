@@ -1,5 +1,5 @@
 use crate::{tr_locale};
-use serenity::all::{CacheHttp, Color, ComponentInteraction, CreateEmbed, CreateInputText, CreateInteractionResponse, EditMessage, InputTextStyle};
+use serenity::all::{Color, ComponentInteraction, CreateEmbed, CreateInputText, CreateInteractionResponse, EditMessage, InputTextStyle};
 use serenity::client::Context as SerenityContext;
 use serenity::utils::CreateQuickModal;
 use std::time::Duration;
@@ -7,7 +7,7 @@ use crate::database::server::{get_server_by_id, Server};
 use crate::database::recipe::Recipe;
 use crate::discord::poise_structs::{Context, Error};
 use crate::recipe::execute_recipe_modal;
-use crate::utility::recipe_parser::RecipeParser;
+use crate::recipe::service::{save_recipe, SaveError};
 use crate::utility::reply::{reply, reply_with_args_and_ephemeral};
 
 /// Crée une nouvelle recette (admin ou joueur).
@@ -34,7 +34,6 @@ pub async fn create(
     }
 
     let existing_recipe = Recipe::get_by_name(server.universe_id, &name).await?;
-    let wiki_posts_id = existing_recipe.as_ref().and_then(|r| r.wiki_posts_id.clone());
     let default_content = existing_recipe.map(|r| r.raw_text).unwrap_or_default();
 
     let modal_result = match ctx {
@@ -46,29 +45,11 @@ pub async fn create(
 
     if let Some(modal_data) = modal_result {
         if is_admin {
-            let parsed = RecipeParser::parse(&modal_data.content, server.universe_id).await;
-            
-            match parsed {
-                Ok(p) => {
-                    let mut recipe = Recipe {
-                        _id: None,
-                        universe_id: server.universe_id,
-                        tool_id: None,
-                        ingredients: p.ingredients,
-                        result: p.result,
-                        tools_needed: p.tools_needed,
-                        delay: delay.unwrap_or(0),
-                        raw_text: modal_data.content,
-                        recipe_name: name.clone(),
-                        wiki_posts_id: wiki_posts_id,
-                    };
-
-                    sync_recipe_wiki(ctx.serenity_context(), &mut recipe, &server, into_wiki.unwrap_or(false)).await?;
-                    
-                    recipe.upsert().await?;
+            match save_recipe(ctx.serenity_context(), server.universe_id, &name, delay.unwrap_or(0), modal_data.content, into_wiki.unwrap_or(false)).await {
+                Ok(()) => {
                     reply(ctx, Ok("recipe__create_success")).await?;
                 }
-                Err(e) => {
+                Err(SaveError::Parse(e)) => {
                     if e.starts_with("recipe__item_not_found:") {
                         let item_name = e.strip_prefix("recipe__item_not_found:").unwrap();
                         let mut args = fluent::FluentArgs::new();
@@ -78,6 +59,7 @@ pub async fn create(
                         reply(ctx, Err(e.into())).await?;
                     }
                 }
+                Err(SaveError::Other(e)) => return Err(e),
             }
         } else {
             // Pour les joueurs, on envoie aux logs de l'univers
@@ -174,27 +156,11 @@ pub async fn approve_recipe(ctx: SerenityContext, component_interaction: Compone
     let into_wiki = embed.fields.iter().find(|f| f.name.contains("Wiki"))
         .map(|f| f.value.contains("Oui") || f.value.contains("Yes")).unwrap_or(false);
 
-    let parsed = RecipeParser::parse(&content, server.universe_id).await?;
-    
-    let existing_recipe = Recipe::get_by_name(server.universe_id, &recipe_name).await?;
-    let wiki_posts_id = existing_recipe.as_ref().and_then(|r| r.wiki_posts_id.clone());
-
-    let mut recipe = Recipe {
-        _id: None,
-        universe_id: server.universe_id,
-        tool_id: None,
-        ingredients: parsed.ingredients,
-        result: parsed.result,
-        tools_needed: parsed.tools_needed,
-        delay,
-        raw_text: content,
-        recipe_name,
-        wiki_posts_id: wiki_posts_id,
-    };
-
-    sync_recipe_wiki(&ctx, &mut recipe, &server, into_wiki).await?;
-    
-    recipe.upsert().await?;
+    match save_recipe(&ctx, server.universe_id, &recipe_name, delay, content, into_wiki).await {
+        Ok(()) => {}
+        Err(SaveError::Parse(e)) => return Err(e.into()),
+        Err(SaveError::Other(e)) => return Err(e),
+    }
 
     // Mettre à jour l'embed pour montrer qu'il est approuvé
     let mut new_embed = CreateEmbed::from(embed.clone());
@@ -290,85 +256,4 @@ pub async fn modify_recipe_interaction(ctx: SerenityContext, component_interacti
     }
 
     Ok("recipe__modified")
-}
-
-async fn sync_recipe_wiki(ctx: &impl CacheHttp, recipe: &mut Recipe, server: &Server, into_wiki: bool) -> Result<(), Error> {
-    // Nettoyage des imports inutilisés détectés par cargo check
-    use crate::discord::channels::RECIPE_TAG;
-    use serenity::all::{CreateForumPost, CreateMessage, Colour, EditChannel, CreateForumTag};
-    use crate::database::universe::get_servers_from_universe;
-    use futures::TryStreamExt;
-
-    let mut wiki_posts = recipe.wiki_posts_id.clone().unwrap_or_default();
-
-    if !into_wiki {
-        // Supprimer les posts existants
-        for (_guild_id, message_id) in wiki_posts.drain(..) {
-            // On tente de supprimer, on ignore les erreurs si le post est déjà supprimé
-            let _ = ctx.http().delete_message(message_id.into(), message_id.into(), None).await;
-            // Note: Discord forum posts sont des threads, delete_message sur le message_id du post
-            // pourrait ne pas être suffisant ou correct selon comment serenity le gère.
-            // En fait, create_forum_post renvoie un GuildChannel (le thread).
-            // Pour supprimer un thread, on utilise delete_channel.
-            let _ = ctx.http().delete_channel(message_id.into(), None).await;
-        }
-        recipe.wiki_posts_id = None;
-        return Ok(());
-    }
-    
-    let embed = CreateEmbed::new()
-        .title(recipe.recipe_name.clone())
-        .description(format!("```\n{}\n```", recipe.raw_text))
-        .field("Délai/Delay", recipe.delay.to_string(), true)
-        .colour(Colour::from_rgb(25, 125, 255));
-
-    let mut servers_cursor = get_servers_from_universe(&server.universe_id).await?;
-    while let Some(server_doc) = servers_cursor.try_next().await? {
-        if let Some(wiki_channel_id) = server_doc.rp_wiki_channel_id {
-            if wiki_posts.iter().any(|(guild_id, _)| *guild_id == server_doc.server_id) {
-                // TODO: Update existing post if needed
-                continue; 
-            }
-
-            if let Ok(wiki_channel) = ctx.http().get_channel(wiki_channel_id.id.into()).await {
-                let Some(mut channel) = wiki_channel.guild() else { continue };
-                
-                let mut recipe_tag = channel.available_tags.iter().find(|tag| {
-                    tag.name.to_lowercase() == RECIPE_TAG.to_lowercase() || tag.name == "Recette"
-                }).map(|t| t.id);
-
-                if recipe_tag.is_none() {
-                    let mut tags: Vec<CreateForumTag> = channel.available_tags.iter().map(|tag| {
-                        let mut t = CreateForumTag::new(tag.name.clone());
-                        // On ignore l'emoji pour l'instant car la structure ForumEmoji semble opaque ou changeante
-                        // et sa reconstruction pose des problèmes de compilation.
-                        t = t.moderated(tag.moderated);
-                        t
-                    }).collect();
-                    
-                    tags.push(CreateForumTag::new("Recette"));
-                    
-                    let edit = EditChannel::new().available_tags(tags);
-                    if let Ok(updated_channel) = channel.id.edit(ctx, edit).await {
-                        channel = updated_channel;
-                        recipe_tag = channel.available_tags.iter().find(|tag| {
-                            tag.name == "Recette"
-                        }).map(|t| t.id);
-                    }
-                }
-                
-                let mut post_builder = CreateForumPost::new(recipe.recipe_name.clone(), CreateMessage::new().embed(embed.clone()));
-                if let Some(tag_id) = recipe_tag {
-                    post_builder = post_builder.add_applied_tag(tag_id);
-                }
-                
-                if let Ok(post) = channel.create_forum_post(ctx, post_builder).await {
-                    wiki_posts.push((server_doc.server_id, post.id.get()));
-                }
-            }
-        }
-    }
-    
-    recipe.wiki_posts_id = if wiki_posts.is_empty() { None } else { Some(wiki_posts) };
-    Ok(())
 }

@@ -1,7 +1,7 @@
 use futures::TryStreamExt;
-use serenity::all::{CreateChannel, CreateEmbed, CreateForumPost, CreateMessage, EditRole, PermissionOverwrite, PermissionOverwriteType, Permissions, RoleId};
-use serenity::all::ChannelType::Category;
-use crate::database::places::Place;
+use serenity::all::{CreateEmbed, CreateForumPost, CreateMessage};
+use crate::provisioning::place::provision_place;
+use crate::provisioning::Provisioner;
 use crate::database::server::{get_server_by_id, Server};
 use crate::discord::channels::PLACE_TAG;
 use crate::discord::poise_structs::{Context, Error};
@@ -21,13 +21,10 @@ pub async fn create_place(
 
 /// Asynchronously creates a new "place" within the given server context.
 ///
-/// This function performs several steps to create a "place," which consists of:
-/// - Creating a new server role.
-/// - Creating a new channel category associated with the role.
-/// - Ensuring proper permissions and relationships between the role and channel.
-/// - Persisting the "place" data in the database.
-///
-/// If any step fails, the function attempts to roll back changes to leave the server in a consistent state.
+/// The place is created by [`provision_place`], shared with the map import: a role, a category
+/// visible to that role, a generic text channel (`place-centrale` / `central-square` depending on
+/// the server language) and the database document. If any step fails, everything created so far
+/// is deleted. The new place is then announced in the wiki forum of the other servers.
 ///
 /// # Arguments
 /// - `ctx`: The context of the current operation, used to interact with the server and manage permissions.
@@ -70,46 +67,21 @@ pub async fn _create_place(ctx: &Context<'_>, name: String) -> Result<&'static s
         Err(_) => {return Err("create_place__database_not_found".into())}
     };
 
-    let new_role = EditRole::new()
-        .name(name.clone())
-        .position(0)
-        .audit_log_reason("Create new place");
-
-    let mut role = match guild_id.create_role(ctx, new_role).await {
-        Ok(role) => {role}
-        Err(_) => {return Err("create_place__role_not_created".into())}
-    };
-
-    let permissions = vec![PermissionOverwrite {
-        allow: Permissions::VIEW_CHANNEL
-            | Permissions::SEND_MESSAGES
-            | Permissions::READ_MESSAGE_HISTORY,
-        deny: Permissions::empty(),
-        kind: PermissionOverwriteType::Role(role.id),
-    },
-    PermissionOverwrite {
-        allow: Permissions::empty(),
-        deny: Permissions::VIEW_CHANNEL,
-        kind: PermissionOverwriteType::Role(RoleId::new(guild_id.get())),
-    }];
-
-    let new_channel = CreateChannel::new(name.clone())
-            .kind(Category)
-            .permissions(permissions);
-
-    let new_place = match guild_id.create_channel(ctx, new_channel).await {
-        Ok(channel) => {channel}
-        Err(_) => {
-            match role.delete(ctx).await {
-                Ok(_) => {return Err("create_place__rollback_complete".into())}
-                Err(_) => {return Err("create_role__rollback_failed".into())}
-            };
+    // Même création que l'import de carte : rôle, catégorie, salon générique (I5), document.
+    let locale = guild_locale(ctx.http(), guild_id.get()).await;
+    let mut provisioner = Provisioner::new(ctx.serenity_context().http.clone());
+    let place = match provision_place(&mut provisioner, server.universe_id, guild_id.get(), &name, &locale).await {
+        Ok(place) => place,
+        Err(e) if e.left_over.is_empty() => {
+            return Err(if e.key == "create_place__role_not_created" { e.key } else { "create_place__rollback_complete" }.into())
         }
+        Err(_) => return Err("create_role__rollback_failed".into()),
     };
+    provisioner.finish().await;
 
     let embed = CreateEmbed::new()
-        .title(name.clone().to_string())
-        .field(tr!(ctx.clone(), "create_place__channel_id"), "`".to_string() + new_place.clone().id.get().to_string().as_str() + "`", true);
+        .title(place.name.clone())
+        .field(tr!(ctx.clone(), "create_place__channel_id"), "`".to_string() + place.category_id.to_string().as_str() + "`", true);
 
     let Ok(servers_cursor) = server.get_other_servers().await else {return Err("create_place__servers_not_found".into())};
     let Ok(servers) = servers_cursor.try_collect::<Vec<Server>>().await else {return Err("create_place__server_collect_failed".into())};
@@ -124,38 +96,14 @@ pub async fn _create_place(ctx: &Context<'_>, name: String) -> Result<&'static s
             }
             let _ = channel.create_forum_post(ctx, post).await;
         }
-
     }
+    Ok("create_place__success")
+}
 
-    let place = Place{
-        _id: Default::default(),
-        universe_id: server.universe_id,
-        server_id: server.server_id,
-        category_id: new_place.id.get(),
-        role: role.id.get(),
-        name: new_place.name.clone(),
-        modifiers: vec![],
-    };
-
-    let mut session = crate::database::db_client::get_db_client().await.start_session().await?;
-    session.start_transaction().await?;
-
-    match place.insert_with_session(&mut session).await {
-        Ok(_) => {
-            session.commit_transaction().await?;
-            Ok("create_place__success")
-        }
-        Err(_) => {
-            session.abort_transaction().await?;
-            match role.delete(ctx).await {
-                Ok(_) => {}
-                Err(_) => {return Err("create_role__rollback_failed".into())}
-            };
-
-            match new_place.delete(ctx).await {
-                Ok(_) => {Err("create_place__rollback_complete".into())}
-                Err(_) => {Err("create_role__rollback_failed".into())}
-            }
-        }
+/// Langue préférée du serveur (`preferred_locale`), `fr` si elle est inconnue.
+pub async fn guild_locale(http: &serenity::all::Http, guild_id: u64) -> String {
+    match http.get_guild(serenity::all::GuildId::new(guild_id)).await {
+        Ok(g) => g.preferred_locale,
+        Err(_) => "fr".to_string(),
     }
 }

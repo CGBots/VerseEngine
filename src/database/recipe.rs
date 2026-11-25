@@ -113,4 +113,24 @@ impl Recipe {
         use futures::TryStreamExt;
         cursor.try_collect().await
     }
+
+    /// Remplace la recette d'identifiant `_id` (éditeur de l'activité : le nom peut changer, la
+    /// recette garde son identifiant, auquel les crafts en cours se réfèrent).
+    pub async fn replace_by_id(&self) -> mongodb::error::Result<mongodb::results::UpdateResult> {
+        let id = self._id.ok_or_else(|| mongodb::error::Error::custom("recipe without _id"))?;
+        get_db_client().await
+            .database(VERSEENGINE_DB_NAME)
+            .collection::<Recipe>(RECIPE_COLLECTION_NAME)
+            .replace_one(doc! {"_id": id, "universe_id": self.universe_id}, self)
+            .await
+    }
+
+    pub async fn delete_by_id(universe_id: ObjectId, id: ObjectId) -> mongodb::error::Result<bool> {
+        let res = get_db_client().await
+            .database(VERSEENGINE_DB_NAME)
+            .collection::<Recipe>(RECIPE_COLLECTION_NAME)
+            .delete_one(doc! {"_id": id, "universe_id": universe_id})
+            .await?;
+        Ok(res.deleted_count > 0)
+    }
 }

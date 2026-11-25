@@ -44,6 +44,19 @@ pub async fn get_item_by_id(item_id: ObjectId) -> mongodb::error::Result<Option<
         .await
 }
 
+/// Tous les objets d'un univers (noms des ingrédients du livre de recettes, cartes d'inventaire).
+pub async fn get_items_by_universe(universe_id: ObjectId) -> mongodb::error::Result<Vec<Item>> {
+    use futures::TryStreamExt;
+    let db_client = get_db_client().await;
+    db_client
+        .database(VERSEENGINE_DB_NAME)
+        .collection::<Item>(ITEM_COLLECTION_NAME)
+        .find(doc! {"universe_id": universe_id})
+        .await?
+        .try_collect()
+        .await
+}
+
 impl Item {
     pub async fn save(self) -> mongodb::error::Result<InsertOneResult> {
         self.save_with_optional_session(None).await
@@ -83,5 +96,14 @@ impl Item {
             None => coll.delete_one(filter).await?,
         };
         Ok(result.deleted_count > 0)
+    }
+
+    /// Remplace l'objet de même `_id` (éditeur d'objets de l'activité).
+    pub async fn replace(self) -> mongodb::error::Result<mongodb::results::UpdateResult> {
+        get_db_client().await
+            .database(VERSEENGINE_DB_NAME)
+            .collection::<Item>(ITEM_COLLECTION_NAME)
+            .replace_one(doc! {"_id": self._id, "universe_id": self.universe_id}, &self)
+            .await
     }
 }
