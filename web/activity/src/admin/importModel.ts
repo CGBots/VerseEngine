@@ -17,6 +17,8 @@ export interface ImportChoices {
   itemActions: Map<string, 'destroy' | 'return'>;
   /** Q2 : destruction des objets sans propriétaire confirmée. */
   confirmUnowned: boolean;
+  /** Zone tracée au lasso : seuls ses bourgs et ses routes sont importés ; vide = toute la carte. */
+  zone: [number, number][];
 }
 
 export const roadKey = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
@@ -28,7 +30,7 @@ export function initialChoices(map: UploadedMap): ImportChoices {
   for (const s of map.suggestions) if (s.status === 'exact' && s.burgs.length === 1) attach.set(s.burgs[0], s.place_id);
   return {
     mode: map.has_universe ? 'merge' : 'replace', includeSea: false, secret: new Set(), attach, extraServers: [], setup: 'FullSetup',
-    startBurg: null, itemActions: new Map(), confirmUnowned: false,
+    startBurg: null, itemActions: new Map(), confirmUnowned: false, zone: [],
   };
 }
 
@@ -51,7 +53,27 @@ export function planRequest(c: ImportChoices): PlanRequest {
     attach: c.mode === 'merge' ? [...c.attach].map(([burg_id, place_id]) => ({ burg_id, place_id })) : [],
     servers,
     setup: c.setup,
+    ...(c.zone.length >= 3 ? { zone: c.zone } : {}),
   };
+}
+
+/** Points envoyés au serveur au plus (il en accepte 500). */
+export const MAX_LASSO_POINTS = 300;
+
+/**
+ * Tracé du lasso allégé : points espacés d'au moins `minStep` (unités de la carte), puis au plus
+ * `max` points pris à intervalles réguliers. Moins de 3 points : pas de zone.
+ */
+export function simplifyLasso(points: [number, number][], minStep: number, max = MAX_LASSO_POINTS): [number, number][] {
+  const kept: [number, number][] = [];
+  for (const p of points) {
+    const last = kept[kept.length - 1];
+    if (!last || Math.hypot(p[0] - last[0], p[1] - last[1]) >= minStep) kept.push([Math.round(p[0] * 10) / 10, Math.round(p[1] * 10) / 10]);
+  }
+  if (kept.length < 3) return [];
+  if (kept.length <= max) return kept;
+  const step = kept.length / max;
+  return Array.from({ length: max }, (_, i) => kept[Math.floor(i * step)]);
 }
 
 /** Emplacements à afficher : autant que de serveurs dans le plan (au moins ceux déjà choisis). */
@@ -127,8 +149,9 @@ export function summary(plan: ImportPlan): Summary {
 }
 
 /** Durée estimée : environ une demi-seconde par objet Discord (mesuré : 0,35 à 0,45 s). */
-export function estimatedMinutes(discordObjects: number): number {
-  return Math.max(1, Math.ceil((discordObjects * 0.5) / 60));
+/** Minutes affichées pour une durée estimée par le serveur (s). */
+export function estimatedMinutes(estimatedSecs: number): number {
+  return Math.max(1, Math.ceil(estimatedSecs / 60));
 }
 
 /** Avancement en %, pour la création comme pour le retour en arrière. */

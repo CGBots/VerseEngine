@@ -14,13 +14,24 @@
       clear: function () { items.clear(); },
     };
   }
+  var sandboxed = false;
   ['localStorage', 'sessionStorage'].forEach(function (name) {
     try {
       window[name].getItem('verseengine');
     } catch (e) {
+      sandboxed = true;
       Object.defineProperty(window, name, { value: memoryStorage(), configurable: true });
     }
   });
+  // Interface plus grande dans l'activité : Azgaar prend 1 sous 1280 px de large, trop petit dans
+  // Discord. On lui donne une taille d'interface de départ (ancienne clé `uiSize`, reprise par
+  // Azgaar au démarrage), bornée par ce que la fenêtre permet ; l'admin peut la changer dans les
+  // options d'Azgaar. Seulement dans le bac à sable : jamais dans le stockage réel d'un navigateur.
+  if (sandboxed) {
+    var fit = Math.min(window.innerHeight / 465, window.innerWidth / 302);
+    var size = Math.round(Math.min(1.5, Math.max(1.2, fit)) * 10) / 10;
+    window.localStorage.setItem('uiSize', String(size));
+  }
   try {
     // Hors bac à sable (développement), la base d'essai est aussitôt supprimée.
     var probe = window.indexedDB && window.indexedDB.open('verseengine-probe');

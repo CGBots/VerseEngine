@@ -60,13 +60,17 @@ export function MusicAdmin({ t, onClose }: Props) {
     }
   };
 
+  // Envoi : pourcentage envoyé, puis « vérification » (côté serveur, en tâche de fond).
+  const [progress, setProgress] = useState<number | 'checking' | null>(null);
   const blocker = lib ? uploadBlocker(file, title, rights, lib) : 'activity_ui__working';
   const upload = async () => {
     if (!file || blocker) return;
     setUploading(true);
     setError(null);
     try {
-      await musicApi.upload(await file.arrayBuffer(), title.trim(), rights);
+      await musicApi.upload(await file.arrayBuffer(), title.trim(), rights, (sent, checking) =>
+        setProgress(checking ? 'checking' : Math.round(sent * 100)),
+      );
       setFile(null);
       setTitle('');
       setRights(false);
@@ -76,6 +80,7 @@ export function MusicAdmin({ t, onClose }: Props) {
       setError(errKey(e));
     } finally {
       setUploading(false);
+      setProgress(null);
     }
   };
 
@@ -127,7 +132,11 @@ export function MusicAdmin({ t, onClose }: Props) {
             </label>
             <p className="muted">{t('activity_ui__music_formats', { max: formatBytes(lib.max_file_bytes, locale, units) })}</p>
             <button type="button" disabled={!!blocker || uploading} title={blocker ? t(blocker) : undefined} onClick={() => void upload()}>
-              {uploading ? t('activity_ui__music_checking') : t('activity_ui__music_upload')}
+              {!uploading
+                ? t('activity_ui__music_upload')
+                : typeof progress === 'number'
+                  ? t('activity_ui__music_sending', { percent: progress })
+                  : t('activity_ui__music_checking')}
             </button>
           </section>
 

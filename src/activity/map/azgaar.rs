@@ -52,6 +52,8 @@ pub struct AzgaarMap {
     /// Centres des cellules et hauteurs associées.
     pub cells: Vec<(f64, f64, u8)>,
     pub routes: Vec<Route>,
+    /// Rendu façon Azgaar (sauvegarde `.map` seulement ; voir `azgaar_style`).
+    pub style: Option<crate::database::universe_maps::MapStyle>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -176,6 +178,7 @@ pub fn parse(json: &str) -> Result<AzgaarMap, AzgaarError> {
         burgs,
         cells,
         routes,
+        style: None,
     })
 }
 

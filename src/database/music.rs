@@ -16,8 +16,8 @@ use crate::database::db_client::get_db_client;
 use crate::database::db_namespace::{MUSIC_TRACKS_COLLECTION_NAME, VERSEENGINE_DB_NAME};
 use crate::music::audio::AudioInfo;
 
-/// Quota de fichiers audio par univers (500 Mio).
-pub const MAX_UNIVERSE_BYTES: u64 = 500 * 1024 * 1024;
+/// Quota de fichiers audio par univers (3 Gio : plusieurs ambiances longues).
+pub const MAX_UNIVERSE_BYTES: u64 = 3 * 1024 * 1024 * 1024;
 /// Nombre max de morceaux par univers.
 pub const MAX_TRACKS_PER_UNIVERSE: u64 = 300;
 /// Longueur max d'un titre (caractères).
@@ -226,6 +226,46 @@ pub async fn delete_universe_music(universe_id: ObjectId) -> mongodb::error::Res
     Ok(())
 }
 
+/// Taille d'un fichier de morceau et taille de ses blocs GridFS ; `None` s'il n'existe pas.
+pub async fn track_file_layout(file_id: ObjectId) -> mongodb::error::Result<Option<(u64, u64)>> {
+    let files = db().await.collection::<mongodb::bson::Document>(&format!("{BUCKET}.files"));
+    let Some(f) = files.find_one(doc! {"_id": file_id}).await? else { return Ok(None) };
+    let num = |k: &str| match f.get(k) {
+        Some(Bson::Int32(v)) => Some(*v as u64),
+        Some(Bson::Int64(v)) => Some(*v as u64),
+        Some(Bson::Double(v)) => Some(*v as u64),
+        _ => None,
+    };
+    Ok(num("length").zip(num("chunkSize")).filter(|(_, c)| *c > 0))
+}
+
+/// Octets `start..=end` d'un fichier de morceau, lus seulement dans les blocs GridFS concernés
+/// (lecture en continu : le joueur n'a pas à tout télécharger avant d'entendre la musique).
+pub async fn read_track_range(file_id: ObjectId, chunk_size: u64, start: u64, end: u64) -> mongodb::error::Result<Vec<u8>> {
+    let chunks = db().await.collection::<mongodb::bson::Document>(&format!("{BUCKET}.chunks"));
+    let (first, last) = ((start / chunk_size) as i64, (end / chunk_size) as i64);
+    let mut cursor = chunks
+        .find(doc! {"files_id": file_id, "n": {"$gte": first, "$lte": last}})
+        .sort(doc! {"n": 1})
+        .await?;
+    let mut out = Vec::with_capacity((end - start + 1) as usize);
+    while let Some(c) = cursor.try_next().await? {
+        let n = match c.get("n") {
+            Some(Bson::Int32(v)) => *v as u64,
+            Some(Bson::Int64(v)) => *v as u64,
+            _ => continue,
+        };
+        let Ok(data) = c.get_binary_generic("data") else { continue };
+        let chunk_start = n * chunk_size;
+        let from = start.saturating_sub(chunk_start) as usize;
+        let to = ((end + 1).saturating_sub(chunk_start) as usize).min(data.len());
+        if from < to {
+            out.extend_from_slice(&data[from..to]);
+        }
+    }
+    Ok(out)
+}
+
 /// Contenu du fichier d'un morceau.
 pub async fn read_track_file(file_id: ObjectId) -> mongodb::error::Result<Vec<u8>> {
     let mut stream = bucket(&db().await).open_download_stream(Bson::ObjectId(file_id)).await?;
@@ -237,6 +277,28 @@ pub async fn read_track_file(file_id: ObjectId) -> mongodb::error::Result<Vec<u8
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
+    fn a_file_is_read_by_ranges_across_gridfs_chunks() {
+        crate::test_support::block_on(async {
+            let bytes: Vec<u8> = (0..1_000_000u32).map(|i| (i % 251) as u8).collect();
+            let file_id = ObjectId::new();
+            let db = db().await;
+            let mut up = bucket(&db).open_upload_stream(file_id.to_hex()).id(Bson::ObjectId(file_id)).await.unwrap();
+            up.write_all(&bytes).await.unwrap();
+            up.close().await.unwrap();
+            let (len, chunk) = track_file_layout(file_id).await.unwrap().unwrap();
+            let middle = read_track_range(file_id, chunk, 300_000, 600_000).await.unwrap();
+            let end = read_track_range(file_id, chunk, len - 10, len - 1).await.unwrap();
+            let first = read_track_range(file_id, chunk, 0, 0).await.unwrap();
+            bucket(&db).delete(Bson::ObjectId(file_id)).await.unwrap();
+            assert_eq!(len, 1_000_000);
+            assert_eq!(middle, bytes[300_000..=600_000]);
+            assert_eq!(end, bytes[len as usize - 10..]);
+            assert_eq!(first, bytes[..1]);
+        });
+    }
 
     #[test]
     fn titles_are_cleaned_and_bounded() {

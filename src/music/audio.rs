@@ -15,10 +15,10 @@ use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
 
-/// Taille max d'un fichier (25 Mio).
-pub const MAX_FILE_BYTES: usize = 25 * 1024 * 1024;
-/// Durée max d'un morceau (15 min).
-pub const MAX_DURATION_MS: u64 = 15 * 60 * 1000;
+/// Taille max d'un fichier (200 Mio : des heures d'ambiance). Les joueurs le lisent en continu
+/// (`/api/music/stream/…`, par plages), sans le télécharger en entier.
+pub const MAX_FILE_BYTES: usize = 200 * 1024 * 1024;
+// Pas de durée maximale : une ambiance peut durer des heures. Seule la taille du fichier compte.
 /// Part de paquets illisibles tolérée (certains encodeurs MP3 laissent un premier paquet abîmé).
 const MAX_BAD_PACKETS_RATIO: f64 = 0.01;
 
@@ -74,7 +74,6 @@ pub enum AudioError {
     UnknownFormat,
     NotAudio,
     Undecodable,
-    TooLong,
 }
 
 impl AudioError {
@@ -84,7 +83,6 @@ impl AudioError {
             AudioError::TooLarge => "activity__payload_too_large",
             AudioError::NotAudio => "activity__music_not_audio",
             AudioError::Undecodable => "activity__music_undecodable",
-            AudioError::TooLong => "activity__music_too_long",
         }
     }
 }
@@ -174,9 +172,6 @@ pub fn check_audio(bytes: &[u8]) -> Result<AudioInfo, AudioError> {
             Err(SymphoniaError::DecodeError(_)) => bad += 1,
             Err(_) => return Err(AudioError::Undecodable),
         }
-        if sample_rate > 0 && frames * 1000 / sample_rate as u64 > MAX_DURATION_MS {
-            return Err(AudioError::TooLong);
-        }
     }
     if packets == 0 || frames == 0 || sample_rate == 0 || bad as f64 > (packets as f64 * MAX_BAD_PACKETS_RATIO).max(1.0) {
         return Err(AudioError::Undecodable);
@@ -190,6 +185,17 @@ mod tests {
 
     fn fixture(name: &str) -> Vec<u8> {
         std::fs::read(format!("{}/tests/fixtures/audio/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
+    }
+
+    /// Durée de la vérification d'un gros fichier : `AUDIO_TIMING_FILE=<fichier> cargo test … -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "measure: needs AUDIO_TIMING_FILE"]
+    fn time_a_large_file_check() {
+        let path = std::env::var("AUDIO_TIMING_FILE").expect("AUDIO_TIMING_FILE");
+        let bytes = std::fs::read(path).unwrap();
+        let start = std::time::Instant::now();
+        let r = check_audio(&bytes);
+        println!("{} Mo vérifiés en {:.1} s : {:?}", bytes.len() / 1_000_000, start.elapsed().as_secs_f64(), r.map(|i| i.duration_ms / 60_000));
     }
 
     #[test]

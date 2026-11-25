@@ -125,6 +125,111 @@ fn served_mime(mime: &str) -> Option<&'static str> {
 
 /// Fichier d'un morceau. Servi comme l'image de fond de carte : type imposé, `nosniff` (en-tête
 /// global), `sandbox` (même ouvert directement, rien ne s'exécute), sans nom de fichier.
+// ---------------------------------------------------------------------------
+// Lecture en continu : un ticket (jeton aléatoire, quelques heures) donne au lecteur audio une
+// adresse sans en-tête d'authentification ; il y lit le fichier par plages (`Range`), comme un
+// site de streaming : la musique démarre aussitôt, même pour un fichier de plusieurs heures.
+// ---------------------------------------------------------------------------
+
+/// Validité d'un ticket de lecture.
+pub const STREAM_TICKET_SECS: u64 = 6 * 3600;
+/// Octets envoyés au plus par réponse : le lecteur redemande la suite.
+pub const STREAM_CHUNK_BYTES: u64 = 2 * 1024 * 1024;
+/// Tickets gardés au plus (les plus anciens tombent).
+const MAX_TICKETS: usize = 20_000;
+
+#[derive(Clone)]
+struct StreamTicket {
+    file_id: ObjectId,
+    mime: &'static str,
+    expires: u64,
+}
+
+fn tickets() -> &'static Mutex<std::collections::HashMap<String, StreamTicket>> {
+    static T: std::sync::OnceLock<Mutex<std::collections::HashMap<String, StreamTicket>>> = std::sync::OnceLock::new();
+    T.get_or_init(Default::default)
+}
+
+fn new_ticket(file_id: ObjectId, mime: &'static str, now: u64) -> String {
+    use rand::Rng;
+    let mut raw = [0u8; 24];
+    rand::rng().fill_bytes(&mut raw);
+    let token: String = raw.iter().map(|b| format!("{b:02x}")).collect();
+    let mut map = tickets().lock().unwrap_or_else(|p| p.into_inner());
+    map.retain(|_, t| t.expires > now);
+    if map.len() >= MAX_TICKETS {
+        if let Some(oldest) = map.iter().min_by_key(|(_, t)| t.expires).map(|(k, _)| k.clone()) {
+            map.remove(&oldest);
+        }
+    }
+    map.insert(token.clone(), StreamTicket { file_id, mime, expires: now + STREAM_TICKET_SECS });
+    token
+}
+
+/// Plage demandée (`bytes=a-b`, `bytes=a-`, `bytes=-n`) dans un fichier de `len` octets, bornée à
+/// `STREAM_CHUNK_BYTES`. `None` : plage impossible (416). Sans en-tête : depuis le début.
+pub fn stream_range(header: Option<&str>, len: u64) -> Option<(u64, u64)> {
+    if len == 0 {
+        return None;
+    }
+    let (start, end) = match header {
+        None => (0, len - 1),
+        Some(h) => {
+            let spec = h.trim().strip_prefix("bytes=")?;
+            // Une seule plage (les navigateurs n'en demandent pas plusieurs pour un média).
+            let spec = spec.split(',').next()?.trim();
+            let (a, b) = spec.split_once('-')?;
+            match (a.trim(), b.trim()) {
+                ("", n) => {
+                    let n: u64 = n.parse().ok()?;
+                    (len.saturating_sub(n), len - 1)
+                }
+                (a, "") => (a.parse().ok()?, len - 1),
+                (a, b) => (a.parse().ok()?, b.parse::<u64>().ok()?.min(len - 1)),
+            }
+        }
+    };
+    if start > end || start >= len {
+        return None;
+    }
+    Some((start, end.min(start + STREAM_CHUNK_BYTES - 1)))
+}
+
+/// Adresse de lecture en continu d'un morceau (mêmes droits que `GET /music/tracks/{id}`).
+async fn stream_ticket(Authed(s): Authed, Path(id): Path<String>) -> ApiResult<Json<serde_json::Value>> {
+    let track = music::get_track(s.universe()?, parse_id(&id)?).await?.ok_or_else(|| ApiError::not_found("activity__music_not_found"))?;
+    let file_id = track.file_id.ok_or_else(|| ApiError::not_found("activity__music_not_found"))?;
+    let mime = served_mime(&track.mime).ok_or_else(ApiError::internal)?;
+    let token = new_ticket(file_id, mime, crate::activity::http::now_secs());
+    Ok(Json(serde_json::json!({ "url": format!("/api/music/stream/{token}") })))
+}
+
+async fn stream_file(Path(token): Path<String>, headers: axum::http::HeaderMap) -> ApiResult<Response> {
+    let now = crate::activity::http::now_secs();
+    let ticket = tickets().lock().unwrap_or_else(|p| p.into_inner()).get(&token).filter(|t| t.expires > now).cloned();
+    let ticket = ticket.ok_or_else(|| ApiError::not_found("activity__music_not_found"))?;
+    let (len, chunk) = music::track_file_layout(ticket.file_id).await?.ok_or_else(|| ApiError::not_found("activity__music_not_found"))?;
+    let asked = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
+    let Some((start, end)) = stream_range(asked, len) else {
+        let mut res = StatusCode::RANGE_NOT_SATISFIABLE.into_response();
+        if let Ok(v) = HeaderValue::from_str(&format!("bytes */{len}")) {
+            res.headers_mut().insert(header::CONTENT_RANGE, v);
+        }
+        return Ok(res);
+    };
+    let bytes = music::read_track_range(ticket.file_id, chunk, start, end).await?;
+    let mut res = (StatusCode::PARTIAL_CONTENT, bytes).into_response();
+    let h = res.headers_mut();
+    h.insert(header::CONTENT_TYPE, HeaderValue::from_static(ticket.mime));
+    h.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    if let Ok(v) = HeaderValue::from_str(&format!("bytes {start}-{end}/{len}")) {
+        h.insert(header::CONTENT_RANGE, v);
+    }
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("private, max-age=3600"));
+    h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("sandbox; default-src 'none'"));
+    Ok(res)
+}
+
 async fn track_file(Authed(s): Authed, Path(id): Path<String>) -> ApiResult<Response> {
     let track = music::get_track(s.universe()?, parse_id(&id)?).await?.ok_or_else(|| ApiError::not_found("activity__music_not_found"))?;
     // Une vidéo YouTube n'a pas de fichier : elle se lit chez YouTube.
@@ -282,6 +387,162 @@ async fn upload(State(state): State<AppState>, Authed(s): Authed, Query(q): Quer
     Ok(Json(AdminTrackDto::from(&track)))
 }
 
+// ---------------------------------------------------------------------------
+// Envoi en plusieurs parties : le proxy de Discord refuse les requêtes de plus de ~128 Mio
+// (réponse 500 « Discord Activity not available »). Le fichier part donc par morceaux de
+// `UPLOAD_PART_BYTES`, rassemblés ici, puis vérifié et enregistré d'un coup (`upload_finish`).
+// ---------------------------------------------------------------------------
+
+/// Taille d'une partie (bien sous la limite du proxy de Discord).
+pub const UPLOAD_PART_BYTES: usize = 16 * 1024 * 1024;
+/// Un envoi sans nouvelle partie depuis ce délai est abandonné (mémoire libérée).
+const PARTIAL_TTL_SECS: u64 = 30 * 60;
+
+struct PartialUpload {
+    universe: ObjectId,
+    user: u64,
+    total: usize,
+    data: Vec<u8>,
+    touched: u64,
+}
+
+fn partials() -> &'static Mutex<std::collections::HashMap<String, PartialUpload>> {
+    static P: std::sync::OnceLock<Mutex<std::collections::HashMap<String, PartialUpload>>> = std::sync::OnceLock::new();
+    P.get_or_init(Default::default)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartQuery {
+    #[serde(default)]
+    upload_id: Option<String>,
+    offset: usize,
+    total: usize,
+}
+
+/// Une partie du fichier, à sa place (`offset`) ; la première ouvre l'envoi.
+async fn upload_part(State(state): State<AppState>, Authed(s): Authed, Query(q): Query<PartQuery>, body: Bytes) -> ApiResult<Json<serde_json::Value>> {
+    if body.is_empty() || body.len() > UPLOAD_PART_BYTES {
+        return Err(ApiError::bad_request("activity__invalid_request"));
+    }
+    let now = crate::activity::http::now_secs();
+    let upload_id = match q.upload_id {
+        None => {
+            // Première partie : droits vérifiés auprès de Discord, taille annoncée bornée.
+            if q.offset != 0 {
+                return Err(ApiError::bad_request("activity__invalid_request"));
+            }
+            let universe = require_music_admin(&state, &s).await?;
+            if q.total == 0 || q.total > MAX_FILE_BYTES {
+                return Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "activity__payload_too_large"));
+            }
+            use rand::Rng;
+            let mut raw = [0u8; 16];
+            rand::rng().fill_bytes(&mut raw);
+            let id: String = raw.iter().map(|b| format!("{b:02x}")).collect();
+            let mut map = partials().lock().unwrap_or_else(|p| p.into_inner());
+            // Un seul envoi en cours par univers ; les envois abandonnés sont oubliés.
+            map.retain(|_, p| p.universe != universe && now.saturating_sub(p.touched) < PARTIAL_TTL_SECS);
+            map.insert(id.clone(), PartialUpload { universe, user: s.user_id, total: q.total, data: Vec::with_capacity(q.total), touched: now });
+            id
+        }
+        Some(id) => id,
+    };
+    let mut map = partials().lock().unwrap_or_else(|p| p.into_inner());
+    let p = map.get_mut(&upload_id).ok_or_else(|| ApiError::not_found("activity__music_upload_expired"))?;
+    if p.user != s.user_id || Some(p.universe) != s.universe_id {
+        return Err(ApiError::forbidden("activity__music_forbidden"));
+    }
+    if q.offset != p.data.len() || q.total != p.total || p.data.len() + body.len() > p.total {
+        return Err(ApiError::new(StatusCode::CONFLICT, "activity__music_upload_out_of_order"));
+    }
+    p.data.extend_from_slice(&body);
+    p.touched = now;
+    Ok(Json(serde_json::json!({ "upload_id": upload_id, "received": p.data.len() })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FinishQuery {
+    upload_id: String,
+    title: String,
+    rights: bool,
+}
+
+/// Résultat d'un envoi en cours de vérification (lu par `upload_status`).
+#[derive(Clone)]
+enum FinishState {
+    Checking,
+    Done(serde_json::Value),
+    Failed(String),
+}
+
+fn finishing() -> &'static Mutex<std::collections::HashMap<String, (u64, u64, FinishState)>> {
+    static F: std::sync::OnceLock<Mutex<std::collections::HashMap<String, (u64, u64, FinishState)>>> = std::sync::OnceLock::new();
+    F.get_or_init(Default::default)
+}
+
+/// Toutes les parties sont arrivées : la vérification complète du fichier (longue pour des
+/// heures de son) se fait en tâche de fond ; le client suit `GET /admin/music/upload/status`.
+async fn upload_finish(State(state): State<AppState>, Authed(s): Authed, Query(q): Query<FinishQuery>) -> ApiResult<Json<serde_json::Value>> {
+    let universe_id = require_music_admin(&state, &s).await?;
+    if !q.rights {
+        return Err(ApiError::bad_request("activity__music_rights_required"));
+    }
+    let title = music::clean_title(&q.title).ok_or_else(|| ApiError::bad_request("activity__music_title_required"))?;
+    let partial = {
+        let mut map = partials().lock().unwrap_or_else(|p| p.into_inner());
+        match map.get(&q.upload_id) {
+            Some(p) if p.user == s.user_id && p.universe == universe_id && p.data.len() == p.total => map.remove(&q.upload_id),
+            Some(_) => return Err(ApiError::bad_request("activity__music_upload_incomplete")),
+            None => return Err(ApiError::not_found("activity__music_upload_expired")),
+        }
+    };
+    let data = partial.map(|p| p.data).ok_or_else(ApiError::internal)?;
+    let slot = state.music_uploads.reserve(universe_id)?;
+    let now = crate::activity::http::now_secs();
+    {
+        let mut map = finishing().lock().unwrap_or_else(|p| p.into_inner());
+        map.retain(|_, (_, at, _)| now.saturating_sub(*at) < PARTIAL_TTL_SECS);
+        map.insert(q.upload_id.clone(), (s.user_id, now, FinishState::Checking));
+    }
+    let (id, user) = (q.upload_id.clone(), s.user_id);
+    tokio::spawn(async move {
+        let _slot = slot;
+        let outcome = match store_checked(universe_id, title, TrackOrigin::File, data, user).await {
+            Ok(track) => {
+                publish(&state, universe_id);
+                FinishState::Done(serde_json::to_value(AdminTrackDto::from(&track)).unwrap_or_default())
+            }
+            Err(e) => FinishState::Failed(e.key.clone()),
+        };
+        if let Some(entry) = finishing().lock().unwrap_or_else(|p| p.into_inner()).get_mut(&id) {
+            entry.2 = outcome;
+        }
+    });
+    Ok(Json(serde_json::json!({ "status": "checking" })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StatusQuery {
+    upload_id: String,
+}
+
+/// Où en est la vérification : `checking`, `done` (avec le morceau) ou `failed` (avec la clé).
+async fn upload_status(Authed(s): Authed, Query(q): Query<StatusQuery>) -> ApiResult<Json<serde_json::Value>> {
+    let map = finishing().lock().unwrap_or_else(|p| p.into_inner());
+    let (user, _, state) = map.get(&q.upload_id).ok_or_else(|| ApiError::not_found("activity__music_upload_expired"))?;
+    if *user != s.user_id {
+        return Err(ApiError::forbidden("activity__music_forbidden"));
+    }
+    Ok(Json(match state {
+        FinishState::Checking => serde_json::json!({ "status": "checking" }),
+        FinishState::Done(track) => serde_json::json!({ "status": "done", "track": track }),
+        FinishState::Failed(key) => serde_json::json!({ "status": "failed", "error": key }),
+    }))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateRequest {
@@ -363,10 +624,17 @@ pub fn routes() -> (Router<AppState>, Router<AppState>) {
     let standard = Router::new()
         .route("/music/here", get(here))
         .route("/music/tracks/{id}", get(track_file))
+        .route("/music/tracks/{id}/stream", post(stream_ticket))
+        .route("/music/stream/{token}", get(stream_file))
+        .route("/admin/music/upload/finish", post(upload_finish))
+        .route("/admin/music/upload/status", get(upload_status))
         .route("/admin/music", get(library))
         .route("/admin/music/{id}", put(update).delete(remove))
         .route("/admin/music/youtube", post(youtube_add));
-    let upload = Router::new().route("/admin/music/upload", post(upload)).layer(DefaultBodyLimit::max(MAX_UPLOAD_BODY));
+    let upload = Router::new()
+        .route("/admin/music/upload", post(upload))
+        .route("/admin/music/upload/part", post(upload_part))
+        .layer(DefaultBodyLimit::max(MAX_UPLOAD_BODY));
     (standard, upload)
 }
 
@@ -480,7 +748,7 @@ mod tests {
                 server.insert_server().await.unwrap();
                 let (tavern, forest) = (random_id(), random_id());
                 for (id, name) in [(tavern, "Taverne"), (forest, "Forêt")] {
-                    Place { _id: ObjectId::new(), universe_id, server_id: guild, category_id: id, role: 1, name: name.into(), modifiers: vec![], central_channel_id: None }.insert().await.unwrap();
+                    Place { _id: ObjectId::new(), universe_id, server_id: guild, category_id: id, role: 1, name: name.into(), modifiers: vec![], central_channel_id: None, wiki: Default::default() }.insert().await.unwrap();
                 }
                 TravelGroup { _id: ObjectId::new(), universe_id, actual_space_id: tavern, members: vec![2], server_id: guild, ..Default::default() }.insert().await.unwrap();
 
@@ -585,5 +853,22 @@ mod tests {
                 crate::database::music::delete_universe_music(universe_id).await.unwrap();
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+
+    #[test]
+    fn ranges_are_parsed_and_capped() {
+        let len = 10 * STREAM_CHUNK_BYTES;
+        assert_eq!(stream_range(Some("bytes=0-"), len), Some((0, STREAM_CHUNK_BYTES - 1)), "open range: one chunk");
+        assert_eq!(stream_range(Some("bytes=100-199"), len), Some((100, 199)));
+        assert_eq!(stream_range(Some("bytes=-500"), len), Some((len - 500, len - 1)), "suffix (end of file)");
+        assert_eq!(stream_range(None, 1000), Some((0, 999)));
+        assert_eq!(stream_range(Some("bytes=5000-"), 1000), None, "past the end");
+        assert_eq!(stream_range(Some("items=0-1"), 1000), None);
+        assert_eq!(stream_range(Some("bytes=900-5000"), 1000), Some((900, 999)));
     }
 }

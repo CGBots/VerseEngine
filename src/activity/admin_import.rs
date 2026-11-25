@@ -60,6 +60,8 @@ pub struct Draft {
     pub terrain: Option<Arc<Terrain>>,
     /// Carte générée (E7) : routes telles que dessinées.
     pub explicit_roads: Option<Arc<Vec<crate::activity::map::network::RoadCandidate>>>,
+    /// Sauvegarde `.map` telle qu'envoyée : gardée avec l'univers après l'import (`map_sources`).
+    pub source: Option<Bytes>,
     pub created: Instant,
 }
 
@@ -67,6 +69,7 @@ pub struct Draft {
 #[derive(Clone)]
 pub struct DraftView {
     pub map: Arc<AzgaarMap>,
+    pub source: Option<Bytes>,
     pub explicit_roads: Option<Arc<Vec<crate::activity::map::network::RoadCandidate>>>,
 }
 
@@ -99,7 +102,7 @@ impl ImportDrafts {
         let map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         map.get(&(guild_id, user_id))
             .filter(|d| d.created.elapsed() < DRAFT_TTL)
-            .map(|d| DraftView { map: d.map.clone(), explicit_roads: d.explicit_roads.clone() })
+            .map(|d| DraftView { map: d.map.clone(), source: d.source.clone(), explicit_roads: d.explicit_roads.clone() })
     }
 
     pub fn remove(&self, guild_id: u64, user_id: u64) {
@@ -270,6 +273,7 @@ async fn upload_map(State(state): State<AppState>, Authed(s): Authed, body: Byte
     if body.is_empty() {
         return Err(ApiError::bad_request("activity__azgaar_invalid_json"));
     }
+    let source = body.clone();
     let parsed = tokio::task::spawn_blocking(move || {
         crate::activity::map::azgaar_file::parse_map_file(&body).map(|f| {
             let terrain = resample_terrain(&f.map, crate::activity::map::azgaar::MAX_TERRAIN_SIDE);
@@ -295,7 +299,7 @@ async fn upload_map(State(state): State<AppState>, Authed(s): Authed, body: Byte
         "suggestions": suggestions,
         "has_universe": ctx.universe.is_some(),
     });
-    state.import_drafts.put(s.guild_id, s.user_id, Draft { map: Arc::new(file.map), terrain: terrain.map(Arc::new), explicit_roads: None, created: Instant::now() });
+    state.import_drafts.put(s.guild_id, s.user_id, Draft { map: Arc::new(file.map), terrain: terrain.map(Arc::new), explicit_roads: None, source: Some(source), created: Instant::now() });
     Ok(Json(response))
 }
 
@@ -348,7 +352,7 @@ async fn use_generated(State(state): State<AppState>, Authed(s): Authed, Json(ma
         "has_universe": ctx.universe.is_some(),
         "generated": true,
     });
-    state.import_drafts.put(s.guild_id, s.user_id, Draft { map: Arc::new(azgaar), terrain: None, explicit_roads: Some(Arc::new(roads)), created: Instant::now() });
+    state.import_drafts.put(s.guild_id, s.user_id, Draft { map: Arc::new(azgaar), terrain: None, explicit_roads: Some(Arc::new(roads)), source: None, created: Instant::now() });
     Ok(Json(response))
 }
 
@@ -504,7 +508,10 @@ async fn plan(State(state): State<AppState>, Authed(s): Authed, Json(req): Json<
         "removal": removal,
         "plan": plan,
         "servers_to_create": plan.servers_to_create(),
-        "discord_objects": plan.discord_objects_to_create(),
+        "discord_objects": plan.discord_objects_to_create() + plan.discord_objects_to_delete(),
+        "estimated_secs": plan.estimated_secs(),
+        // Discord bloque déjà des créations (ex. rôles, ~48 h) : l'import échouerait.
+        "discord_wait_secs": plan.servers.iter().filter_map(|s| s.guild_id).filter_map(crate::provisioning::discord_wait_for_guild).filter(|s| *s > crate::provisioning::MAX_DISCORD_WAIT.as_secs()).max(),
         "universe_name": ctx.universe.as_ref().map(|u| u.name.clone()),
     })))
 }
@@ -594,7 +601,7 @@ mod tests {
     #[test]
     fn drafts_expire_and_are_bounded() {
         let d = ImportDrafts::default();
-        let map = || Draft { map: Arc::new(crate::activity::map::azgaar::parse(r#"{"pack":{"burgs":[{},{"i":1,"name":"A","x":1,"y":1}]}}"#).unwrap()), terrain: None, explicit_roads: None, created: Instant::now() };
+        let map = || Draft { map: Arc::new(crate::activity::map::azgaar::parse(r#"{"pack":{"burgs":[{},{"i":1,"name":"A","x":1,"y":1}]}}"#).unwrap()), terrain: None, explicit_roads: None, source: None, created: Instant::now() };
         for i in 0..(MAX_DRAFTS as u64 + 3) {
             d.put(1, i, map());
         }

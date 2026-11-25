@@ -150,26 +150,52 @@ struct RoadCategories {
     slots: Vec<(u64, u32)>,
 }
 
+/// Catégories de routes utilisables sur un serveur, d'après Discord (pas seulement la base) :
+/// la catégorie principale si elle existe encore, puis celles qui contiennent déjà des routes de
+/// ce serveur. Places libres = 50 moins les salons réellement présents dans la catégorie.
+/// `channels` : (id, catégorie parente, est une catégorie).
+pub fn usable_road_categories(main: Option<u64>, road_channels: &std::collections::HashSet<u64>, channels: &[(u64, Option<u64>, bool)]) -> Vec<(u64, u32)> {
+    let is_category = |id: u64| channels.iter().any(|c| c.0 == id && c.2);
+    let children = |id: u64| channels.iter().filter(|c| c.1 == Some(id)).count() as u32;
+    let mut cats: Vec<u64> = main.filter(|m| is_category(*m)).into_iter().collect();
+    for c in channels.iter().filter(|c| road_channels.contains(&c.0)) {
+        if let Some(parent) = c.1.filter(|p| is_category(*p)) {
+            if !cats.contains(&parent) {
+                cats.push(parent);
+            }
+        }
+    }
+    cats.into_iter().map(|c| (c, DISCORD_MAX_CHANNELS_PER_CATEGORY.saturating_sub(children(c)))).collect()
+}
+
 async fn road_categories(p: &mut Provisioner, server: &Server, needed: u32, locale: &str) -> Result<RoadCategories, &'static str> {
-    let mut slots = vec![];
-    if let Some(main) = server.road_category_id {
-        let used = crate::database::db_client::get_db_client()
+    // Ce qui existe vraiment sur Discord : une catégorie supprimée à la main (ou par un ancien
+    // import) ne doit plus servir, sinon chaque route échoue (« Category does not exist »).
+    let guild_channels = p.http().get_channels(serenity::all::GuildId::new(server.server_id)).await.map_err(|_| "activity__internal_error")?;
+    let channels: Vec<(u64, Option<u64>, bool)> =
+        guild_channels.iter().map(|c| (c.id.get(), c.parent_id.map(|p| p.get()), c.kind == ChannelType::Category)).collect();
+    let road_channels: std::collections::HashSet<u64> = {
+        use futures::TryStreamExt;
+        let docs: Vec<mongodb::bson::Document> = crate::database::db_client::get_db_client()
             .await
             .database(VERSEENGINE_DB_NAME)
             .collection::<mongodb::bson::Document>(ROADS_COLLECTION_NAME)
-            .count_documents(doc! {"server_id": server.server_id.to_string()})
+            .find(doc! {"server_id": server.server_id.to_string()})
             .await
-            .map_err(|_| "activity__internal_error")? as u32;
-        slots.push((main.id, DISCORD_MAX_CHANNELS_PER_CATEGORY.saturating_sub(used)));
-    }
+            .map_err(|_| "activity__internal_error")?
+            .try_collect()
+            .await
+            .map_err(|_| "activity__internal_error")?;
+        docs.iter().filter_map(|d| d.get_str("channel_id").ok().and_then(|v| v.parse().ok())).collect()
+    };
+    let mut slots = usable_road_categories(server.road_category_id.map(|i| i.id), &road_channels, &channels);
     let free: u32 = slots.iter().map(|s| s.1).sum();
     let missing = needed.saturating_sub(free).div_ceil(DISCORD_MAX_CHANNELS_PER_CATEGORY);
     let role = |id: Option<crate::database::server::Id>| id.map(|i| RoleId::new(i.id));
     let (Some(player), Some(spectator), Some(moderator)) = (role(server.player_role_id), role(server.spectator_role_id), role(server.moderator_role_id)) else {
         return Err("setup__roles_setup_failed");
     };
-    for n in 0..missing {
-        let _ = n;
+    for _ in 0..missing {
         let name = format!("{} {}", get_by_locale(locale, "road_channel_name", None, None), slots.len() + 1);
         let perms = get_road_category_permission_set(RoleId::new(server.server_id), player, spectator, moderator);
         let c = p
@@ -178,6 +204,16 @@ async fn road_categories(p: &mut Provisioner, server: &Server, needed: u32, loca
             .map_err(|_| "setup__road_category_not_created")?;
         p.step_done();
         slots.push((c.id.get(), DISCORD_MAX_CHANNELS_PER_CATEGORY));
+    }
+    // Catégorie principale disparue : la première catégorie utilisable la remplace (elle sert
+    // aussi à `/road create`).
+    let main_exists = server.road_category_id.is_some_and(|m| slots.iter().any(|s| s.0 == m.id));
+    if let (false, Some(first)) = (main_exists, slots.first()) {
+        let mut updated = server.clone();
+        updated.road_category_id(crate::database::server::Id { id: first.0, id_type: crate::database::server::IdType::Category });
+        if let Err(e) = updated.update().await {
+            tracing::warn!(guild = server.server_id, error = %e, "import : catégorie de routes non mise à jour");
+        }
     }
     Ok(RoadCategories { slots })
 }
@@ -198,6 +234,8 @@ pub async fn execute(p: &mut Provisioner, exec: Execution) -> Result<ObjectId, &
             Ok(id)
         }
         Err(key) => {
+            // Discord bloque les créations (ex. ~48 h pour les rôles) : message dédié.
+            let key = if p.discord_blocked().is_some() { "activity__import_discord_blocked" } else { key };
             let left = p.rollback().await;
             if !left.is_empty() {
                 eprintln!("[import] rollback incomplete: {left:?}");
@@ -315,7 +353,13 @@ async fn run(p: &mut Provisioner, exec: &Execution) -> Result<ObjectId, &'static
         return Err("activity__internal_error");
     }
     if let Some((r, _, start, channels)) = &removal {
-        let left = apply_on_discord(&http, r, start.as_ref(), channels).await;
+        // Suppressions : comptées dans la barre, au nombre exact maintenant connu.
+        let deletions = (r.roads.len() + channels.len() + 2 * r.places.len()) as u32;
+        p.set_total(p.done_steps() + deletions);
+        p.set_phase(crate::provisioning::Phase::Deleting);
+        let started = std::time::Instant::now();
+        let left = apply_on_discord(&http, r, start.as_ref(), channels, &|| p.step_done()).await;
+        tracing::info!(universe = %universe_id, deletions, secs = started.elapsed().as_secs(), "import : suppressions faites");
         if left != DiscordLeftovers::default() {
             eprintln!("[import] universe {universe_id}: left on Discord after the removal: {left:?}");
         }
@@ -336,7 +380,56 @@ async fn pause_moves(groups: &[crate::database::travel::TravelGroup]) -> Vec<cra
 }
 
 /// Carte de l'univers après l'import : positions (avec le bourg d'origine, pour un ré-import),
-/// tracés, relief (0–100 d'Azgaar ramené à 0–255) et zone.
+/// tracés, relief (0–100 d'Azgaar ramené à 0–255), rendu façon Azgaar et zone.
+/// Rendu hors de la zone importée (lasso) : cases de surface cachées, cellules du pack cachées,
+/// rivières coupées. Sans zone : inchangé.
+pub fn hide_outside_zone(mut style: crate::database::universe_maps::MapStyle, zone: &[[f64; 2]], width: f64, height: f64) -> crate::database::universe_maps::MapStyle {
+    use crate::database::universe_maps::{PACK_HIDDEN, SURFACE_HIDDEN};
+    if zone.len() < 3 {
+        return style;
+    }
+    let z = crate::activity::map::network::Zone { polygon: zone.iter().map(|p| (p[0], p[1])).collect() };
+    let (cols, rows) = (style.cols.max(1) as usize, style.rows.max(1) as usize);
+    for r in 0..rows {
+        for c in 0..cols {
+            let (x, y) = ((c as f64 + 0.5) / cols as f64 * width, (r as f64 + 0.5) / rows as f64 * height);
+            if !z.contains(x, y) {
+                if let Some(v) = style.surface.get_mut(r * cols + c) {
+                    *v = SURFACE_HIDDEN;
+                }
+                if let Some(v) = style.states.get_mut(r * cols + c) {
+                    *v = 0;
+                }
+            }
+        }
+    }
+    if let Some(pack) = style.pack.as_mut() {
+        let points = pack.points();
+        for (i, w) in pack.water.iter_mut().enumerate() {
+            if let Some(&(x, y)) = points.get(i) {
+                if !z.contains(x, y) {
+                    *w = PACK_HIDDEN;
+                }
+            }
+        }
+    }
+    let rivers = std::mem::take(&mut style.rivers);
+    for river in rivers {
+        let mut run: Vec<[f64; 2]> = vec![];
+        for p in river.points.iter().copied().chain(std::iter::once([f64::NAN, f64::NAN])) {
+            if p[0].is_finite() && z.contains(p[0], p[1]) {
+                run.push(p);
+            } else {
+                if run.len() >= 2 {
+                    style.rivers.push(crate::database::universe_maps::StyleRiver { points: std::mem::take(&mut run), width: river.width });
+                }
+                run.clear();
+            }
+        }
+    }
+    style
+}
+
 pub fn universe_map(universe_id: ObjectId, map: &AzgaarMap, plan: &ImportPlan, place_of_burg: &HashMap<u64, Place>, zone: &[[f64; 2]]) -> UniverseMap {
     let burgs: HashMap<u64, &crate::activity::map::azgaar::Burg> = map.burgs.iter().map(|b| (b.id, b)).collect();
     let positions = plan
@@ -378,6 +471,9 @@ pub fn universe_map(universe_id: ObjectId, map: &AzgaarMap, plan: &ImportPlan, p
         graph_hash: None,
         road_paths,
         background: None,
+        // Rendu façon Azgaar, calculé une fois à la lecture de la sauvegarde ; hors de la zone
+        // importée (lasso), rien n'est dessiné.
+        style: map.style.clone().map(|s| hide_outside_zone(s, zone, map.width, map.height)),
         updated_at: chrono::Utc::now().timestamp().max(0) as u64,
     }
 }
@@ -472,7 +568,8 @@ async fn execute_route(State(state): State<AppState>, Authed(s): Authed, Json(re
     };
 
     let universe_id = ctx.universe.as_ref().map(|u| u.universe_id);
-    let total = plan.discord_objects_to_create();
+    // Créations, puis suppressions (estimées ; ajustées au moment de supprimer).
+    let total = plan.discord_objects_to_create() + plan.discord_objects_to_delete();
     let mut p = Provisioner::with_job(http, "map_import", universe_id, total).await?;
     let job_id = p.job_id().map(|i| i.to_hex()).unwrap_or_default();
     let outcome = Arc::new(Mutex::new(Outcome::Running));
@@ -492,6 +589,9 @@ async fn execute_route(State(state): State<AppState>, Authed(s): Authed, Json(re
         fail_after_places: None,
     };
     let (sessions, drafts, guild_id, user_id) = (state.sessions.clone(), state.import_drafts.clone(), s.guild_id, s.user_id);
+    // Sauvegarde `.map` envoyée (Azgaar) : gardée avec l'univers et envoyée au créateur après l'import.
+    let source = drafts.get(guild_id, user_id).and_then(|d| d.source).map(|b| (b, exec.map.name.clone()));
+    let (bot, locale) = (state.bot_http.clone(), s.locale);
     tokio::spawn(async move {
         let result = execute(&mut p, exec).await;
         let rolled_back = matches!(p.subscribe().borrow().phase, Phase::RolledBack);
@@ -500,6 +600,9 @@ async fn execute_route(State(state): State<AppState>, Authed(s): Authed, Json(re
                 sessions.link_universe(guild_id, id);
                 drafts.remove(guild_id, user_id);
                 tracing::info!(guild = guild_id, universe = %id, "activity: import terminé");
+                if let Some((bytes, name)) = source {
+                    tokio::spawn(crate::activity::map_source::keep_and_send(bot, id, bytes.to_vec(), name, user_id, locale));
+                }
                 Outcome::Done { universe_id: id.to_hex() }
             }
             Err(error) => {
@@ -520,7 +623,9 @@ async fn job_route(State(state): State<AppState>, Authed(s): Authed, Path(id): P
     let job = jobs.get(&id).filter(|j| j.guild_id == s.guild_id).ok_or_else(|| ApiError::not_found("activity__import_job_not_found"))?;
     let progress = job.progress.borrow().clone();
     let outcome = job.outcome.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    Ok(Json(serde_json::json!({ "progress": progress, "outcome": outcome })))
+    // Attente imposée par Discord en cours (limite de débit) : affichée sous la barre.
+    let discord_wait_secs = crate::provisioning::discord_wait_remaining();
+    Ok(Json(serde_json::json!({ "progress": progress, "outcome": outcome, "discord_wait_secs": discord_wait_secs })))
 }
 
 pub fn routes() -> Router<AppState> {
@@ -529,11 +634,47 @@ pub fn routes() -> Router<AppState> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_style_outside_the_lasso_zone_is_hidden() {
+        use crate::database::universe_maps::{MapStyle, PackCells, StyleRiver, PACK_HIDDEN, PACK_LAND, SURFACE_HIDDEN};
+        let pack = PackCells { real: 2, points: PackCells::encode_points(&[(10.0, 10.0), (90.0, 10.0)]), biome: vec![4, 4], state: vec![1, 2], water: vec![PACK_LAND, PACK_LAND] };
+        let style = MapStyle {
+            cols: 2, rows: 1, surface: vec![4, 4], states: vec![1, 2], biome_colors: vec![], state_colors: vec![],
+            rivers: vec![StyleRiver { points: vec![[10.0, 10.0], [20.0, 10.0], [80.0, 10.0], [90.0, 10.0]], width: [0.5, 1.0] }],
+            burgs: vec![], exact: true, pack: Some(pack),
+        };
+        // Zone : moitié gauche de la carte (100 × 20).
+        let zone = [[0.0, 0.0], [50.0, 0.0], [50.0, 20.0], [0.0, 20.0]];
+        let out = hide_outside_zone(style.clone(), &zone, 100.0, 20.0);
+        assert_eq!(out.surface, vec![4, SURFACE_HIDDEN]);
+        assert_eq!(out.states, vec![1, 0]);
+        assert_eq!(out.pack.unwrap().water, vec![PACK_LAND, PACK_HIDDEN]);
+        assert_eq!(out.rivers.len(), 1, "only the part inside the zone");
+        assert_eq!(out.rivers[0].points, vec![[10.0, 10.0], [20.0, 10.0]]);
+        assert_eq!(hide_outside_zone(style.clone(), &[], 100.0, 20.0), style, "no zone: unchanged");
+    }
+
+
+    #[test]
+    fn a_deleted_road_category_is_not_used_and_real_counts_are() {
+        use std::collections::HashSet;
+        // Catégorie 1 (principale) supprimée ; la catégorie 2 contient 37 routes ; 3 est un lieu.
+        let mut channels: Vec<(u64, Option<u64>, bool)> = vec![(2, None, true), (3, None, true), (300, Some(3), false)];
+        let roads: HashSet<u64> = (100..137).collect();
+        channels.extend((100..137).map(|r| (r, Some(2), false)));
+        assert_eq!(usable_road_categories(Some(1), &roads, &channels), vec![(2, 13)]);
+        // Principale présente et vide : elle passe en premier.
+        channels.push((1, None, true));
+        assert_eq!(usable_road_categories(Some(1), &roads, &channels), vec![(1, 50), (2, 13)]);
+    }
+
     use super::*;
 
     /// Carte Moria telle qu'un joueur la reçoit sous brouillard, après deux routes depuis la
     /// capitale la mieux reliée, écrite dans `IMPORT_FIXTURE_DIR/fog-moria.json` pour
-    /// `web/activity/fog-harness.html`.
+    /// `web/activity/fog-harness.html` ; et la carte entière (sans brouillard, sans image de fond :
+    /// rendu façon Azgaar) dans `map-full.json`.
     #[test]
     #[ignore = "integration test: needs AZGAAR_MAP_FILE and IMPORT_FIXTURE_DIR"]
     fn a_real_map_fog_fixture_is_written() {
@@ -549,7 +690,7 @@ mod tests {
         let place_of_burg: HashMap<u64, Place> = plan
             .places
             .iter()
-            .map(|p| (p.burg_id, Place { _id: ObjectId::new(), universe_id, server_id: 1, category_id: p.burg_id, role: 0, name: p.name.clone(), modifiers: vec![], central_channel_id: None }))
+            .map(|p| (p.burg_id, Place { _id: ObjectId::new(), universe_id, server_id: 1, category_id: p.burg_id, role: 0, name: p.name.clone(), modifiers: vec![], central_channel_id: None, wiki: Default::default() }))
             .collect();
         let roads: Vec<Road> = plan
             .roads
@@ -582,8 +723,10 @@ mod tests {
         let r2 = roads.iter().filter(|r| r.channel_id != r1.channel_id).find(|r| (r.place_one_id == mid || r.place_two_id == mid) && other(r, mid) != start).unwrap();
         let here = other(r2, mid);
         let d = Discovery { here: Some(here), known_roads: [r1.channel_id, r2.channel_id].into_iter().collect(), ..Default::default() };
-        let out = apply_fog(dto, &d);
         std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("map-full.json"), serde_json::to_string(&dto).unwrap()).unwrap();
+        let out = apply_fog(dto, &d);
+        assert!(out.style.as_ref().is_some_and(|s| s.surface.contains(&crate::database::universe_maps::SURFACE_HIDDEN)), "the style is hidden far away");
         std::fs::write(dir.join("fog-moria.json"), serde_json::to_string(&out).unwrap()).unwrap();
     }
 

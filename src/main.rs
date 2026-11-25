@@ -19,6 +19,8 @@ mod recipe;
 mod activity;
 mod provisioning;
 mod music;
+mod teleport;
+mod occupation;
 #[cfg(test)]
 mod test_support;
 

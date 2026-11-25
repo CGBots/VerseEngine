@@ -3,12 +3,20 @@ import type { ImportPlan, UploadedMap } from '../api';
 import type { Translator } from '../i18n';
 import { roadKey, serverColor } from './importModel';
 
+const toPoints = (pts: [number, number][]) => pts.map(([x, y]) => `${x},${y}`).join(' ');
+
 interface Props {
   map: UploadedMap;
   plan: ImportPlan | null;
   secret: Set<string>;
   onToggleSecret: (a: number, b: number) => void;
   t: Translator;
+  /** Mode lasso : glisser trace la zone à importer (au lieu de déplacer la vue). */
+  lasso?: boolean;
+  /** Zone tracée (polygone, coordonnées de la carte) ; vide : toute la carte. */
+  zone?: [number, number][];
+  /** Tracé terminé (points bruts, à simplifier). */
+  onLasso?: (points: [number, number][]) => void;
 }
 
 interface Box { x: number; y: number; w: number; h: number }
@@ -38,7 +46,16 @@ function useTerrainImage(terrain: UploadedMap['terrain']): string | null {
  * Aperçu de l'import : relief, lieux colorés par serveur, routes. Un clic sur une route la rend
  * secrète (ou publique) ; molette = zoom, glisser = déplacer.
  */
-export function ImportPreview({ map, plan, secret, onToggleSecret, t }: Props) {
+export function ImportPreview({ map, plan, secret, onToggleSecret, t, lasso = false, zone = [], onLasso }: Props) {
+  // Tracé du lasso en cours (coordonnées de la carte).
+  const [drawing, setDrawing] = useState<[number, number][] | null>(null);
+  const toMap = (clientX: number, clientY: number): [number, number] | null => {
+    const svg = ref.current;
+    const m = svg?.getScreenCTM();
+    if (!svg || !m) return null;
+    const pt = new DOMPoint(clientX, clientY).matrixTransform(m.inverse());
+    return [pt.x, pt.y];
+  };
   const terrain = useTerrainImage(map.terrain);
   const full: Box = { x: 0, y: 0, w: map.width, h: map.height };
   const [box, setBox] = useState<Box>(full);
@@ -63,23 +80,42 @@ export function ImportPreview({ map, plan, secret, onToggleSecret, t }: Props) {
   return (
     <svg
       ref={ref}
-      className="import-preview"
       viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
       preserveAspectRatio="xMidYMid meet"
       role="img"
       aria-label={t('activity_ui__import_preview')}
       onWheel={onWheel}
+      className={`import-preview${lasso ? ' lasso' : ''}`}
       onPointerDown={(e) => {
+        if (lasso) {
+          const p = toMap(e.clientX, e.clientY);
+          if (!p) return;
+          e.preventDefault();
+          e.currentTarget.setPointerCapture(e.pointerId);
+          setDrawing([p]);
+          return;
+        }
         drag.current = { x: e.clientX, y: e.clientY, box };
       }}
       onPointerMove={(e) => {
+        if (lasso) {
+          const p = drawing && toMap(e.clientX, e.clientY);
+          if (p) setDrawing([...drawing!, p]);
+          return;
+        }
         const d = drag.current;
         if (!d || !e.buttons) return;
         const r = ref.current!.getBoundingClientRect();
         const s = d.box.w / r.width;
         setBox({ ...d.box, x: d.box.x - (e.clientX - d.x) * s, y: d.box.y - (e.clientY - d.y) * s });
       }}
-      onPointerUp={() => (drag.current = null)}
+      onPointerUp={() => {
+        drag.current = null;
+        if (lasso && drawing) {
+          onLasso?.(drawing);
+          setDrawing(null);
+        }
+      }}
     >
       <rect x={0} y={0} width={map.width} height={map.height} fill={map.generated ? '#2f4a33' : '#14324a'} />
       {terrain && <image href={terrain} x={0} y={0} width={map.width} height={map.height} preserveAspectRatio="none" />}
@@ -104,6 +140,20 @@ export function ImportPreview({ map, plan, secret, onToggleSecret, t }: Props) {
           </g>
         );
       })}
+      {/* Zone du lasso : le reste de la carte est assombri (il ne sera pas importé). */}
+      {zone.length >= 3 && (
+        <g className="import-zone" pointerEvents="none">
+          <path
+            d={`M${-map.width} ${-map.height}H${map.width * 2}V${map.height * 2}H${-map.width}Z M${zone.map(([x, y]) => `${x} ${y}`).join(' L')}Z`}
+            fill="rgb(0 0 0 / .55)"
+            fillRule="evenodd"
+          />
+          <polygon points={toPoints(zone)} fill="none" stroke="#f0b232" strokeWidth={2 * unit} strokeDasharray={`${6 * unit} ${4 * unit}`} />
+        </g>
+      )}
+      {drawing && drawing.length > 1 && (
+        <polyline points={toPoints(drawing)} fill="rgb(240 178 50 / .15)" stroke="#f0b232" strokeWidth={2 * unit} pointerEvents="none" />
+      )}
       {places.map((p) => (
         <g key={p.burg_id}>
           <title>{p.name}</title>

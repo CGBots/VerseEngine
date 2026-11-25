@@ -22,7 +22,7 @@ let sent = null; const errors = [];
         burgs: sent.places.map((x) => ({ id: x.id, name: x.name, x: x.x, y: x.y, capital: x.capital })), terrain: null, suggestions: [], has_universe: false, generated: true });
     }
     if (p === '/api/admin/import/servers') return json({ servers: [{ guild_id: '1', name: 'RpBotTest2', linked: 'none', eligible: true, current: true }], max_places_per_server: 60, invite_url: null });
-    if (p === '/api/admin/import/plan') return json({ removal: null, servers_to_create: 0, discord_objects: 100, universe_name: null, plan: { places: sent.places.map((x) => ({ burg_id: x.id, name: x.name, x: x.x, y: x.y, capital: x.capital, action: { kind: 'create' }, server: 0 })), roads: [], remove_places: [], remove_roads: [], servers: [{ guild_id: '1', budget: { places: 40, roads_hosted: 0, road_categories: 1, channels: 100, roles: 44 } }], cut_roads: 0, isolated: [] } });
+    if (p === '/api/admin/import/plan') return json({ removal: null, servers_to_create: 0, discord_objects: 100, estimated_secs: 60, universe_name: null, plan: { places: sent.places.map((x) => ({ burg_id: x.id, name: x.name, x: x.x, y: x.y, capital: x.capital, action: { kind: 'create' }, server: 0 })), roads: [], remove_places: [], remove_roads: [], servers: [{ guild_id: '1', budget: { places: 40, roads_hosted: 0, road_categories: 1, channels: 100, roles: 44 } }], cut_roads: 0, isolated: [] } });
     return route.fulfill({ status: 404, body: '{}' });
   });
   await page.goto('http://127.0.0.1:5199/import-harness.html');

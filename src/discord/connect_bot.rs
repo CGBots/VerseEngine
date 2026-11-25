@@ -24,6 +24,7 @@ use crate::loot_table::loot_table;
 use crate::tip::support_command::support_command;
 use crate::universe::universe;
 use crate::travel::travel__sub_command::travel;
+use crate::teleport::teleport;
 
 #[cfg(not(test))]
 static SHARD_NUMBER: u32 = 1;
@@ -94,7 +95,7 @@ pub async fn connect_bot() -> Result<Client, ()>{
     tracing_subscriber::fmt::init();
     
     
-    let mut commands= vec![ping(), universe(), start(), place(), road(), character(), travel(), support_command(), item(), loot_table(), loot(), recipe()];
+    let mut commands= vec![ping(), universe(), start(), place(), road(), character(), travel(), support_command(), item(), loot_table(), loot(), recipe(), teleport()];
     
     
     let translations = translation::read_ftl().expect("failed to read translation files");

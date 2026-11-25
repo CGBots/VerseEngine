@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { CharacterView } from '../api';
 import type { Translator } from '../i18n';
 import { Countdown } from './Countdown';
@@ -7,11 +8,19 @@ function fmt(v: unknown): string {
   return String(v);
 }
 
+/** Valeur d'un effet telle qu'affichée : `×1.5` pour un multiplicateur, `+2` / `-1` sinon. */
+export function formatModifier(modifierType: string, value: unknown): string {
+  if (modifierType === 'multiplier') return `×${fmt(value)}`;
+  const sign = value != null && Number(value) >= 0 ? '+' : '';
+  return `${sign}${fmt(value)}`;
+}
+
 interface Props {
   character: CharacterView;
   avatarUrl: string | null;
   t: Translator;
-  onOpenInventory: () => void;
+  /** Boutons d'action (farm, craft, voyage), en bas du panneau. */
+  actions?: ReactNode;
   onResync: () => void;
 }
 
@@ -23,8 +32,8 @@ export function isNegative(modifierType: string, value: unknown): boolean {
 }
 
 /** Menu vertical gauche, à la manière d'un profil Discord : identité, position, vitesse,
- *  description (lecture seule), effets actifs, accès à l'inventaire. */
-export function CharacterPanel({ character, avatarUrl, t, onOpenInventory, onResync }: Props) {
+ *  description (lecture seule), effets actifs, puis les actions (farm, craft, voyage). */
+export function CharacterPanel({ character, avatarUrl, t, actions, onResync }: Props) {
   const image = character.image_url ?? avatarUrl;
   const travel = character.travel;
   const loc = character.location;
@@ -72,8 +81,7 @@ export function CharacterPanel({ character, avatarUrl, t, onOpenInventory, onRes
           <ul className="statuses">
             {character.statuses.map((s, i) => (
               <li key={`${s.source}-${i}`} className={isNegative(s.modifier_type, s.value) ? 'negative' : undefined}>
-                <strong>{s.stat}</strong> {s.modifier_type === 'multiplier' ? '×' : s.value != null && Number(s.value) >= 0 ? '+' : ''}
-                {fmt(s.value)}
+                <strong>{s.stat}</strong> {formatModifier(s.modifier_type, s.value)}
                 {s.end_timestamp && (
                   <span className="muted"> · {t('activity_ui__expires', { time: '' })}<Countdown until={s.end_timestamp} onElapsed={onResync} /></span>
                 )}
@@ -85,9 +93,7 @@ export function CharacterPanel({ character, avatarUrl, t, onOpenInventory, onRes
         </div>
       </div>
 
-      <nav className="actions">
-        <button type="button" onClick={onOpenInventory}>{t('activity_ui__inventory')}</button>
-      </nav>
+      {actions}
     </aside>
   );
 }

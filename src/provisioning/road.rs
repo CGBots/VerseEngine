@@ -80,7 +80,7 @@ mod tests {
     use super::*;
 
     fn place(server_id: u64, name: &str) -> Place {
-        Place { _id: ObjectId::new(), universe_id: ObjectId::new(), server_id, category_id: 1, role: 1, name: name.into(), modifiers: vec![], central_channel_id: None }
+        Place { _id: ObjectId::new(), universe_id: ObjectId::new(), server_id, category_id: 1, role: 1, name: name.into(), modifiers: vec![], central_channel_id: None, wiki: Default::default() }
     }
 
     #[test]

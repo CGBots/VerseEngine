@@ -97,6 +97,12 @@ impl EventHandler for Handler {
         }
     }
 
+    /// Discord fait attendre le bot (limite de débit) : la bibliothèque attend en silence ; on le
+    /// journalise et l'import l'affiche.
+    async fn ratelimit(&self, data: serenity::http::RatelimitInfo) {
+        crate::provisioning::note_discord_wait(data.timeout, &data.path, data.global);
+    }
+
     #[cfg(not(test))]
     async fn ready(&self, ctx: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
@@ -126,6 +132,7 @@ impl EventHandler for Handler {
             };
 
             if let Err(e) = result {
+                tracing::warn!(modal = modal_data, user = modal.user.id.get(), error = %e, "fenêtre refusée");
                 let locale = modal.locale.as_str();
                 let content = tr_locale!(locale, &e.to_string());
                 let _ = modal.create_response(ctx, CreateInteractionResponse::Message(

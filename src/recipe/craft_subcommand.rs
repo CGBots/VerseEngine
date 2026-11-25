@@ -1,123 +1,32 @@
 use fluent::FluentArgs;
-use mongodb::bson::oid::ObjectId;
-use crate::database::characters::get_character_by_user_id;
-use crate::database::inventory::{HolderType, Inventory};
-use crate::database::recipe::Recipe;
-use crate::database::server::get_server_by_id;
-use crate::database::tool::Tool;
-use crate::database::craft::PlayerCraft;
+use crate::craft::service::{self, RecipeRef, ToolSpot};
 use crate::discord::poise_structs::{Context, Error};
-use crate::utility::reply::{reply_with_args_and_ephemeral};
-use crate::craft::logic::{add_craft, check_craft_requirements, new_player_craft, now_secs};
+use crate::utility::reply::reply_with_args_and_ephemeral;
 
+// Toute la logique (outils, ingrédients, exclusion avec le voyage et le farm) est dans
+// `crate::craft::service`, partagée avec l'activité.
 /// Fabrique un objet à partir d'une recette.
 #[poise::command(slash_command, guild_only, rename = "recipe_craft")]
 pub async fn craft(
     ctx: Context<'_>,
     recipe_name: String,
+    #[min = 1]
+    #[max = 999]
+    quantity: Option<u64>,
 ) -> Result<(), Error> {
     let guild_id = ctx.guild_id().ok_or("guild_only")?;
-    let user_id = ctx.author().id.get();
-    
-    let server = get_server_by_id(guild_id.get()).await?.ok_or("recipe__server_not_found")?;
-    let character = get_character_by_user_id(server.universe_id, user_id).await?.ok_or("recipe__character_not_found")?;
-    
-    // Vérifier si un mouvement est en cours
-    if let Ok(Some(m)) = server.clone().get_player_move(user_id).await {
-        if m.is_in_move {
-            return Err("recipe__cannot_craft_while_moving".into());
-        }
-    }
+    let quantity = quantity.unwrap_or(1);
+    let http = ctx.serenity_context().http.clone();
+    let started = service::start(&http, guild_id.get(), ctx.author().id.get(), RecipeRef::Name(&recipe_name), quantity, ToolSpot::Channel(ctx.channel_id().get())).await?;
 
-    // Vérifier si un craft est déjà en cours
-    if let Ok(Some(_)) = PlayerCraft::get_by_user_id(server.universe_id, user_id).await {
-        return Err("recipe__craft_already_in_progress".into());
-    }
-
-    // Récupérer toutes les recettes de l'univers et filtrer par nom (ou par ID plus tard)
-    let recipes = Recipe::get_by_universe(server.universe_id).await?;
-    let recipe = recipes.into_iter().find(|r| r.recipe_name == recipe_name).ok_or("recipe__not_found")?;
-
-    // Le craft à délai est construit une seule fois : l'enregistrement en base et la file en mémoire partagent le même horaire.
-    let recipe_id = recipe._id.ok_or("recipe__not_found")?;
-    let player_craft = new_player_craft(server.universe_id, user_id, server.server_id, recipe_id, recipe.delay, now_secs());
-
-    let db_client = crate::database::db_client::get_db_client().await;
-    let mut session = db_client.start_session().await?;
-    session.start_transaction().await?;
-
-    let result: Result<(), Error> = async {
-        // 1. Vérifier les outils
-        // On vérifie d'abord dans l'inventaire du joueur
-        let player_inventory = Inventory::get_by_character_id(server.universe_id, character._id).await?;
-        let mut available_tool_ids: Vec<ObjectId> = player_inventory.iter().map(|i| i.item_id).collect();
-
-        // On vérifie aussi les outils posés dans le salon actuel
-        let channel_id = ctx.channel_id().get();
-        let placed_tools = Tool::get_by_channel_id(server.universe_id, channel_id).await?;
-        for tool in placed_tools {
-            available_tool_ids.push(tool.original_item);
-        }
-
-        // 2. Vérifier les ingrédients
-        let stock: Vec<(ObjectId, u64)> = player_inventory.iter().map(|i| (i.item_id, i.quantity)).collect();
-        check_craft_requirements(&recipe.tools_needed, &available_tool_ids, &recipe.ingredients, &stock)?;
-
-        // 3. Appliquer les changements (Consommation)
-        for (qty, item_id) in &recipe.ingredients {
-            let removed = Inventory::remove_item_from_holder_with_session(
-                &mut session,
-                server.universe_id,
-                character._id,
-                HolderType::Character,
-                *item_id,
-                *qty
-            ).await?;
-
-            if !removed {
-                return Err("recipe__error_during_consumption".into());
-            }
-        }
-
-        if recipe.delay > 0 {
-            // Craft avec délai
-            player_craft.upsert_with_session(&mut session).await?;
-            Ok(())
-        } else {
-            // Craft instantané
-            for (qty, item_id) in &recipe.result {
-                Inventory::add_item_to_inventory_with_session(
-                    &mut session,
-                    server.universe_id,
-                    character._id,
-                    HolderType::Character,
-                    *item_id,
-                    *qty
-                ).await?;
-            }
-            Ok(())
-        }
-    }.await;
-
-    if let Err(e) = result {
-        session.abort_transaction().await?;
-        return Err(e);
-    }
-
-    session.commit_transaction().await?;
-
-    if recipe.delay > 0 {
-        add_craft(ctx.serenity_context().http.clone(), player_craft).await?;
-
-        let mut args = FluentArgs::new();
-        args.set("recipe_name", recipe.recipe_name);
-        args.set("delay", recipe.delay);
+    let mut args = FluentArgs::new();
+    args.set("recipe_name", started.recipe_name);
+    args.set("quantity", started.quantity);
+    if started.delay > 0 {
+        args.set("delay", started.delay);
         reply_with_args_and_ephemeral(ctx, Ok("recipe__craft_started"), Some(args), true).await?;
     } else {
-        let mut args = FluentArgs::new();
-        args.set("recipe_name", recipe.recipe_name);
         reply_with_args_and_ephemeral(ctx, Ok("recipe__craft_success"), Some(args), true).await?;
     }
-
     Ok(())
 }

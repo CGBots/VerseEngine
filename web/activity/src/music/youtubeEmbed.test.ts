@@ -36,3 +36,12 @@ describe('YouTube embed', () => {
     expect(parseEvent(null)).toBeNull();
   });
 });
+
+describe('insideDiscord', () => {
+  it('recognises the Discord activity host only', async () => {
+    const { insideDiscord } = await import('./youtubeEmbed');
+    expect(insideDiscord('372479699718242325.discordsays.com')).toBe(true);
+    expect(insideDiscord('localhost')).toBe(false);
+    expect(insideDiscord('discordsays.com.example.org')).toBe(false);
+  });
+});

@@ -198,7 +198,28 @@ impl ImportPlan {
         let cats: u32 = self.servers.iter().map(|s| s.budget.road_categories).sum();
         3 * places + roads + cats
     }
+
+    /// Objets Discord à supprimer (estimation) : par lieu, sa catégorie, son salon et son rôle ;
+    /// une route = un salon. Le nombre exact de salons d'un lieu n'est connu qu'à l'exécution.
+    pub fn discord_objects_to_delete(&self) -> u32 {
+        3 * self.remove_places.len() as u32 + self.remove_roads.len() as u32
+    }
+
+    /// Durée estimée de l'import (s), d'après les imports mesurés (journaux des tâches) : un lieu
+    /// coûte ~1,8 s (les rôles sont espacés de 1,5 s ; catégorie et salon se font pendant
+    /// l'attente), une route ou une catégorie ~0,45 s, une suppression ~0,5 s, plus ~10 s fixes.
+    pub fn estimated_secs(&self) -> u32 {
+        let places = self.places.iter().filter(|p| p.action == PlaceAction::Create).count() as f64;
+        let roads = self.roads.iter().filter(|r| r.action == RoadAction::Create).count() as f64;
+        let cats: f64 = self.servers.iter().map(|s| s.budget.road_categories as f64).sum();
+        (10.0 + places * SECS_PER_PLACE + (roads + cats) * SECS_PER_CHANNEL + self.discord_objects_to_delete() as f64 * SECS_PER_DELETION).ceil() as u32
+    }
 }
+
+/// Temps mesurés par opération Discord (attentes de Discord comprises).
+pub const SECS_PER_PLACE: f64 = 1.8;
+pub const SECS_PER_CHANNEL: f64 = 0.45;
+pub const SECS_PER_DELETION: f64 = 0.5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanError {
@@ -455,6 +476,9 @@ mod tests {
         assert_eq!(p.isolated, vec![5]);
         assert_eq!(p.servers_to_create(), 0);
         assert_eq!(p.discord_objects_to_create(), 3 * 5 + p.roads.len() as u32 + 1);
+        // 5 lieux, routes et 1 catégorie, rien à supprimer : 10 s + 5 × 1,8 s + (routes + 1) × 0,45 s.
+        let expected = (10.0 + 5.0 * SECS_PER_PLACE + (p.roads.len() as f64 + 1.0) * SECS_PER_CHANNEL).ceil() as u32;
+        assert_eq!((p.discord_objects_to_delete(), p.estimated_secs()), (0, expected));
     }
 
     #[test]

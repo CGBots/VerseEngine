@@ -6,13 +6,16 @@
 //! 3. raffinement par *stress majorization* localisée (Gansner, Koren & North 2004),
 //!    pondérée par `1/d²`, qui minimise `Σ w_ij (‖x_i − x_j‖ − d_ij)²` ;
 //! 4. composantes non connexes juxtaposées, puis mise à l'échelle uniforme dans
-//!    `[0, CANVAS]²` (les rapports de distances sont conservés).
+//!    `[MARGIN, CANVAS − MARGIN]²` (les rapports de distances sont conservés).
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
 /// Taille du canevas de sortie (unités arbitraires, carré).
 pub const CANVAS: f64 = 1000.0;
+/// Marge autour des lieux : sans elle, les lieux extrêmes et leurs noms touchent le bord de la
+/// carte (et le relief généré autour d'eux y serait coupé).
+pub const MARGIN: f64 = 70.0;
 const MAX_ITERATIONS: usize = 300;
 const EPSILON: f64 = 1e-7;
 
@@ -127,7 +130,8 @@ pub fn compute_layout(nodes: &[u64], edges: &[Edge]) -> Layout {
 
     let (min_x, max_x, min_y, max_y) = bounds(&world);
     let extent = (max_x - min_x).max(max_y - min_y);
-    let scale = if extent > EPSILON { CANVAS / extent } else { 1.0 };
+    let inner = CANVAS - 2.0 * MARGIN;
+    let scale = if extent > EPSILON { inner / extent } else { 1.0 };
     let off_x = (CANVAS - (max_x - min_x) * scale) / 2.0;
     let off_y = (CANVAS - (max_y - min_y) * scale) / 2.0;
     let positions = nodes
@@ -340,8 +344,11 @@ mod tests {
         let nodes: Vec<u64> = (1..=20).collect();
         let l = compute_layout(&nodes, &e);
         for (_, p) in &l.positions {
-            assert!(p.x >= -1e-6 && p.x <= CANVAS + 1e-6 && p.y >= -1e-6 && p.y <= CANVAS + 1e-6);
+            assert!(p.x >= MARGIN - 1e-6 && p.x <= CANVAS - MARGIN + 1e-6 && p.y >= MARGIN - 1e-6 && p.y <= CANVAS - MARGIN + 1e-6, "inside the margins");
         }
+        // Le placement occupe toute la zone intérieure sur son plus grand côté.
+        let (x0, x1, y0, y1) = bounds(&l.positions.iter().map(|(_, p)| *p).collect::<Vec<_>>());
+        assert!(((x1 - x0).max(y1 - y0) - (CANVAS - 2.0 * MARGIN)).abs() < 1e-6);
     }
 
     #[test]

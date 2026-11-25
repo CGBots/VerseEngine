@@ -1,5 +1,6 @@
 use serenity::all::{ChannelId, RoleId, Channel};
-use crate::database::loot_tables::{get_loot_table_by_channel_id, LootTable};
+use crate::database::loot_tables::get_loot_table_by_channel_id;
+use crate::loot_table::service::save_table;
 use crate::database::places::get_place_by_category_id;
 use crate::database::road::get_road_by_channel_id;
 use crate::database::server::get_server_by_id;
@@ -58,7 +59,6 @@ pub async fn edit(
 
     let existing_lt = get_loot_table_by_channel_id(server.universe_id, channel_id_u64).await?;
     let default_content = existing_lt.as_ref().map(|lt| lt.raw_text.clone()).unwrap_or_default();
-    let last_loot = existing_lt.as_ref().and_then(|lt| lt.last_loot.clone());
     let existing_delay = existing_lt.as_ref().and_then(|lt| lt.delay);
     let existing_rate_limit = existing_lt.as_ref().and_then(|lt| lt.rate_limit);
 
@@ -76,18 +76,8 @@ pub async fn edit(
         let entries = LootTableParser::parse(&modal_data.content, server.universe_id).await;
         match entries {
             Ok(entries) => {
-                // Save loot_table table
-                let loot_table = LootTable {
-                    _id: None,
-                    universe_id: server.universe_id,
-                    channel_id: channel_id_u64,
-                    entries: entries.clone(),
-                    raw_text: modal_data.content,
-                    rate_limit,
-                    delay,
-                    last_loot,
-                };
-                loot_table.save_or_update().await?;
+                // Même enregistrement que l'éditeur de l'activité (dernières fouilles conservées).
+                save_table(server.universe_id, channel_id_u64, entries, modal_data.content, rate_limit, delay).await?;
 
                 let _ = reply(ctx, Ok("loot_table__success")).await;
             }

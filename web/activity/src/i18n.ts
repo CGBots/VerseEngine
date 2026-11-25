@@ -16,8 +16,11 @@ export async function loadTranslator(locale: 'fr' | 'en-US'): Promise<Translator
     /* les clés brutes seront affichées */
   }
   return (key, args) => {
-    const msg = bundle.getMessage(key);
-    if (!msg?.value) return key;
-    return bundle.formatPattern(msg.value, args);
+    // `message.attribut` : attribut Fluent (noms localisés des options de commandes slash).
+    const [id, attr] = key.split('.', 2);
+    const msg = bundle.getMessage(id);
+    const pattern = attr ? msg?.attributes[attr] : msg?.value;
+    if (!pattern) return key;
+    return bundle.formatPattern(pattern, args);
   };
 }

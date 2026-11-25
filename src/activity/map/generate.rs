@@ -140,7 +140,8 @@ pub fn generate(seed: u64, count: usize) -> GeneratedMap {
     let count = count.clamp(MIN_PLACES, MAX_PLACES);
     let mut rng = Rng::new(seed);
     let spacing = MAP_SIDE / (count as f64).sqrt();
-    let margin = spacing * 0.35;
+    // Au moins 6 % du côté : les noms des lieux du bord restent dans la carte.
+    let margin = (spacing * 0.35).max(MAP_SIDE * 0.06);
     let mut min_dist = spacing * 0.65;
     let mut points: Vec<(f64, f64)> = vec![];
     let mut attempts = 0;
@@ -245,6 +246,7 @@ impl GeneratedMap {
                     points: road_path(pos(r.a), pos(r.b), r.control).into_iter().map(|(x, y)| RoutePoint { x, y, cell: None }).collect(),
                 })
                 .collect(),
+            style: None,
         }
     }
 
@@ -287,7 +289,8 @@ mod tests {
         assert_eq!(m.places.len(), 120);
         let names: HashSet<_> = m.places.iter().map(|p| p.name.clone()).collect();
         assert_eq!(names.len(), 120, "no duplicate name");
-        assert!(m.places.iter().all(|p| (0.0..=MAP_SIDE).contains(&p.x) && (0.0..=MAP_SIDE).contains(&p.y)));
+        let inner = (MAP_SIDE * 0.06)..=(MAP_SIDE * 0.94);
+        assert!(m.places.iter().all(|p| inner.contains(&p.x) && inner.contains(&p.y)), "away from the edges");
         assert_eq!(m.places.iter().filter(|p| p.capital).count(), 1);
         assert!(m.validate().is_ok());
     }

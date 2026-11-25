@@ -69,11 +69,71 @@ pub enum Phase {
     Creating,
     /// Attente imposée par l'espacement des rôles ou par Discord.
     Waiting,
+    /// Import : suppression des anciens lieux et routes sur Discord (après le point de non-retour).
+    Deleting,
     RollingBack,
     Done,
     RolledBack,
     /// Certains objets n'ont pas pu être supprimés (listés dans le résultat du retour en arrière).
     RollbackIncomplete,
+}
+
+/// Dernière attente imposée par Discord (limite de débit) : fin (s, epoch) et route concernée.
+/// Notée par `EventHandler::ratelimit` ; l'import l'affiche (« Discord demande d'attendre »).
+static DISCORD_WAIT: std::sync::Mutex<Option<(u64, String, Instant)>> = std::sync::Mutex::new(None);
+
+/// Attente de Discord au-delà de laquelle une création est abandonnée (et la tâche défaite) :
+/// Discord peut bloquer la création de rôles d'un serveur pendant ~48 h (limite cachée).
+pub const MAX_DISCORD_WAIT: Duration = Duration::from_secs(5 * 60);
+
+/// Discord fait attendre le bot (limite de débit) : journalisé, et retenu pour l'affichage.
+pub fn note_discord_wait(timeout: Duration, path: &str, global: bool) {
+    let until = now_secs() + timeout.as_secs_f64().ceil() as u64;
+    if timeout >= Duration::from_secs(2) {
+        tracing::warn!(secs = timeout.as_secs_f64(), path, global, "Discord : attente imposée (limite de débit)");
+    }
+    *DISCORD_WAIT.lock().unwrap_or_else(|p| p.into_inner()) = Some((until, path.to_string(), Instant::now()));
+}
+
+/// Secondes d'attente imposée par Discord qui restent, si une attente est en cours.
+pub fn discord_wait_remaining() -> Option<u64> {
+    let now = now_secs();
+    DISCORD_WAIT.lock().unwrap_or_else(|p| p.into_inner()).as_ref().map(|(until, ..)| *until).filter(|u| *u > now).map(|u| u - now)
+}
+
+/// Attente imposée par Discord sur une route de ce serveur (`/guilds/{guild}/…`) : secondes restantes.
+/// Les limites longues (création de rôles, ~48 h) sont propres à chaque serveur.
+pub fn discord_wait_for_guild(guild_id: u64) -> Option<u64> {
+    let now = now_secs();
+    let needle = format!("/guilds/{guild_id}/");
+    let w = DISCORD_WAIT.lock().unwrap_or_else(|p| p.into_inner());
+    w.as_ref().filter(|(until, path, _)| *until > now && path.contains(&needle)).map(|(until, ..)| until - now)
+}
+
+/// Attente trop longue notée depuis `since` : secondes restantes, s'il y en a une.
+fn long_wait_since(since: Instant) -> Option<u64> {
+    let now = now_secs();
+    let w = DISCORD_WAIT.lock().unwrap_or_else(|p| p.into_inner());
+    w.as_ref()
+        .filter(|(until, _, noted)| *noted >= since && *until > now && until - now > MAX_DISCORD_WAIT.as_secs())
+        .map(|(until, ..)| until - now)
+}
+
+/// Requête Discord abandonnée si Discord impose une attente plus longue que `MAX_DISCORD_WAIT`
+/// (la bibliothèque attendrait en silence, jusqu'à 48 h). `Err(secondes restantes)`.
+async fn within_discord_limits<T>(request: impl std::future::Future<Output = serenity::Result<T>>) -> Result<serenity::Result<T>, u64> {
+    let started = Instant::now();
+    tokio::pin!(request);
+    loop {
+        tokio::select! {
+            r = &mut request => return Ok(r),
+            _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                if let Some(left) = long_wait_since(started) {
+                    return Err(left);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -122,13 +182,15 @@ pub struct Provisioner {
     role_interval: Duration,
     last_role: Option<Instant>,
     job_id: Option<ObjectId>,
+    /// Création abandonnée : Discord imposait une attente trop longue (secondes restantes).
+    discord_blocked: Option<u64>,
 }
 
 impl Provisioner {
     /// Création courte (commande slash) : journal en mémoire seulement.
     pub fn new(http: Arc<Http>) -> Self {
         let (progress, _) = watch::channel(Progress::default());
-        Self { http, created: vec![], progress, role_interval: ROLE_CREATION_INTERVAL, last_role: None, job_id: None }
+        Self { http, created: vec![], progress, role_interval: ROLE_CREATION_INTERVAL, last_role: None, job_id: None, discord_blocked: None }
     }
 
     /// Tâche longue (import) : le journal est aussi écrit en base, sous `kind` et `universe_id`.
@@ -164,8 +226,23 @@ impl Provisioner {
         self.role_interval = interval;
     }
 
+    /// Discord a bloqué une création (attente trop longue) : secondes d'attente restantes.
+    pub fn discord_blocked(&self) -> Option<u64> {
+        self.discord_blocked
+    }
+
     pub fn set_total(&self, total: u32) {
         self.progress.send_modify(|p| p.total = total);
+    }
+
+    /// Étape en cours (affichée sous la barre).
+    pub fn set_phase(&self, phase: Phase) {
+        self.progress.send_modify(|p| p.phase = phase);
+    }
+
+    /// Étapes faites jusqu'ici.
+    pub fn done_steps(&self) -> u32 {
+        self.progress.borrow().done
     }
 
     /// Une étape de la tâche est terminée (barre de progression).
@@ -205,9 +282,13 @@ impl Provisioner {
         if let Some(permissions) = permissions {
             role = role.permissions(permissions);
         }
-        let result = role
-            .execute(self.http.as_ref(), (GuildId::new(guild_id), None))
-            .await;
+        let result = match within_discord_limits(role.execute(self.http.as_ref(), (GuildId::new(guild_id), None))).await {
+            Ok(r) => r,
+            Err(left) => {
+                self.discord_blocked = Some(left);
+                return Err(serenity::Error::Other("discord_rate_limited"));
+            }
+        };
         self.last_role = Some(Instant::now());
         let role = result?;
         self.record(Created::Role { guild_id, role_id: role.id.get() }).await;
@@ -216,7 +297,13 @@ impl Provisioner {
 
     /// Crée un salon (catégorie comprise).
     pub async fn create_channel(&mut self, guild_id: u64, channel: CreateChannel<'_>) -> serenity::Result<GuildChannel> {
-        let channel = channel.audit_log_reason("VerseEngine").execute(self.http.as_ref(), GuildId::new(guild_id)).await?;
+        let channel = match within_discord_limits(channel.audit_log_reason("VerseEngine").execute(self.http.as_ref(), GuildId::new(guild_id))).await {
+            Ok(r) => r?,
+            Err(left) => {
+                self.discord_blocked = Some(left);
+                return Err(serenity::Error::Other("discord_rate_limited"));
+            }
+        };
         self.record(Created::Channel { channel_id: channel.id.get() }).await;
         Ok(channel)
     }

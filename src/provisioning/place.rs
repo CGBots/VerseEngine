@@ -78,6 +78,7 @@ pub async fn provision_place(p: &mut Provisioner, universe_id: ObjectId, guild_i
         name: category.name.clone(),
         modifiers: vec![],
         central_channel_id: Some(central.id.get()),
+        wiki: Default::default(),
     };
     if let Err(e) = insert_in_transaction(&place).await {
         eprintln!("[provisioning] place {name}: database: {e:?}");

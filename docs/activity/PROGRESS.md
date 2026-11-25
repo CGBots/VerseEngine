@@ -73,6 +73,22 @@ PR #12 (`feature/discord-activity`) :
 - Musique : la commande ne passe plus sur deux lignes ; à gauche sur un écran bas. Fenêtres admin en `dvh` (barres des navigateurs mobiles).
 - Vérifié dans Chromium (`app-harness.html`, l'activité entière avec une API simulée ; `web/activity/e2e/app-harness.cjs`) sur ordinateur, Discord PC, Z Fold 6 plié et déplié, en portrait et en paysage, iPhone et iPad : aucun débordement, volet et voyage ouverts et refermés.
 
+## Carte : brouillard des admins, cadrage, rendu façon Azgaar (24/11/2026)
+- Le brouillard s'applique aussi aux modérateurs et administrateurs hors du mode admin (`GET /api/map?view=admin`, accordé selon les droits de la session) ; carte cadrée sur les lieux avec une marge ; rendu 2D façon Azgaar d'après la sauvegarde `.map` (biomes, États, mers, rivières, icônes des bourgs), filtré par le brouillard. Détails : `IMPORT_SPEC.md` § 19. Un univers importé avant doit être ré-importé pour avoir ce rendu.
+
+## Menu de gauche : inventaire et mode admin (24/11/2026)
+- Mode joueur : bouton **Inventaire** (fenêtre à droite de la carte, lecture seule, ouverte même en voyage, craft ou farm) ; la fenêtre Craft ne montre plus que le livre de recettes.
+- Mode admin : la barre devient **Recettes** (éditeur), **Objets** (éditeur), **Carte de l'univers** (import, auparavant un bouton flottant qui recouvrait le bas du panneau) et **Téléporter** (à la place de Voyage). Farm est masqué.
+- Services partagés slash + API : `teleport/service.rs`, `recipe/service.rs`, `item/service.rs` ; routes `activity/admin_panel.rs` (droits recalculés à chaque requête, D3).
+
+## Fiche d'un lieu (24/11/2026, worktree `VE-place-info`)
+- Mode admin : cliquer un lieu ouvre sa **fiche** (plus de fenêtre de voyage) : salons, bourg Azgaar (taille, capitale, port, population, État, culture, type, particularités, lus à l'import dans `BurgStyle.details` ; un univers importé avant doit être ré-importé pour les avoir), routes, joueurs présents, texte éditable (`Place.wiki.description`), **Publier** et **Éditer la table de loot**.
+- Publier (`place/wiki.rs`) : un post par serveur de l'univers dans son forum wiki (étiquette `place` si elle existe), identifiants mémorisés (`Place.wiki.posts`) pour **mettre à jour** au lieu de recréer ; post supprimé à la main → recréé ; forum absent → signalé ; échec Discord → ancien post gardé. Post dans la langue du serveur (D12). Le texte publié (`Place.wiki.published`) est celui que voient les joueurs.
+- Table de loot : éditeur structuré (objets, ensembles, probabilité/poids, min/max, stock, secret, recharge, délai), validé côté front et serveur (`loot_table/service.rs`), même enregistrement que `/loot_table edit` (`save_table`, dernières fouilles conservées) ; le texte de la modale slash est régénéré.
+- Droits (D3) : lire la fiche = modérateur ou admin ; modifier, publier, éditer la loot = **admin** ; recalculés par Discord à chaque requête.
+- Joueurs : un clic sur un lieu ouvre toujours la fenêtre de voyage, et affiche en plus le **texte publié** d'un lieu découvert (rien sous le brouillard, rien de la table de butin).
+- Non vérifié : publication réelle dans un forum Discord, client Discord réel.
+
 ## Cahier des charges de l'import
 Cahier des charges complet et validé : **`docs/activity/IMPORT_SPEC.md`** (décisions I1–I17, Q1–Q5). À traiter dans une session dédiée. Points marquants : répartition de l'univers sur plusieurs serveurs (150 lieux au plus par serveur, création des serveurs par l'admin), plus de rôle par route (permissions individuelles), brouillard optionnel par univers, double vérification par le nom de l'univers, retour en arrière complet en cas d'erreur.
 

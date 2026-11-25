@@ -53,6 +53,18 @@ pub struct TravelGroup {
     pub server_id: u64,
 }
 
+/// Groupes arrêtés dans un lieu (`category_id` de sa catégorie Discord).
+pub async fn get_groups_at_place(universe_id: ObjectId, category_id: u64) -> mongodb::error::Result<Vec<TravelGroup>> {
+    use futures::TryStreamExt;
+    get_db_client().await
+        .database(VERSEENGINE_DB_NAME)
+        .collection::<TravelGroup>(TRAVELS_COLLECTION_NAME)
+        .find(doc! {"universe_id": universe_id, "actual_space_type": "Place", "actual_space_id": category_id as i64})
+        .await?
+        .try_collect()
+        .await
+}
+
 /// Groupe de voyage d'un joueur dans un univers.
 pub async fn get_group_of_user(universe_id: ObjectId, user_id: u64) -> mongodb::error::Result<Option<TravelGroup>> {
     get_db_client().await

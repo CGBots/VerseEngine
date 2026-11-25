@@ -34,6 +34,12 @@ pub enum EventKind {
     CharacterUpdated,
     /// Lieux, routes ou carte de l'univers modifiés.
     MapUpdated,
+    /// Inventaire du joueur modifié (et donc les recettes réalisables).
+    InventoryUpdated,
+    /// Craft du joueur lancé, terminé ou arrêté.
+    CraftUpdated,
+    /// Farm (fouille) du joueur lancé, terminé ou arrêté.
+    FarmUpdated,
     /// Le bot a rejoint ou quitté un serveur : la liste des serveurs de l'import est à relire
     /// (administrateurs seulement).
     ServersUpdated,
@@ -64,7 +70,9 @@ impl Event {
         match self.kind {
             EventKind::MapUpdated | EventKind::MusicUpdated | EventKind::Resync => true,
             EventKind::ServersUpdated => session.access == AccessLevel::Admin,
-            EventKind::CharacterUpdated => self.users.contains(&session.user_id),
+            EventKind::CharacterUpdated | EventKind::InventoryUpdated | EventKind::CraftUpdated | EventKind::FarmUpdated => {
+                self.users.contains(&session.user_id)
+            }
             EventKind::TravelUpdated => self.users.contains(&session.user_id) || session.access >= AccessLevel::Moderator,
         }
     }
@@ -103,9 +111,36 @@ pub fn event_from_change(collection: &str, operation: &OperationType, full_docum
     Some(Event { kind, universe_id: Some(universe_id), users })
 }
 
+/// Ligne d'inventaire d'un personnage : `(univers, personnage)`. Le document ne nomme pas le
+/// joueur : il faut ensuite lire la fiche du personnage ([`inventory_event`]).
+pub fn inventory_holder(operation: &OperationType, full_document: Option<&Document>) -> Option<(ObjectId, ObjectId)> {
+    if !matches!(operation, OperationType::Insert | OperationType::Update | OperationType::Replace) {
+        return None;
+    }
+    let doc = full_document?;
+    let holder = doc.get_document("holder").ok()?;
+    if holder.get_str("holder_type").ok()? != "Character" {
+        return None;
+    }
+    Some((doc.get_object_id("universe_id").ok()?, holder.get_object_id("holder_id").ok()?))
+}
+
+/// Évènement d'un changement d'inventaire, adressé au joueur du personnage.
+async fn inventory_event(operation: &OperationType, full_document: Option<&Document>) -> Option<Event> {
+    let (universe_id, character_id) = inventory_holder(operation, full_document)?;
+    let character = crate::database::characters::get_character_by_id(character_id).await.ok().flatten()?;
+    Some(Event { kind: EventKind::InventoryUpdated, universe_id: Some(universe_id), users: vec![character.user_id] })
+}
+
 /// Collections suivies.
-pub const WATCHED: [&str; 5] =
-    [TRAVELS_COLLECTION_NAME, CHARACTERS_COLLECTION_NAME, PLACES_COLLECTION_NAME, ROADS_COLLECTION_NAME, UNIVERSE_MAPS_COLLECTION_NAME];
+pub const WATCHED: [&str; 6] = [
+    TRAVELS_COLLECTION_NAME,
+    CHARACTERS_COLLECTION_NAME,
+    PLACES_COLLECTION_NAME,
+    ROADS_COLLECTION_NAME,
+    UNIVERSE_MAPS_COLLECTION_NAME,
+    INVENTORY_COLLECTION_NAME,
+];
 
 /// Diffuseur de l'API démarrée, pour les évènements qui viennent du bot (pas de la base).
 static ACTIVE_HUB: std::sync::OnceLock<Hub> = std::sync::OnceLock::new();
@@ -115,6 +150,15 @@ static ACTIVE_HUB: std::sync::OnceLock<Hub> = std::sync::OnceLock::new();
 pub fn notify_servers_changed() {
     if let Some(hub) = ACTIVE_HUB.get() {
         hub.publish(Event { kind: EventKind::ServersUpdated, universe_id: None, users: vec![] });
+    }
+}
+
+/// Prévient un joueur qu'une de ses occupations (craft, farm) a changé. Appelé par les files du
+/// bot (`craft::logic`, `loot::logic`) : la suppression d'un craft ou d'un farm terminé n'est pas
+/// visible dans un change stream (document supprimé). Sans activité démarrée, ne fait rien.
+pub fn notify_player(kind: EventKind, universe_id: ObjectId, user_id: u64) {
+    if let Some(hub) = ACTIVE_HUB.get() {
+        hub.publish(Event { kind, universe_id: Some(universe_id), users: vec![user_id] });
     }
 }
 
@@ -174,7 +218,12 @@ impl Hub {
                             Ok(change) => {
                                 let change: ChangeStreamEvent<Document> = change;
                                 resume = Some(change.id.clone());
-                                if let Some(event) = event_from_change(collection, &change.operation_type, change.full_document.as_ref()) {
+                                let event = if collection == INVENTORY_COLLECTION_NAME {
+                                    inventory_event(&change.operation_type, change.full_document.as_ref()).await
+                                } else {
+                                    event_from_change(collection, &change.operation_type, change.full_document.as_ref())
+                                };
+                                if let Some(event) = event {
                                     self.publish(event);
                                 }
                             }
@@ -258,6 +307,30 @@ mod tests {
         assert!(event_from_change(TRAVELS_COLLECTION_NAME, &OperationType::Update, None).is_none());
         assert!(event_from_change("items", &OperationType::Update, Some(&doc)).is_none());
         assert!(event_from_change(TRAVELS_COLLECTION_NAME, &OperationType::Update, Some(&doc! {"members": ["1"]})).is_none());
+    }
+
+    #[test]
+    fn an_inventory_line_names_its_character() {
+        let (u, c) = (ObjectId::new(), ObjectId::new());
+        let doc = doc! {"universe_id": u, "holder": {"holder_type": "Character", "holder_id": c}, "quantity": 3};
+        assert_eq!(inventory_holder(&OperationType::Update, Some(&doc)), Some((u, c)));
+        let in_a_chest = doc! {"universe_id": u, "holder": {"holder_type": "Item", "holder_id": c}};
+        assert_eq!(inventory_holder(&OperationType::Update, Some(&in_a_chest)), None);
+        assert_eq!(inventory_holder(&OperationType::Delete, Some(&doc)), None);
+        // Le change stream générique l'ignore : il faut lire la fiche pour trouver le joueur.
+        assert!(event_from_change(INVENTORY_COLLECTION_NAME, &OperationType::Update, Some(&doc)).is_none());
+    }
+
+    #[test]
+    fn occupation_events_reach_their_player_only() {
+        let u = ObjectId::new();
+        let me = session(1, u, AccessLevel::Player);
+        let moderator = session(2, u, AccessLevel::Moderator);
+        for kind in [EventKind::InventoryUpdated, EventKind::CraftUpdated, EventKind::FarmUpdated] {
+            let e = Event { kind, universe_id: Some(u), users: vec![1] };
+            assert!(e.is_visible_to(&me), "{kind:?}");
+            assert!(!e.is_visible_to(&moderator), "{kind:?}: not even a moderator");
+        }
     }
 
     #[test]

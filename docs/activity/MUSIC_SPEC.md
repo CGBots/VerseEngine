@@ -26,7 +26,7 @@ Risques signalés à l'utilisateur pour M1 (22/11/2026) : conditions d'utilisati
 ## 3. Sécurité
 
 ### 3.1 Fichiers envoyés (admins seulement, droits vérifiés côté serveur à chaque requête)
-- Taille : 25 Mio par fichier ; **quota de 500 Mio par univers** ; durée max 15 min.
+- Taille : 25 Mio par fichier ; **quota de 500 Mio par univers** ; pas de durée maximale (ambiances de plusieurs heures).
 - **Signature** reconnue (MP3, OGG Vorbis/Opus, FLAC, WAV, M4A/AAC, WebM/Opus), puis **décodage complet** par Symphonia (Rust pur, pas de code natif) : un fichier qui ne se décode pas d'un bout à l'autre est refusé. Le type servi vient de ce décodage, jamais du nom ni du type annoncé par le client.
 - Le nom d'origine n'est jamais réutilisé (titre saisi, nettoyé, 100 caractères max).
 - Limitation de débit sur l'envoi.
@@ -59,7 +59,7 @@ Risques signalés à l'utilisateur pour M1 (22/11/2026) : conditions d'utilisati
 
 ## 6. S1 livrée : stockage et contrôle des fichiers (22/11/2026)
 
-- `src/music/audio.rs` : signature (MP3, OGG, FLAC, WAV, MP4/M4A, WebM) puis décodage complet par Symphonia 0.6 (+ `symphonia-opus`) ; refus d'un fichier avec une piste vidéo ou de sous-titres ; plus de 1 % de paquets illisibles = refus ; durée calculée sur les échantillons décodés (15 min max), taille 25 Mio max avant tout décodage.
+- `src/music/audio.rs` : signature (MP3, OGG, FLAC, WAV, MP4/M4A, WebM) puis décodage complet par Symphonia 0.6 (+ `symphonia-opus`) ; refus d'un fichier avec une piste vidéo ou de sous-titres ; plus de 1 % de paquets illisibles = refus ; durée calculée sur les échantillons décodés (sans maximum), taille 25 Mio max avant tout décodage.
 - Fichiers de test (`tests/fixtures/audio/`, 2 s de son, générés par ffmpeg) : les 7 formats acceptés sont lus et chronométrés (± 100 ms) ; refusés : une page HTML nommée `.mp3`, un OGG corrompu, un FLAC réduit à son en-tête, une vidéo MP4, un faux OGG (signature seule).
 - `src/database/music.rs` : collection `music_tracks`, bucket GridFS `music_files`, quota (500 Mio et 300 morceaux par univers), titres nettoyés (100 caractères), playlist d'un lieu ou d'une route, oubli d'un lieu ou d'une route, suppression du morceau et de son fichier. Test de bout en bout contre MongoDB (`a_track_lives_and_dies_in_mongodb`).
 

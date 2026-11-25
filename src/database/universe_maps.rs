@@ -92,7 +92,145 @@ pub struct UniverseMap {
     /// Image exportée par Azgaar, affichée telle quelle (`map_backgrounds`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<crate::database::map_backgrounds::MapBackground>,
+    /// Rendu façon Azgaar (biomes, mers, rivières, États), lu dans la sauvegarde à l'import.
+    /// Absent : carte générée ou calculée, ou importée avant ce rendu (le front se rabat sur le relief).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<MapStyle>,
     pub updated_at: u64,
+}
+
+/// Surface de la carte : une valeur par case d'une grille `cols × rows` couvrant la carte.
+/// - `0..=199` : terre, identifiant du biome Azgaar ;
+/// - `SURFACE_OCEAN + d` (`d` de 1 à 9) : mer, `d` = éloignement de la côte en cellules ;
+/// - `SURFACE_LAKE` : lac ;
+/// - `SURFACE_HIDDEN` : inconnu (sous le brouillard, rien n'est envoyé).
+pub const SURFACE_OCEAN: u8 = 200;
+pub const SURFACE_LAKE: u8 = 230;
+pub const SURFACE_HIDDEN: u8 = 255;
+
+/// Rendu façon Azgaar d'une carte importée (calculé une fois, à l'import).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct MapStyle {
+    pub cols: u32,
+    pub rows: u32,
+    #[serde(with = "serde_bytes_compat")]
+    pub surface: Vec<u8>,
+    /// État de chaque case (0 : sans État), vide si la carte n'en a pas.
+    #[serde(with = "serde_bytes_compat", default)]
+    pub states: Vec<u8>,
+    /// Couleur de chaque biome (`#rrggbb`), par identifiant.
+    pub biome_colors: Vec<String>,
+    /// Couleur de chaque État (`#rrggbb`, vide pour 0), par identifiant.
+    #[serde(default)]
+    pub state_colors: Vec<String>,
+    #[serde(default)]
+    pub rivers: Vec<StyleRiver>,
+    /// Bourgs : taille et type, pour leur icône.
+    #[serde(default)]
+    pub burgs: Vec<BurgStyle>,
+    /// Vrai si la surface vient des cellules d'Azgaar (biomes et États exacts) ; faux si elle a
+    /// été estimée depuis la grille (biomes recalculés, sans États ni rivières).
+    #[serde(default)]
+    pub exact: bool,
+    /// Cellules du pack d'Azgaar, pour les contours vectoriels (`map/isolines.rs`). Absentes des
+    /// univers importés avant, ou si le pack n'a pas pu être reconstruit exactement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pack: Option<PackCells>,
+}
+
+/// Cellules du pack d'Azgaar : positions (suivies des points de bordure de la grille, qui ferment
+/// les cellules du bord) et, pour chaque cellule réelle, biome, État et nature de l'eau.
+/// Stockage compact : octets bruts (positions en `f32` petit-boutiste, x puis y).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct PackCells {
+    /// Nombre de cellules réelles ; les points suivants sont la bordure.
+    pub real: u32,
+    #[serde(with = "serde_bytes_compat")]
+    pub points: Vec<u8>,
+    #[serde(with = "serde_bytes_compat")]
+    pub biome: Vec<u8>,
+    /// État (0 : aucun), borné à 255 comme `MapStyle.states`.
+    #[serde(with = "serde_bytes_compat")]
+    pub state: Vec<u8>,
+    /// 0 terre, 1 mer, 2 lac.
+    #[serde(with = "serde_bytes_compat")]
+    pub water: Vec<u8>,
+}
+
+/// Nature d'une cellule du pack (`PackCells.water`).
+pub const PACK_LAND: u8 = 0;
+pub const PACK_OCEAN: u8 = 1;
+pub const PACK_LAKE: u8 = 2;
+/// Cellule hors de la zone importée (lasso) : jamais dessinée.
+pub const PACK_HIDDEN: u8 = 3;
+
+impl PackCells {
+    pub fn encode_points(points: &[(f64, f64)]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(points.len() * 8);
+        for &(x, y) in points {
+            out.extend_from_slice(&(x as f32).to_le_bytes());
+            out.extend_from_slice(&(y as f32).to_le_bytes());
+        }
+        out
+    }
+
+    /// Positions décodées (cellules réelles puis bordure).
+    pub fn points(&self) -> Vec<(f64, f64)> {
+        self.points
+            .chunks_exact(8)
+            .map(|c| (f32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f64, f32::from_le_bytes([c[4], c[5], c[6], c[7]]) as f64))
+            .collect()
+    }
+
+    /// Données cohérentes : une valeur par cellule réelle, et des positions pour chacune.
+    pub fn is_consistent(&self) -> bool {
+        let n = self.real as usize;
+        self.biome.len() == n && self.state.len() == n && self.water.len() == n && self.points.len() / 8 >= n && self.points.len() % 8 == 0
+    }
+}
+
+/// Rivière : tracé (centres des cellules traversées) et largeur à la source et à l'embouchure.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct StyleRiver {
+    pub points: Vec<[f64; 2]>,
+    pub width: [f64; 2],
+}
+
+/// Taille d'un bourg : 0 village, 1 bourg, 2 ville ; capitale et port à part.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct BurgStyle {
+    pub burg_id: u64,
+    pub size: u8,
+    pub capital: bool,
+    pub port: bool,
+    /// Informations du bourg pour la fiche du lieu (mode admin). Jamais envoyées avec la carte :
+    /// absentes des univers importés avant la fiche.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<BurgDetails>,
+}
+
+/// Ce qu'Azgaar sait d'un bourg, lu à l'import (ligne 15 du `.map`, États ligne 14, cultures ligne 13).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct BurgDetails {
+    /// Nom du bourg dans Azgaar (le lieu a pu être renommé depuis).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Habitants (population Azgaar × échelle de population des réglages).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub population: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub culture: Option<String>,
+    /// Type Azgaar (`River`, `Naval`, `Highland`…).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// Groupe Azgaar (`capital`, `city`, `fort`, `village`…).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Éléments présents : `citadel`, `walls`, `plaza`, `temple`, `shanty`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<String>,
 }
 
 /// Stockage des octets en binaire BSON plutôt qu'en tableau d'entiers (64 Kio max).
@@ -150,6 +288,12 @@ mod tests {
             graph_hash: Some("abc".into()),
             road_paths: vec![RoadPath { a: 12_345_678_901_234_567, b: 2, points: vec![[1.0, 2.0], [3.0, 4.0]] }],
             background: None,
+            style: Some(MapStyle {
+                cols: 2, rows: 1, surface: vec![4, SURFACE_OCEAN + 1], states: vec![1, 0], biome_colors: vec!["#466eab".into()],
+                state_colors: vec![String::new(), "#ff0000".into()], rivers: vec![StyleRiver { points: vec![[0.0, 0.0], [1.0, 1.0]], width: [0.3, 1.0] }],
+                burgs: vec![BurgStyle { burg_id: 3, size: 2, capital: true, port: false, details: None }], exact: true,
+                pack: None,
+            }),
             updated_at: 1,
         }
     }
@@ -160,6 +304,7 @@ mod tests {
         let doc = mongodb::bson::to_document(&map).unwrap();
         assert_eq!(doc.get_array("positions").unwrap()[0].as_document().unwrap().get_str("place_id").unwrap(), "12345678901234567");
         assert!(matches!(doc.get_document("terrain").unwrap().get("heights"), Some(mongodb::bson::Bson::Binary(_))));
+        assert!(matches!(doc.get_document("style").unwrap().get("surface"), Some(mongodb::bson::Bson::Binary(_))));
         let back: UniverseMap = mongodb::bson::from_document(doc).unwrap();
         assert_eq!(back, map);
     }

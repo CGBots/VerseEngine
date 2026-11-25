@@ -31,7 +31,7 @@ rand = "0.10.0"
 # --- Activité Discord (API HTTP embarquée, cf. docs/activity/ARCHITECTURE.md) ---
 axum = { version = "0.8", features = ["ws"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["fs", "set-header", "limit"] }
+tower-http = { version = "0.6", features = ["fs", "set-header", "limit", "compression-gzip"] }
 sha2 = "0.10"
 # Lecture des sauvegardes Azgaar (.map) : gzip et ancien encodage base64. Déjà présents dans le
 # graphe de dépendances (versions identiques).

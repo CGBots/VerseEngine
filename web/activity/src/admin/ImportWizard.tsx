@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ApiError, importApi, uploadMapFile, type ImportPlan, type JobState, type PlanResponse, type RemovalInfo, type ServerList, type UploadedMap } from '../api';
+import { ApiError, importApi, uploadMapFile, type ImportPlan, type JobState, type MapSourceInfo, type PlanResponse, type RemovalInfo, type ServerList, type UploadedMap } from '../api';
 import { openExternal } from '../discord';
 import type { Translator } from '../i18n';
 import { AzgaarStudio } from './AzgaarStudio';
@@ -7,7 +7,7 @@ import { GenerateEditor } from './GenerateEditor';
 import { ImportPreview } from './ImportPreview';
 import {
   blocker, estimatedMinutes, initialChoices, missingServers, nameConfirmed, optionsForSlot, percent, planRequest, removalChoices, serverColor, setSlot, slotCount, summary,
-  toggleSecret, type ImportChoices,
+  simplifyLasso, toggleSecret, type ImportChoices,
 } from './importModel';
 
 const AZGAAR_URL = 'https://azgaar.github.io/Fantasy-Map-Generator/';
@@ -20,6 +20,7 @@ const MODE_LABEL = { merge: 'activity_ui__import_mode_merge', reimport: 'activit
 const PHASE_LABEL = {
   Creating: 'activity_ui__import_phase_creating',
   Waiting: 'activity_ui__import_phase_waiting',
+  Deleting: 'activity_ui__import_phase_deleting',
   RollingBack: 'activity_ui__import_phase_rolling_back',
   Done: 'activity_ui__import_phase_done',
   RolledBack: 'activity_ui__import_phase_rolled_back_phase',
@@ -35,8 +36,8 @@ interface Props {
   /** Incrémenté quand le bot rejoint ou quitte un serveur (WebSocket). */
   serversVersion: number;
   onClose?: () => void;
-  /** Import terminé : l'activité se recharge sur l'univers. */
-  onDone: () => void;
+  /** Import terminé, avec le nom de l'univers (affiché par l'animation de naissance). */
+  onDone: (universeName: string) => void;
 }
 
 const errKey = (e: unknown) => (e instanceof ApiError ? e.key : 'activity__internal_error');
@@ -44,9 +45,26 @@ const errKey = (e: unknown) => (e instanceof ApiError ? e.key : 'activity__inter
 export function ImportWizard({ t, universeName, serversVersion, onClose, onDone }: Props) {
   const [step, setStep] = useState<Step>('intro');
   const [error, setError] = useState<string | null>(null);
+  // « Mettre à jour le rendu seulement » : message du résultat, et envoi en cours.
+  const [renderResult, setRenderResult] = useState<string | null>(null);
+  const [renderBusy, setRenderBusy] = useState(false);
+  const renderOnly = async () => {
+    setRenderBusy(true);
+    setError(null);
+    try {
+      const r = await importApi.renderOnly();
+      setRenderResult(r.result);
+    } catch (e) {
+      setError(errKey(e));
+    } finally {
+      setRenderBusy(false);
+    }
+  };
   const [map, setMap] = useState<UploadedMap | null>(null);
   const [uploading, setUploading] = useState(false);
   const [choices, setChoices] = useState<ImportChoices | null>(null);
+  // Outil lasso (aperçu) : glisser trace la zone à importer.
+  const [lasso, setLasso] = useState(false);
   const [plan, setPlan] = useState<PlanResponse | null>(null);
   const [planning, setPlanning] = useState(false);
   const [servers, setServers] = useState<ServerList | null>(null);
@@ -160,6 +178,7 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
       </header>
       {error && <p className="import-error" role="alert">{t(error)}</p>}
 
+      {step === 'intro' && universeName && <MapSourceBox t={t} />}
       {step === 'intro' && (
         <div className="import-choices">
           <button type="button" onClick={() => { setAzgaarOpened(true); setStep('azgaar'); }}>{t('activity_ui__import_in_azgaar')}</button>
@@ -216,8 +235,49 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
 
       {step === 'options' && map && choices && (
         <div className="import-options">
-          <ImportPreview map={map} plan={p} secret={choices.secret} onToggleSecret={(a, b) => update((c) => ({ ...c, secret: toggleSecret(c.secret, a, b) }))} t={t} />
+          <div className="import-preview-wrap">
+            <div className="lasso-tools" role="toolbar" aria-label={t('activity_ui__import_zone')}>
+              <button type="button" className={lasso ? '' : 'secondary'} aria-pressed={lasso} onClick={() => setLasso((l) => !l)}>
+                {t(lasso ? 'activity_ui__import_zone_drawing' : 'activity_ui__import_zone_draw')}
+              </button>
+              {choices.zone.length >= 3 && (
+                <button type="button" className="secondary" onClick={() => update((c) => ({ ...c, zone: [] }))}>{t('activity_ui__import_zone_clear')}</button>
+              )}
+              <span className="muted small-text">
+                {t(choices.zone.length >= 3 ? 'activity_ui__import_zone_set' : 'activity_ui__import_zone_hint', { burgs: p?.places.length ?? map.burgs.length })}
+              </span>
+            </div>
+            <ImportPreview
+              map={map}
+              plan={p}
+              secret={choices.secret}
+              onToggleSecret={(a, b) => update((c) => ({ ...c, secret: toggleSecret(c.secret, a, b) }))}
+              t={t}
+              lasso={lasso}
+              zone={choices.zone}
+              onLasso={(points) => {
+                // Pas de tracé (simple clic) : la zone actuelle est gardée.
+                const zone = simplifyLasso(points, Math.max(map.width, map.height) / 400);
+                if (zone.length >= 3) update((c) => ({ ...c, zone }));
+                setLasso(false);
+              }}
+            />
+          </div>
           <aside className="import-settings">
+            {map.has_universe && !map.generated && (
+              <fieldset className="render-only">
+                <legend>{t('activity_ui__import_render_only')}</legend>
+                <p className="muted small-text">{t('activity_ui__import_render_only_hint')}</p>
+                {renderResult ? (
+                  <p role="status">{t(renderResult)}</p>
+                ) : (
+                  <button type="button" className="secondary" disabled={renderBusy} onClick={() => void renderOnly()}>
+                    {renderBusy ? t('activity_ui__working') : t('activity_ui__import_render_only')}
+                  </button>
+                )}
+                {renderResult && onClose && <button type="button" onClick={onClose}>{t('activity_ui__close')}</button>}
+              </fieldset>
+            )}
             <p className="muted">{t('activity_ui__import_map_info', { name: map.generated ? t('activity_ui__generate_map_name') : map.name ?? '—', burgs: map.burgs.length })}</p>
             {map.has_universe && (
               <fieldset>
@@ -355,15 +415,18 @@ export function ImportWizard({ t, universeName, serversVersion, onClose, onDone 
             <div className={`progress-bar${job.progress.phase === 'RollingBack' ? ' rollback' : ''}`} style={{ width: `${percent(job.progress)}%` }} />
           </div>
           <p className="muted">{job.progress.done} / {job.progress.total}</p>
+          {job.outcome.status === 'running' && !!job.discord_wait_secs && (
+            <p className="import-warning">{t('activity_ui__import_discord_wait', { seconds: job.discord_wait_secs })}</p>
+          )}
           {job.outcome.status === 'done' && (
             <>
               <p>{t('activity_ui__import_done')}</p>
-              <button type="button" onClick={onDone}>{t('activity_ui__import_open_universe')}</button>
+              <button type="button" onClick={() => onDone(expectedName)}>{t('activity_ui__import_open_universe')}</button>
             </>
           )}
           {job.outcome.status === 'failed' && (
             <>
-              <p className="import-error">{t(job.outcome.error)}</p>
+              <p className="import-error">{t(job.outcome.error, { hours: Math.ceil((job.discord_wait_secs ?? 0) / 3600) })}</p>
               <p>{t(job.outcome.rolled_back ? 'activity_ui__import_rolled_back' : 'activity_ui__import_rollback_incomplete')}</p>
               <button type="button" className="secondary" onClick={() => setStep('options')}>{t('activity_ui__back')}</button>
             </>
@@ -382,7 +445,10 @@ function PlanSummary({ plan, t }: { plan: PlanResponse; t: Translator }) {
       <li>{t('activity_ui__import_sum_roads', { create: s.createRoads, updated: s.updatedRoads })}</li>
       <li>{t('activity_ui__import_sum_servers', { count: s.servers, cut: s.cutRoads })}</li>
       {s.isolated > 0 && <li>{t('activity_ui__import_sum_isolated', { count: s.isolated })}</li>}
-      <li>{t('activity_ui__import_sum_duration', { objects: plan.discord_objects, minutes: estimatedMinutes(plan.discord_objects) })}</li>
+      <li>{t('activity_ui__import_sum_duration', { objects: plan.discord_objects, minutes: estimatedMinutes(plan.estimated_secs) })}</li>
+      {!!plan.discord_wait_secs && (
+        <li className="import-warning">{t('activity_ui__import_discord_blocked_now', { hours: Math.ceil(plan.discord_wait_secs / 3600) })}</li>
+      )}
     </ul>
   );
 }
@@ -437,5 +503,42 @@ function RemovalSection({ plan, removal, choices, update, t }: {
         </>
       )}
     </fieldset>
+  );
+}
+
+/** Sauvegarde .map gardée pour l'univers : graine, date, et renvoi en message privé. */
+function MapSourceBox({ t }: { t: Translator }) {
+  const [latest, setLatest] = useState<MapSourceInfo | null | undefined>(undefined);
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    importApi.sources().then((r) => setLatest(r.sources[0] ?? null)).catch(() => setLatest(null));
+  }, []);
+  if (latest === undefined) return null;
+  const send = async () => {
+    setBusy(true);
+    try {
+      setMessage(t((await importApi.sendSource()).result));
+    } catch (e) {
+      setMessage(t(errKey(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="map-source">
+      <h3>{t('activity_ui__map_source_title')}</h3>
+      {latest ? (
+        <>
+          <p className="muted">
+            {t('activity_ui__map_source_info', { seed: latest.seed ?? '?', name: latest.name ?? '—', date: new Date(latest.saved_at * 1000).toLocaleString() })}
+          </p>
+          <button type="button" className="secondary small" disabled={busy} onClick={() => void send()}>{t('activity_ui__map_source_send')}</button>
+        </>
+      ) : (
+        <p className="muted">{t('activity__map_source_none')}</p>
+      )}
+      {message && <p role="status">{message}</p>}
+    </section>
   );
 }

@@ -1477,3 +1477,40 @@ mod travel_pure_tests {
         assert_eq!((g.road_server_id, g.destination_server_id), (Some(5), Some(6)));
     }
 }
+
+/// Recalcule tout de suite la vitesse du groupe en route de `user_id` (une statistique d'un des
+/// membres vient de changer : objet consommé…). La distance parcourue est figée à maintenant, puis
+/// l'étape suivante est recalculée avec la vitesse actuelle du membre le plus lent, comme à
+/// l'expiration d'un modificateur. Sans effet si le joueur ne voyage pas.
+pub async fn refresh_moving_group(user_id: u64) -> Result<(), anyhow::Error> {
+    let group = {
+        let mut moves = MOVES.lock().await;
+        let Some(i) = moves.iter().position(|m| m.members.contains(&user_id)) else { return Ok(()) };
+        // Une arrivée déjà programmée n'est pas touchée : le groupe est au bout de la route.
+        if moves[i].is_end && moves[i].step_start_timestamp.is_none() {
+            return Ok(());
+        }
+        moves.remove(i)
+    };
+    let now = Utc::now().timestamp() as u64;
+    let mut frozen = group.clone();
+    frozen.distance_traveled = calculate_distance_at(&group, now);
+    frozen.step_start_timestamp = Some(now);
+    frozen.step_end_timestamp = Some(now);
+    frozen.modified_speed = 0.0;
+    frozen.is_end = false;
+    match next_step_logic(&frozen).await {
+        Ok(mut next) => {
+            if next.step_end_timestamp.is_none() {
+                next.step_end_timestamp = Some(now);
+            }
+            add_move(next).await;
+            Ok(())
+        }
+        Err(e) => {
+            // Le groupe reprend son étape d'avant : il ne doit pas rester hors de la file.
+            add_move(group).await;
+            Err(e)
+        }
+    }
+}

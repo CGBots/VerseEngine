@@ -2,3 +2,9 @@
 /target/
 /.output.txt
 /.cargo/
+
+# Journaux (bot, tests, outils) : jamais versionnés
+*.log
+/logs/
+# IDE (RustRover / IntelliJ)
+/.idea/

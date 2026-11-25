@@ -9,6 +9,8 @@
 //!
 //! Les erreurs sont des clés Fluent (`travel__…`), affichées telles quelles par le bot et
 //! renvoyées par l'API.
+//!
+//! Un départ est refusé si un membre du groupe crafte ou farme ([`crate::occupation`]).
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -17,7 +19,6 @@ use futures::TryStreamExt;
 use serenity::all::{ChannelId, ChannelType, CreateMessage, GuildId, Http};
 
 use crate::database::characters::get_character_by_user_id;
-use crate::database::craft::PlayerCraft;
 use crate::database::known_roads::{known_road_ids, remember_road};
 use crate::database::places::{get_place_by_category_id, Place};
 use crate::database::road::{get_road, get_road_by_channel_id, get_roads_of_place, Road};
@@ -160,9 +161,9 @@ pub async fn destinations(guild_id: u64, user_id: u64) -> Result<Vec<Destination
 pub async fn start(http: &Arc<Http>, guild_id: u64, actor: Actor<'_>, destination_id: u64, announce_in: Announce) -> Result<&'static str, Error> {
     let (server, mut group) = server_and_group(guild_id, actor.user_id).await?;
 
-    if let Ok(Some(_)) = PlayerCraft::get_by_user_id(server.universe_id, actor.user_id).await {
-        return Err("travel__cannot_move_while_crafting".into());
-    }
+    // Voyage, craft et farm s'excluent, pour tout le groupe : le départ emmène chaque membre.
+    let _lock = crate::occupation::lock(server.universe_id, actor.user_id).await;
+    crate::occupation::ensure_group_can_travel(server.universe_id, actor.user_id, &group.members).await?;
     let destination = get_place_by_category_id(server.universe_id, destination_id).await?.ok_or("travel__place_not_found")?;
 
     if group.is_in_move && group.actual_space_type == SpaceType::Road {
@@ -286,6 +287,11 @@ pub async fn join(http: &Arc<Http>, guild_id: u64, actor: Actor<'_>, target_id: 
     }
     if my_group.actual_space_id != target_group.actual_space_id || my_group.actual_space_type != target_group.actual_space_type {
         return Err("travel__too_far_different_place".into());
+    }
+    // Rejoindre un groupe en route, c'est partir avec lui : même exclusion qu'un départ.
+    let _lock = crate::occupation::lock(server.universe_id, actor.user_id).await;
+    if target_group.is_in_move {
+        crate::occupation::ensure_group_can_travel(server.universe_id, actor.user_id, &my_group.members).await?;
     }
 
     let threshold = get_travel_threshold(universe.global_time_modifier.into());
@@ -471,7 +477,7 @@ mod integration {
     use mongodb::bson::{doc, oid::ObjectId};
 
     fn place(universe_id: ObjectId, category_id: u64, name: &str) -> Place {
-        Place { _id: ObjectId::new(), universe_id, server_id: 1, category_id, role: random_id(), name: name.into(), modifiers: vec![], central_channel_id: None }
+        Place { _id: ObjectId::new(), universe_id, server_id: 1, category_id, role: random_id(), name: name.into(), modifiers: vec![], central_channel_id: None, wiki: Default::default() }
     }
 
     #[test]

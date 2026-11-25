@@ -239,3 +239,43 @@ export function viewElevation(aspect: number): number {
   const t = Math.min(1, Math.max(0, (1.3 - aspect) / 0.7));
   return 48 + t * 24;
 }
+
+/**
+ * Cadrage de départ de la carte 2D hors brouillard (unités de la carte) : les lieux avec une marge (leurs noms ne touchent jamais le
+ * bord de la vue), sinon toute la carte. La marge vaut 6 % du plus grand côté de la carte, et la
+ * zone au moins un quart de la carte (un ou deux lieux seuls ne remplissent pas l'écran).
+ */
+export function placesBox(map: MapView): { x: number; y: number; w: number; h: number } {
+  const side = Math.max(map.width, map.height) || 1;
+  if (map.places.length === 0) return { x: 0, y: 0, w: map.width, h: map.height };
+  const xs = map.places.map((p) => p.x), ys = map.places.map((p) => p.y);
+  const pad = side * 0.06;
+  const min = side * 0.25;
+  let x0 = Math.min(...xs) - pad, x1 = Math.max(...xs) + pad;
+  // Le nom est au-dessus du lieu : un peu plus de marge en haut.
+  let y0 = Math.min(...ys) - pad * 1.3, y1 = Math.max(...ys) + pad;
+  if (x1 - x0 < min) [x0, x1] = [(x0 + x1 - min) / 2, (x0 + x1 + min) / 2];
+  if (y1 - y0 < min) [y0, y1] = [(y0 + y1 - min) / 2, (y0 + y1 + min) / 2];
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/** Une vue cadrée ne montre jamais plus de 1,5 fois la zone qui remplirait exactement l'écran :
+ * une carte très large sur un téléphone en portrait serait sinon minuscule. */
+const MAX_CONTAIN = 1.5;
+
+/**
+ * Fenêtre de départ de la carte 2D, aux proportions de la vue : `frame` entier si possible, sinon
+ * (proportions trop différentes) une fenêtre plus serrée, centrée sur `center` (le personnage) sans
+ * sortir de `frame`.
+ */
+export function frameView(frame: { x: number; y: number; w: number; h: number }, viewW: number, viewH: number, center: MapPoint | null = null) {
+  const aspect = viewW > 0 && viewH > 0 ? viewW / viewH : frame.w / frame.h;
+  const contain = Math.max(frame.w, frame.h * aspect);
+  const cover = Math.min(frame.w, frame.h * aspect);
+  const w = Math.min(contain, cover * MAX_CONTAIN);
+  const h = w / aspect;
+  const c = center ?? { x: frame.x + frame.w / 2, y: frame.y + frame.h / 2 };
+  const place = (pos: number, size: number, start: number, length: number) =>
+    size >= length ? start + length / 2 - size / 2 : Math.min(start + length - size, Math.max(start, pos - size / 2));
+  return { x: place(c.x, w, frame.x, frame.w), y: place(c.y, h, frame.y, frame.h), w, h };
+}

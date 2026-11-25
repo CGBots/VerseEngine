@@ -119,8 +119,22 @@ describe('confirmation and progress', () => {
 
   it('estimates the duration and the progress', () => {
     expect(estimatedMinutes(10)).toBe(1);
-    expect(estimatedMinutes(2288)).toBe(20);
+    expect(estimatedMinutes(1201)).toBe(21);
     expect(percent({ phase: 'Creating', done: 5, total: 20 })).toBe(25);
     expect(percent({ phase: 'Done', done: 0, total: 0 })).toBe(100);
+  });
+});
+
+describe('lasso', () => {
+  it('drops points too close together and caps their number', async () => {
+    const { simplifyLasso, planRequest, initialChoices } = await import('./importModel');
+    expect(simplifyLasso([[0, 0], [0.5, 0], [10, 0], [10, 10]], 2)).toEqual([[0, 0], [10, 0], [10, 10]]);
+    expect(simplifyLasso([[0, 0], [10, 0]], 2)).toEqual([]);
+    const circle = Array.from({ length: 1000 }, (_, i) => [Math.cos(i / 159) * 100, Math.sin(i / 159) * 100] as [number, number]);
+    expect(simplifyLasso(circle, 0.01, 300)).toHaveLength(300);
+    const map = { has_universe: false, suggestions: [] } as unknown as Parameters<typeof initialChoices>[0];
+    const c = initialChoices(map);
+    expect(planRequest(c).zone).toBeUndefined();
+    expect(planRequest({ ...c, zone: [[0, 0], [1, 0], [1, 1]] }).zone).toEqual([[0, 0], [1, 0], [1, 1]]);
   });
 });

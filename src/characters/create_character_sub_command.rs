@@ -765,7 +765,8 @@ pub async fn handle_accept_character_modal(ctx: SerenityContext, m: ModalInterac
     session.start_transaction().await?;
 
     let upsert_result = character.clone().upsert_with_session(&mut session).await;
-    if upsert_result.is_err() {
+    if let Err(e) = &upsert_result {
+        tracing::error!(user = character_user_id, error = %e, "acceptation du personnage : écriture refusée");
         session.abort_transaction().await?;
         return Err("create_character__database_error".into());
     }

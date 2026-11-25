@@ -29,8 +29,10 @@ pub fn craft_end_timestamp(now: u64, delay: u64) -> u64 {
     now.saturating_add(delay)
 }
 
-/// Construit le craft en cours d'un joueur pour une recette à délai, démarré à `now`.
-pub fn new_player_craft(universe_id: ObjectId, user_id: u64, server_id: u64, recipe_id: ObjectId, delay: u64, now: u64) -> PlayerCraft {
+/// Construit le craft en cours d'un joueur : `quantity` exemplaires d'une recette à délai,
+/// fabriqués l'un après l'autre à partir de `now`. `ingredients` : ceux d'un exemplaire.
+pub fn new_player_craft(universe_id: ObjectId, user_id: u64, server_id: u64, recipe_id: ObjectId, delay: u64, quantity: u64, ingredients: Vec<(u64, ObjectId)>, now: u64) -> PlayerCraft {
+    let quantity = quantity.max(1);
     PlayerCraft {
         _id: ObjectId::new(),
         universe_id,
@@ -38,9 +40,75 @@ pub fn new_player_craft(universe_id: ObjectId, user_id: u64, server_id: u64, rec
         server_id,
         recipe_id,
         start_timestamp: now,
-        end_timestamp: craft_end_timestamp(now, delay),
+        end_timestamp: craft_end_timestamp(now, delay.saturating_mul(quantity)),
         is_finished: false,
+        quantity,
+        unit_delay: delay,
+        ingredients: Some(ingredients),
     }
+}
+
+/// Nombre maximal d'exemplaires lancés d'un coup (borne aussi les recettes sans ingrédient).
+pub const MAX_CRAFT_QUANTITY: u64 = 999;
+
+/// Multiplie chaque quantité d'une liste `(quantité, objet)` (saturé, jamais de débordement).
+pub fn scaled(list: &[(u64, ObjectId)], factor: u64) -> Vec<(u64, ObjectId)> {
+    list.iter().map(|(qty, id)| (qty.saturating_mul(factor), *id)).collect()
+}
+
+/// Exemplaires déjà terminés d'un craft à `now` (entre 0 et `quantity`).
+pub fn completed_units(craft: &PlayerCraft, now: u64) -> u64 {
+    let quantity = craft.quantity.max(1);
+    if now >= craft.end_timestamp {
+        return quantity;
+    }
+    let unit = if craft.unit_delay > 0 {
+        craft.unit_delay
+    } else {
+        craft.end_timestamp.saturating_sub(craft.start_timestamp) / quantity
+    };
+    if unit == 0 {
+        return quantity;
+    }
+    (now.saturating_sub(craft.start_timestamp) / unit).min(quantity)
+}
+
+/// Partage d'un craft arrêté : `(exemplaires livrés, exemplaires dont les ingrédients sont
+/// rendus)`. Un exemplaire déjà fini est livré, celui en cours et les suivants sont rendus.
+pub fn stop_split(craft: &PlayerCraft, now: u64) -> (u64, u64) {
+    let done = completed_units(craft, now);
+    (done, craft.quantity.max(1) - done)
+}
+
+/// Nombre maximal d'exemplaires qu'un joueur peut lancer, calculé avec les mêmes règles que
+/// [`check_craft_requirements`] : 0 s'il manque un outil, sinon limité par l'ingrédient le plus
+/// rare (chaque objet compté sur une seule ligne d'inventaire, comme à la consommation), et au
+/// plus `cap`.
+pub fn max_craftable(
+    tools_needed: &[ObjectId],
+    available_tools: &[ObjectId],
+    ingredients: &[(u64, ObjectId)],
+    stock: &[(ObjectId, u64)],
+    cap: u64,
+) -> u64 {
+    if tools_needed.iter().any(|tool| !available_tools.contains(tool)) {
+        return 0;
+    }
+    let mut required: Vec<(ObjectId, u64)> = Vec::new();
+    for (qty, item_id) in ingredients {
+        match required.iter_mut().find(|(id, _)| id == item_id) {
+            Some((_, total)) => *total = total.saturating_add(*qty),
+            None => required.push((*item_id, *qty)),
+        }
+    }
+    required
+        .iter()
+        .filter(|(_, needed)| *needed > 0)
+        .map(|(item_id, needed)| {
+            let have = stock.iter().filter(|(id, _)| id == item_id).map(|(_, q)| *q).max().unwrap_or(0);
+            have / needed
+        })
+        .fold(cap, u64::min)
 }
 
 /// Temps restant (en secondes) avant `end_timestamp`, 0 si déjà dépassé.
@@ -138,15 +206,15 @@ async fn finalize_craft(mut craft: PlayerCraft, is_late: bool) -> Result<(), cra
     session.start_transaction().await?;
 
     let result: Result<(), crate::discord::poise_structs::Error> = async {
-        // Production des items
-        for (qty, item_id) in &recipe.result {
+        // Production des items (un lot de `quantity` exemplaires)
+        for (qty, item_id) in scaled(&recipe.result, craft.quantity.max(1)) {
             Inventory::add_item_to_inventory_with_session(
                 &mut session,
                 craft.universe_id,
                 character._id,
                 HolderType::Character,
-                *item_id,
-                *qty
+                item_id,
+                qty
             ).await?;
         }
 
@@ -163,6 +231,7 @@ async fn finalize_craft(mut craft: PlayerCraft, is_late: bool) -> Result<(), cra
     }
 
     session.commit_transaction().await?;
+    crate::activity::events::notify_player(crate::activity::events::EventKind::CraftUpdated, craft.universe_id, craft.user_id);
 
     // Notifier l'utilisateur
     if let Some(http) = HTTP_CLIENT.lock().await.as_ref() {
@@ -205,31 +274,101 @@ pub async fn add_craft(http: Arc<Http>, player_craft: PlayerCraft) -> Result<(),
 
     // Ne repousse jamais un réveil plus proche déjà prévu pour un autre craft.
     CRAFT_TIMER.schedule(remaining_delay_secs(player_craft.end_timestamp, now_secs()), craft_job());
+    crate::activity::events::notify_player(crate::activity::events::EventKind::CraftUpdated, player_craft.universe_id, player_craft.user_id);
 
     Ok(())
 }
 
-pub async fn stop_craft(universe_id: mongodb::bson::oid::ObjectId, user_id: u64) -> Result<Option<PlayerCraft>, crate::discord::poise_structs::Error> {
-    let mut removed_craft = None;
-    {
+/// Craft arrêté par le joueur.
+#[derive(Debug, Clone)]
+pub struct CraftStopped {
+    /// Exemplaires déjà terminés, livrés.
+    pub delivered: u64,
+    /// Exemplaires non terminés, dont les ingrédients ont été rendus.
+    pub refunded: u64,
+}
+
+/// Arrête le craft en cours du joueur : les exemplaires déjà terminés sont livrés, les
+/// ingrédients des autres sont rendus, dans une seule transaction. `None` s'il n'y avait aucun
+/// craft (ou s'il vient de se terminer : l'ordonnanceur l'a déjà livré).
+pub async fn stop_craft(universe_id: ObjectId, user_id: u64) -> Result<Option<CraftStopped>, crate::discord::poise_structs::Error> {
+    let from_queue = {
         let mut crafts = CRAFTS.lock().await;
-        if let Some(pos) = crafts.iter().position(|c| c.user_id == user_id && c.universe_id == universe_id) {
-            removed_craft = Some(crafts.remove(pos));
+        crafts
+            .iter()
+            .position(|c| c.user_id == user_id && c.universe_id == universe_id)
+            .map(|pos| crafts.remove(pos))
+    };
+    let in_queue = from_queue.is_some();
+    // Absent de la file (ne devrait pas arriver si tout est synchro) : on regarde en base.
+    let craft = match from_queue {
+        Some(c) => c,
+        None => match PlayerCraft::get_by_user_id(universe_id, user_id).await? {
+            Some(c) => c,
+            None => return Ok(None),
+        },
+    };
+
+    match settle_stopped_craft(&craft, now_secs()).await {
+        Ok(Some((delivered, refunded))) => {
+            crate::activity::events::notify_player(crate::activity::events::EventKind::CraftUpdated, universe_id, user_id);
+            Ok(Some(CraftStopped { delivered, refunded }))
+        }
+        // Déjà finalisé par l'ordonnanceur entre-temps : rien à rendre.
+        Ok(None) => Ok(None),
+        Err(e) => {
+            // Rien n'a été écrit : le craft reprend sa place dans la file.
+            if in_queue {
+                let delay = remaining_delay_secs(craft.end_timestamp, now_secs());
+                CRAFTS.lock().await.push(craft);
+                CRAFT_TIMER.schedule(delay, craft_job());
+            }
+            Err(e)
         }
     }
+}
 
-    if let Some(craft) = &removed_craft {
-        let _ = craft.remove().await;
-        // On ne s'embête pas à redémarrer le sleeper, il se réveillera et verra qu'il n'y a plus rien à faire ou passera au suivant
-    } else {
-        // Vérifier en DB si jamais il n'est pas dans la liste MOVES (ne devrait pas arriver si tout est synchro)
-        if let Ok(Some(craft)) = PlayerCraft::get_by_user_id(universe_id, user_id).await {
-            let _ = craft.remove().await;
-            removed_craft = Some(craft);
+/// Supprime le craft, livre les exemplaires finis et rend les ingrédients des autres, dans une
+/// transaction. `Ok(None)` si le craft n'était plus en base (déjà finalisé).
+async fn settle_stopped_craft(craft: &PlayerCraft, now: u64) -> Result<Option<(u64, u64)>, crate::discord::poise_structs::Error> {
+    let recipe = Recipe::get_by_id(craft.universe_id, craft.recipe_id).await?;
+    let character = crate::database::characters::get_character_by_user_id(craft.universe_id, craft.user_id).await?
+        .ok_or("recipe__character_not_found")?;
+    let (delivered, refunded) = stop_split(craft, now);
+    // Ingrédients copiés au départ ; à défaut (craft d'avant cette copie), ceux de la recette.
+    let unit_ingredients = craft.ingredients.clone().or_else(|| recipe.as_ref().map(|r| r.ingredients.clone())).unwrap_or_default();
+
+    let db_client = crate::database::db_client::get_db_client().await;
+    let mut session = db_client.start_session().await?;
+    session.start_transaction().await?;
+    let result: Result<bool, crate::discord::poise_structs::Error> = async {
+        if craft.remove_with_session(&mut session).await?.deleted_count == 0 {
+            return Ok(false);
+        }
+        let mut gains = scaled(&unit_ingredients, refunded);
+        if let Some(recipe) = &recipe {
+            gains.extend(scaled(&recipe.result, delivered));
+        }
+        for (qty, item_id) in gains.into_iter().filter(|(qty, _)| *qty > 0) {
+            Inventory::add_item_to_inventory_with_session(&mut session, craft.universe_id, character._id, HolderType::Character, item_id, qty).await?;
+        }
+        Ok(true)
+    }
+    .await;
+    match result {
+        Ok(true) => {
+            session.commit_transaction().await?;
+            Ok(Some((delivered, refunded)))
+        }
+        Ok(false) => {
+            session.abort_transaction().await?;
+            Ok(None)
+        }
+        Err(e) => {
+            let _ = session.abort_transaction().await;
+            Err(e)
         }
     }
-
-    Ok(removed_craft)
 }
 
 /// Recharge la file des crafts depuis la base. Appelé à chaque `ready` Discord, donc aussi après
@@ -308,7 +447,7 @@ mod tests {
     #[test]
     fn new_player_craft_records_the_schedule() {
         let (universe, recipe) = (oid(), oid());
-        let c = new_player_craft(universe, 42, 7, recipe, 300, 5_000);
+        let c = new_player_craft(universe, 42, 7, recipe, 300, 1, vec![], 5_000);
         assert_eq!(c.universe_id, universe);
         assert_eq!(c.recipe_id, recipe);
         assert_eq!((c.user_id, c.server_id), (42, 7));
@@ -433,6 +572,81 @@ mod tests {
             Ok(())
         );
     }
+
+    // ---- quantité ----
+
+    #[test]
+    fn a_batch_lasts_one_delay_per_unit() {
+        let c = new_player_craft(oid(), 1, 1, oid(), 60, 3, vec![], 1_000);
+        assert_eq!((c.quantity, c.unit_delay, c.end_timestamp), (3, 60, 1_180));
+        let zero = new_player_craft(oid(), 1, 1, oid(), 60, 0, vec![], 1_000);
+        assert_eq!(zero.quantity, 1, "at least one unit");
+    }
+
+    #[test]
+    fn scaled_multiplies_every_line_without_overflowing() {
+        let (a, b) = (oid(), oid());
+        assert_eq!(scaled(&[(2, a), (5, b)], 3), vec![(6, a), (15, b)]);
+        assert_eq!(scaled(&[(u64::MAX, a)], 2), vec![(u64::MAX, a)]);
+        assert_eq!(scaled(&[(2, a)], 0), vec![(0, a)]);
+    }
+
+    #[test]
+    fn completed_units_follow_the_clock() {
+        let c = new_player_craft(oid(), 1, 1, oid(), 100, 3, vec![], 1_000);
+        assert_eq!(completed_units(&c, 1_000), 0);
+        assert_eq!(completed_units(&c, 1_099), 0);
+        assert_eq!(completed_units(&c, 1_100), 1);
+        assert_eq!(completed_units(&c, 1_250), 2);
+        assert_eq!(completed_units(&c, 1_300), 3);
+        assert_eq!(completed_units(&c, 9_999), 3);
+    }
+
+    #[test]
+    fn an_old_craft_without_unit_delay_is_one_unit() {
+        // Document d'avant les lots : ni quantité (1 par défaut), ni délai unitaire.
+        let old = PlayerCraft { start_timestamp: 1_000, end_timestamp: 1_100, quantity: 1, ..Default::default() };
+        assert_eq!(completed_units(&old, 1_050), 0);
+        assert_eq!(completed_units(&old, 1_100), 1);
+    }
+
+    #[test]
+    fn stopping_delivers_finished_units_and_refunds_the_rest() {
+        let c = new_player_craft(oid(), 1, 1, oid(), 100, 4, vec![], 1_000);
+        assert_eq!(stop_split(&c, 1_000), (0, 4), "stopped at once: everything is refunded");
+        assert_eq!(stop_split(&c, 1_150), (1, 3), "the unit in progress is refunded");
+        assert_eq!(stop_split(&c, 1_400), (4, 0));
+    }
+
+    #[test]
+    fn max_craftable_is_limited_by_the_scarcest_ingredient() {
+        let (wood, stone, hammer) = (oid(), oid(), oid());
+        let ingredients = [(2, wood), (3, stone)];
+        assert_eq!(max_craftable(&[], &[], &ingredients, &[(wood, 9), (stone, 7)], 999), 2);
+        assert_eq!(max_craftable(&[], &[], &ingredients, &[(wood, 1), (stone, 7)], 999), 0);
+        assert_eq!(max_craftable(&[], &[], &ingredients, &[(stone, 7)], 999), 0, "missing ingredient");
+        assert_eq!(max_craftable(&[hammer], &[], &ingredients, &[(wood, 9), (stone, 9)], 999), 0, "missing tool");
+        assert_eq!(max_craftable(&[hammer], &[hammer], &ingredients, &[(wood, 9), (stone, 9)], 999), 3);
+    }
+
+    #[test]
+    fn max_craftable_sums_repeated_lines_and_respects_the_cap() {
+        let wood = oid();
+        assert_eq!(max_craftable(&[], &[], &[(2, wood), (3, wood)], &[(wood, 10)], 999), 2);
+        assert_eq!(max_craftable(&[], &[], &[], &[], 999), 999, "no ingredient: only the cap");
+        assert_eq!(max_craftable(&[], &[], &[(1, wood)], &[(wood, 5_000)], 999), 999);
+    }
+
+    #[test]
+    fn max_craftable_agrees_with_the_requirement_check() {
+        let (wood, stone) = (oid(), oid());
+        let ingredients = [(2, wood), (1, stone), (1, wood)];
+        let stock = [(wood, 10), (stone, 4)];
+        let max = max_craftable(&[], &[], &ingredients, &stock, 999);
+        assert_eq!(max, 3);
+        assert_eq!(check_craft_requirements(&[], &[], &scaled(&ingredients, max), &stock), Ok(()));
+        assert_eq!(check_craft_requirements(&[], &[], &scaled(&ingredients, max + 1), &stock), Err("recipe__missing_ingredient"));
+    }
 }
 
 /// Test d'intégration MongoDB : reconnexions répétées pendant qu'un craft est terminé.
@@ -487,7 +701,7 @@ mod reconnect_integration {
                 .await
                 .unwrap();
             // Craft terminé pendant que le bot était déconnecté.
-            new_player_craft(universe_id, user_id, 1, recipe_id, 10, now_secs() - 60).upsert().await.unwrap();
+            new_player_craft(universe_id, user_id, 1, recipe_id, 10, 1, vec![], now_secs() - 60).upsert().await.unwrap();
 
             // Copie en mémoire de l'ancien minuteur, faite avant la reconnexion.
             let stale_copy = PlayerCraft::get_active_crafts(universe_id).await.unwrap();

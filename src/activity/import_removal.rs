@@ -326,7 +326,7 @@ pub struct DiscordLeftovers {
 
 /// Rôle du lieu de départ aux joueurs déplacés, puis suppression des salons, catégories et
 /// rôles des lieux et routes supprimés. Un objet déjà absent compte comme supprimé.
-pub async fn apply_on_discord(http: &std::sync::Arc<Http>, removal: &Removal, start: Option<&Place>, place_channels: &[u64]) -> DiscordLeftovers {
+pub async fn apply_on_discord(http: &std::sync::Arc<Http>, removal: &Removal, start: Option<&Place>, place_channels: &[u64], on_step: &(dyn Fn() + Sync)) -> DiscordLeftovers {
     if let Some(start) = start {
         for g in &removal.groups {
             for &user in &g.members {
@@ -343,6 +343,7 @@ pub async fn apply_on_discord(http: &std::sync::Arc<Http>, removal: &Removal, st
                 left.channels += 1;
             }
         }
+        on_step();
     }
     for p in &removal.places {
         if let Err(e) = http.delete_role(GuildId::new(p.server_id), RoleId::new(p.role), Some("VerseEngine: map import")).await {
@@ -351,6 +352,7 @@ pub async fn apply_on_discord(http: &std::sync::Arc<Http>, removal: &Removal, st
                 left.roles += 1;
             }
         }
+        on_step();
     }
     left
 }
@@ -386,7 +388,7 @@ mod tests {
         g.road_id = Some(50);
         g.distance_traveled = 4.0;
         g.step_end_timestamp = Some(99);
-        let start = Place { _id: ObjectId::new(), universe_id: ObjectId::new(), server_id: 7, category_id: 900, role: 901, name: "Départ".into(), modifiers: vec![], central_channel_id: None };
+        let start = Place { _id: ObjectId::new(), universe_id: ObjectId::new(), server_id: 7, category_id: 900, role: 901, name: "Départ".into(), modifiers: vec![], central_channel_id: None, wiki: Default::default() };
         let r = relocate(&g, &start);
         assert_eq!((r.actual_space_type, r.actual_space_id, r.server_id), (SpaceType::Place, 900, 7));
         assert!(!r.is_in_move && r.road_id.is_none() && r.step_end_timestamp.is_none() && r.destination_id.is_none());

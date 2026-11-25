@@ -16,7 +16,8 @@ impl LootTableParser {
         Self::parse_internal(text, universe_id, true).await
     }
 
-    async fn parse_internal(text: &str, universe_id: ObjectId, validate_db: bool) -> Result<Vec<LootTableEntry>, String> {
+    /// `validate_db = false` : syntaxe seule (tests, relecture du texte généré par l'éditeur).
+    pub(crate) async fn parse_internal(text: &str, universe_id: ObjectId, validate_db: bool) -> Result<Vec<LootTableEntry>, String> {
         let mut entries = Vec::new();
         let mut lines = text.lines().peekable();
         let mut current_set: Option<LootTableSet> = None;

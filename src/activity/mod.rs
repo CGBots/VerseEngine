@@ -5,12 +5,16 @@
 //! (`ACTIVITY_ENABLED`). Voir `docs/activity/ARCHITECTURE.md`.
 
 pub mod admin_import;
+pub mod admin_panel;
 pub mod config;
+pub mod craft_view;
 pub mod discord_api;
 pub mod dto;
 pub mod error;
 pub mod events;
+pub mod farm_results;
 pub mod fog;
+pub mod group_invites;
 pub mod http;
 pub mod images;
 pub mod import_exec;
@@ -18,9 +22,13 @@ pub mod import_removal;
 #[allow(dead_code)] // azgaar/network : utilisés par l'import admin (phase d)
 pub mod map;
 pub mod permissions;
+pub mod place_admin;
 pub mod ratelimit;
+pub mod render_refresh;
 pub mod session;
+pub mod spectator;
 pub mod map_view;
+pub mod map_source;
 pub mod music_api;
 pub mod travel_view;
 

@@ -26,6 +26,8 @@ pub fn graph_hash(places: &[Place], roads: &[Road]) -> String {
         .collect();
     edges.sort_unstable();
     let mut hasher = Sha256::new();
+    // Version du placement : la changer recalcule les cartes en cache (v2 : marges, `layout::MARGIN`).
+    hasher.update(b"layout-v2|");
     for id in place_ids {
         hasher.update(id.to_le_bytes());
     }
@@ -63,6 +65,7 @@ pub fn computed_map(universe_id: ObjectId, places: &[Place], roads: &[Road], now
         graph_hash: Some(graph_hash(places, roads)),
         road_paths: vec![],
         background: None,
+        style: None,
         updated_at: now,
     }
 }
@@ -87,6 +90,72 @@ pub struct MapPlaceDto {
     pub x: f64,
     pub y: f64,
     pub z: f64,
+    /// Icône du bourg d'origine (import Azgaar) ; absent : lieu ordinaire.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub burg: Option<BurgIconDto>,
+}
+
+/// Taille (0 village, 1 bourg, 2 ville), capitale, port.
+#[derive(Debug, Serialize, Clone, Copy, PartialEq)]
+pub struct BurgIconDto {
+    pub size: u8,
+    pub capital: bool,
+    pub port: bool,
+}
+
+/// Rendu façon Azgaar envoyé au front (voir `activity::map::azgaar_style`). Sous brouillard, les
+/// cases hors des zones découvertes valent `SURFACE_HIDDEN` et les rivières y sont coupées.
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct MapStyleDto {
+    pub cols: u32,
+    pub rows: u32,
+    /// Suites (valeur, longueur) en base64 (`encode_runs`).
+    #[serde(serialize_with = "runs")]
+    pub surface: Vec<u8>,
+    #[serde(serialize_with = "runs", skip_serializing_if = "Vec::is_empty")]
+    pub states: Vec<u8>,
+    pub biome_colors: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub state_colors: Vec<String>,
+    pub rivers: Vec<crate::database::universe_maps::StyleRiver>,
+    pub exact: bool,
+    /// Contours vectoriels façon Azgaar (`map::vector`), si la carte a ses cellules du pack.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vector: Option<crate::activity::map::vector::VectorDto>,
+    /// Cellules d'où viennent les contours : le brouillard les recalcule avec son masque.
+    #[serde(skip)]
+    pub vector_source: Option<VectorSourceRef>,
+}
+
+/// Référence vers les cellules d'une carte (comparée par identité, jamais envoyée).
+#[derive(Debug, Clone)]
+pub struct VectorSourceRef(pub std::sync::Arc<crate::activity::map::vector::VectorSource>);
+
+impl PartialEq for VectorSourceRef {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+fn runs<S: serde::Serializer>(v: &[u8], s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&crate::activity::map::azgaar_style::encode_runs(v))
+}
+
+impl From<&crate::database::universe_maps::MapStyle> for MapStyleDto {
+    fn from(m: &crate::database::universe_maps::MapStyle) -> Self {
+        MapStyleDto {
+            cols: m.cols,
+            rows: m.rows,
+            surface: m.surface.clone(),
+            states: m.states.clone(),
+            biome_colors: m.biome_colors.clone(),
+            state_colors: m.state_colors.clone(),
+            rivers: m.rivers.clone(),
+            exact: m.exact,
+            vector: None,
+            vector_source: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -138,8 +207,11 @@ pub struct MapDto {
     pub terrain: Option<MapTerrainDto>,
     pub zone: Option<MapZone>,
     pub background: Option<MapBackgroundDto>,
+    /// Rendu façon Azgaar (carte importée depuis une sauvegarde `.map`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style: Option<MapStyleDto>,
     pub server_time: u64,
-    /// Brouillard (E8) : `None` s'il est désactivé ou pour un modérateur ou un administrateur.
+    /// Brouillard (E8) : `None` s'il est désactivé, ou en mode admin (`?view=admin`, si la session y a droit).
     pub fog: Option<crate::activity::fog::FogDto>,
 }
 
@@ -152,7 +224,8 @@ pub fn build_map_dto(map: &UniverseMap, places: &[Place], roads: &[Road], visibl
         .filter(|p| shown.contains(&p.category_id))
         .filter_map(|p| {
             let pos = map.positions.iter().find(|m| m.place_id == p.category_id)?;
-            Some(MapPlaceDto { id: p.category_id.to_string(), name: p.name.clone(), x: pos.x, y: pos.y, z: pos.z })
+            let burg = pos.azgaar_burg_id.and_then(|b| map.style.as_ref()?.burgs.iter().find(|s| s.burg_id == b)).map(|s| BurgIconDto { size: s.size, capital: s.capital, port: s.port });
+            Some(MapPlaceDto { id: p.category_id.to_string(), name: p.name.clone(), x: pos.x, y: pos.y, z: pos.z, burg })
         })
         .collect();
     place_dtos.sort_by(|a, b| a.id.cmp(&b.id));
@@ -185,8 +258,75 @@ pub fn build_map_dto(map: &UniverseMap, places: &[Place], roads: &[Road], visibl
             width: b.width,
             height: b.height,
         }),
+        style: map.style.as_ref().map(|s| {
+            let mut dto = MapStyleDto::from(s);
+            // Contours vectoriels (toutes les cellules ; le brouillard les refait avec son masque).
+            if let Some(src) = s.pack.as_ref().and_then(|p| crate::activity::map::vector::source(map.id, map.updated_at, p)) {
+                dto.vector = Some(crate::activity::map::vector::vector_dto(&src, |_| true));
+                dto.vector_source = Some(VectorSourceRef(src));
+            }
+            dto
+        }),
         server_time: now,
         fog: None,
+    }
+}
+
+/// Carte vectorielle d'une vraie sauvegarde `.map`, sans base ni Discord : temps de calcul, poids
+/// des contours, et JSON client pour comparer les rendus.
+/// `AZGAAR_MAP_FILE=<carte.map> [MAP_DUMP_FILE=<sortie.json>] cargo test vector_from_a_real_map -- --ignored --nocapture`
+#[cfg(test)]
+mod real_vector {
+    #[test]
+    #[ignore = "integration test: needs AZGAAR_MAP_FILE (a real Azgaar .map save)"]
+    fn vector_from_a_real_map() {
+        use crate::database::universe_maps::{MapSource, UniverseMap};
+        let path = std::env::var("AZGAAR_MAP_FILE").expect("AZGAAR_MAP_FILE");
+        let f = crate::activity::map::azgaar_file::parse_map_file(&std::fs::read(path).unwrap()).unwrap();
+        let style = f.map.style.clone().expect("style");
+        let pack = style.pack.as_ref().expect("exact pack");
+        let map = UniverseMap {
+            id: mongodb::bson::oid::ObjectId::new(), universe_id: mongodb::bson::oid::ObjectId::new(), source: MapSource::Azgaar,
+            width: f.map.width, height: f.map.height, positions: vec![], terrain: None, zone: None, graph_hash: None,
+            road_paths: vec![], background: None, style: Some(style.clone()), updated_at: 1,
+        };
+        let t = std::time::Instant::now();
+        let dto = super::build_map_dto(&map, &[], &[], &Default::default(), &[], 0);
+        let first = t.elapsed();
+        let t = std::time::Instant::now();
+        let _ = super::build_map_dto(&map, &[], &[], &Default::default(), &[], 0);
+        let cached = t.elapsed();
+        let v = dto.style.as_ref().unwrap().vector.as_ref().expect("vector");
+        let json = serde_json::to_string(&dto).unwrap();
+        let vec_json = serde_json::to_string(v).unwrap();
+        println!(
+            "{} cellules ; 1er calcul {:?}, ensuite {:?} ; contours {} Ko (réponse {} Ko) ; {} biomes, {} États",
+            pack.real, first, cached, vec_json.len() / 1024, json.len() / 1024, v.biomes.len(), v.states.len()
+        );
+        if let Ok(out) = std::env::var("MAP_DUMP_FILE") {
+            std::fs::write(out, json).unwrap();
+        }
+    }
+}
+
+/// Exporte la carte de l'univers de la base en JSON (tel que le client la reçoit), pour comparer
+/// les rendus : `MAP_DUMP_UNIVERSE=<id> MAP_DUMP_FILE=<fichier> cargo test dump_universe_map -- --ignored`.
+#[cfg(test)]
+mod dump {
+    #[test]
+    #[ignore = "outil : exporte une carte de la base"]
+    fn dump_universe_map() {
+        use futures::TryStreamExt;
+        crate::test_support::block_on(async {
+            let id = mongodb::bson::oid::ObjectId::parse_str(std::env::var("MAP_DUMP_UNIVERSE").unwrap()).unwrap();
+            let map = crate::database::universe_maps::get_universe_map(id).await.unwrap().unwrap();
+            let places: Vec<crate::database::places::Place> = crate::database::places::get_places_by_universe_id(id).await.unwrap().try_collect().await.unwrap();
+            let roads: Vec<crate::database::road::Road> = crate::database::road::get_roads_by_universe(id).await.unwrap().try_collect().await.unwrap();
+            let visible = roads.iter().map(|r| r.channel_id).collect();
+            let always: Vec<u64> = places.iter().map(|p| p.category_id).collect();
+            let dto = super::build_map_dto(&map, &places, &roads, &visible, &always, 0);
+            std::fs::write(std::env::var("MAP_DUMP_FILE").unwrap(), serde_json::to_string(&dto).unwrap()).unwrap();
+        });
     }
 }
 
@@ -195,7 +335,7 @@ mod tests {
     use super::*;
 
     fn place(id: u64) -> Place {
-        Place { _id: ObjectId::new(), universe_id: ObjectId::new(), server_id: 1, category_id: id, role: 0, name: format!("P{id}"), modifiers: vec![], central_channel_id: None }
+        Place { _id: ObjectId::new(), universe_id: ObjectId::new(), server_id: 1, category_id: id, role: 0, name: format!("P{id}"), modifiers: vec![], central_channel_id: None, wiki: Default::default() }
     }
 
     fn road(channel: u64, a: u64, b: u64, distance: u64, secret: bool) -> Road {
@@ -302,6 +442,26 @@ mod tests {
         let r = dto.roads.iter().find(|r| r.id == "10").unwrap();
         assert_eq!(r.path.as_deref(), Some(&[[10.0, 0.0], [5.0, 3.0], [0.0, 0.0]][..]));
         assert!(dto.roads.iter().find(|r| r.id == "20").unwrap().path.is_none(), "no path: straight line");
+    }
+
+    #[test]
+    fn the_style_is_sent_with_burg_icons() {
+        use crate::database::universe_maps::{BurgStyle, MapStyle};
+        let (places, roads) = world();
+        let mut map = computed_map(ObjectId::new(), &places, &roads, 0);
+        assert!(build_map_dto(&map, &places, &roads, &HashSet::from([10]), &[], 0).style.is_none(), "no style for a computed map");
+        map.positions[0].azgaar_burg_id = Some(7);
+        map.style = Some(MapStyle {
+            cols: 2, rows: 1, surface: vec![4, 4], states: vec![], biome_colors: vec!["#466eab".into()], state_colors: vec![], rivers: vec![],
+            burgs: vec![BurgStyle { burg_id: 7, size: 1, capital: true, port: false, details: None }], exact: true, pack: None,
+        });
+        let dto = build_map_dto(&map, &places, &roads, &HashSet::from([10]), &[], 0);
+        let json = serde_json::to_value(&dto).unwrap();
+        assert_eq!(json["style"]["surface"], "BAI=", "runs (4, 2) in base64");
+        assert!(json["style"].get("states").is_none());
+        let first = dto.places.iter().find(|p| p.id == map.positions[0].place_id.to_string()).unwrap();
+        assert_eq!(first.burg, Some(BurgIconDto { size: 1, capital: true, port: false }));
+        assert!(dto.places.iter().filter(|p| p.id != first.id).all(|p| p.burg.is_none()));
     }
 
     #[test]

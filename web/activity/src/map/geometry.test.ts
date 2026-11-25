@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MapView } from '../api';
-import { fitDistance, viewElevation, initialBox, lerpPoint, markerScale, placesFrame, pointAlong, positionOnRoad, roadPath, roadProgress, SCENE_SIZE, smoothToward, splitAlong, terrainHeight, toScene, traveledAt } from './geometry';
+import { fitDistance, frameView, viewElevation, initialBox, lerpPoint, markerScale, placesBox, placesFrame, pointAlong, positionOnRoad, roadPath, roadProgress, SCENE_SIZE, smoothToward, splitAlong, terrainHeight, toScene, traveledAt } from './geometry';
 
 const map: MapView = {
   source: 'Computed',
@@ -187,5 +187,40 @@ describe('viewElevation', () => {
     const mid = viewElevation(0.95);
     expect(mid).toBeGreaterThan(48);
     expect(mid).toBeLessThan(72);
+  });
+});
+
+describe('placesBox (2D)', () => {
+  const base = { source: 'Computed' as const, width: 1000, height: 1000, terrain: null, zone: null, background: null, server_time: 0, roads: [] };
+  it('cadre les lieux avec une marge, plus grande en haut pour les noms', () => {
+    const f = placesBox({ ...base, places: [{ id: '1', name: 'A', x: 0, y: 0, z: 0 }, { id: '2', name: 'B', x: 1000, y: 1000, z: 0 }] });
+    expect(f.x).toBeCloseTo(-60);
+    expect(f.y).toBeCloseTo(-78);
+    expect(f.x + f.w).toBeCloseTo(1060);
+    expect(f.y + f.h).toBeCloseTo(1060);
+  });
+  it('un lieu seul : au moins un quart de la carte ; aucun lieu : toute la carte', () => {
+    const f = placesBox({ ...base, places: [{ id: '1', name: 'A', x: 500, y: 500, z: 0 }] });
+    expect([f.w, f.h]).toEqual([250, 250]);
+    expect(f.x + f.w / 2).toBeCloseTo(500);
+    expect(placesBox({ ...base, places: [] })).toEqual({ x: 0, y: 0, w: 1000, h: 1000 });
+  });
+});
+
+describe('frameView', () => {
+  const frame = { x: 0, y: 0, w: 2000, h: 1000 };
+  it('montre toute la zone quand les proportions sont proches', () => {
+    const v = frameView(frame, 1600, 1000);
+    expect(v.w).toBeCloseTo(2000);
+    expect(v.h).toBeCloseTo(1250);
+    expect(v.y).toBeCloseTo(-125);
+  });
+  it('sur un téléphone en portrait, resserre autour du personnage sans sortir de la zone', () => {
+    const v = frameView(frame, 400, 800, { x: 1900, y: 500 });
+    // Remplir exactement : 500 × 1000 ; on montre au plus 1,5 fois cela.
+    expect(v.w).toBeCloseTo(750);
+    expect(v.h).toBeCloseTo(1500);
+    expect(v.x + v.w).toBeCloseTo(2000);
+    expect(v.y).toBeCloseTo(-250);
   });
 });

@@ -103,12 +103,28 @@ pub fn bot_invite_url(client_id: u64) -> String {
     format!("https://discord.com/oauth2/authorize?client_id={client_id}&scope=bot%20applications.commands&permissions=8")
 }
 
+/// Journalise chaque réponse en erreur de l'API (méthode, chemin, statut). Sans elle, les refus
+/// d'axum (corps JSON invalide, en-tête manquant…) et les erreurs sans `tracing` passent inaperçus :
+/// le front les affiche alors comme `activity__internal_error`.
+async fn log_api_errors(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    let (method, path) = (req.method().clone(), req.uri().path().to_owned());
+    let res = next.run(req).await;
+    let status = res.status();
+    if status.is_server_error() {
+        tracing::error!(%method, %path, %status, "activity: réponse en erreur");
+    } else if status.is_client_error() && status != StatusCode::UNAUTHORIZED {
+        tracing::warn!(%method, %path, %status, "activity: requête refusée");
+    }
+    res
+}
+
 pub fn now_secs() -> u64 { chrono::Utc::now().timestamp().max(0) as u64 }
 
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/auth/token", post(auth_token))
         .route("/me", get(me))
+        .route("/me/session", get(me_session))
         .route("/me/character", get(me_character))
         .route("/map", get(map))
         .route("/map/background", get(map_background))
@@ -117,23 +133,40 @@ pub fn router(state: AppState) -> Router {
         .route("/me/travel/stop", post(travel_stop))
         .route("/me/travel/join", post(travel_join))
         .route("/me/travel/leave", post(travel_leave))
+        .route("/me/travel/invite", post(travel_invite))
+        .route("/me/travel/invite/accept", post(travel_invite_accept))
+        .route("/me/travel/invite/decline", post(travel_invite_decline))
+        .route("/me/inventory", get(me_inventory))
+        .route("/me/recipes", get(me_recipes))
+        .route("/me/inventory/use", post(inventory_use))
+        .route("/me/craft", get(me_craft))
+        .route("/me/craft/start", post(craft_start))
+        .route("/me/craft/stop", post(craft_stop))
+        .route("/me/farm", get(me_farm))
+        .route("/me/farm/start", post(farm_start))
+        .route("/me/farm/stop", post(farm_stop))
         .route("/ws", get(ws_upgrade))
         .route("/i18n/{locale}", get(i18n))
         .fallback(|| async { ApiError::not_found("activity__route_not_found") });
 
     // Limite de 64 Kio partout, sauf l'envoi d'une carte Azgaar (32 Mio, route dédiée).
     let (admin, upload) = crate::activity::admin_import::routes();
-    // Musique : envoi d'un fichier audio (25 Mio, route dédiée).
+    // Musique : envoi d'un fichier audio (200 Mio, route dédiée).
     let (music, music_upload) = crate::activity::music_api::routes();
     let api = api
         .merge(admin)
         .merge(crate::activity::import_exec::routes())
+        .merge(crate::activity::render_refresh::routes())
+        .merge(crate::activity::map_source::routes())
         .merge(music)
+        .merge(crate::activity::admin_panel::routes())
+        .merge(crate::activity::place_admin::routes())
+        .merge(crate::activity::spectator::routes())
         .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
         .merge(upload.layer(RequestBodyLimitLayer::new(crate::activity::admin_import::MAX_MAP_BYTES)))
         .merge(music_upload.layer(RequestBodyLimitLayer::new(crate::activity::music_api::MAX_UPLOAD_BODY)));
     Router::new()
-        .nest("/api", api)
+        .nest("/api", api.layer(axum::middleware::from_fn(log_api_errors)).layer(api_compression()))
         .layer(SetResponseHeaderLayer::if_not_present(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")))
         .layer(SetResponseHeaderLayer::if_not_present(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer")))
         .layer(SetResponseHeaderLayer::if_not_present(header::CACHE_CONTROL, HeaderValue::from_static("no-store")))
@@ -320,6 +353,32 @@ async fn me(Authed(s): Authed) -> Json<serde_json::Value> {
     }))
 }
 
+/// Informations de session à jour, mêmes champs que `/auth/token` sans les jetons.
+///
+/// Sert après un import : le serveur a relié la session à son nouvel univers
+/// (`Sessions::link_universe`), le client n'a qu'à relire ceci. Refaire l'authentification
+/// relancerait la poignée de main du SDK Discord, qui n'a lieu qu'une fois par page.
+async fn me_session(Authed(s): Authed) -> ApiResult<Json<serde_json::Value>> {
+    let universe = match s.universe_id {
+        Some(id) => crate::database::universe::get_universe_by_id(id).await?,
+        None => None,
+    };
+    let can_import = crate::activity::admin_import::may_import(s.access, universe.as_ref(), s.user_id);
+    let is_creator = universe.as_ref().is_some_and(|u| u.creator_id == s.user_id);
+    let fog_enabled = universe.as_ref().is_some_and(|u| u.fog_enabled);
+    Ok(Json(json!({
+        "guild_id": s.guild_id.to_string(),
+        "universe_clock": universe.as_ref().map(universe_clock).unwrap_or(serde_json::Value::Null),
+        "universe": universe.map(|u| UniverseDto { id: u.universe_id.to_hex(), name: u.name }),
+        "can_import": can_import,
+        "is_creator": is_creator,
+        "fog_enabled": fog_enabled,
+        "access": s.access,
+        "admin_mode_available": s.access.can_use_admin_mode(),
+        "server_time": now_secs(),
+    })))
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/me/character
 // ---------------------------------------------------------------------------
@@ -380,7 +439,7 @@ async fn me_character(State(state): State<AppState>, Authed(s): Authed) -> ApiRe
 }
 
 /// Position, voyage et membres du groupe d'un joueur.
-async fn group_state(universe_id: mongodb::bson::oid::ObjectId, group: Option<&TravelGroup>, now: u64) -> ApiResult<(Option<LocationDto>, Option<TravelView>, Vec<String>)> {
+pub(crate) async fn group_state(universe_id: mongodb::bson::oid::ObjectId, group: Option<&TravelGroup>, now: u64) -> ApiResult<(Option<LocationDto>, Option<TravelView>, Vec<String>)> {
     let Some(g) = group else { return Ok((None, None, vec![])) };
     let (location, road_distance) = match g.actual_space_type {
         SpaceType::Place => {
@@ -414,7 +473,36 @@ async fn group_state(universe_id: mongodb::bson::oid::ObjectId, group: Option<&T
 // GET /api/map : carte filtrée côté serveur (routes secrètes, lieux cachés).
 // ---------------------------------------------------------------------------
 
-async fn map(Authed(s): Authed) -> ApiResult<Json<MapDto>> {
+/// `?view=admin` : vue du mode admin (toute la carte), prise en compte seulement si la session y a
+/// droit (`can_use_admin_mode`). Sans elle, un modérateur ou un administrateur voit la carte comme
+/// un joueur, brouillard compris.
+#[derive(Deserialize, Default)]
+pub struct MapQuery {
+    #[serde(default)]
+    view: Option<String>,
+}
+
+impl MapQuery {
+    fn admin(&self) -> bool { self.view.as_deref() == Some("admin") }
+    fn spectator(&self) -> bool { self.view.as_deref() == Some("spectator") }
+    /// Vue spectateur (accordée seulement à une session sans personnage, voir `spectator_view`).
+    pub fn spectator_query() -> Self { Self { view: Some("spectator".into()) } }
+}
+
+/// Vue spectateur accordée ? Demandée, et session sans personnage (ou ayant droit au mode admin).
+async fn spectator_view(s: &Session, q: &MapQuery) -> ApiResult<bool> {
+    Ok(q.spectator() && (s.access.can_use_admin_mode() || crate::activity::spectator::is_spectator(s).await?))
+}
+
+/// Compression gzip des réponses de l'API (carte vectorielle : ~350 Ko → ~140 Ko). Jamais pour
+/// l'audio (lu par plages : la compression casserait `Content-Range`) ni les images.
+fn api_compression() -> tower_http::compression::CompressionLayer<impl tower_http::compression::Predicate + Clone> {
+    use tower_http::compression::predicate::{NotForContentType, Predicate as _};
+    use tower_http::compression::{CompressionLayer, DefaultPredicate};
+    CompressionLayer::new().compress_when(DefaultPredicate::new().and(NotForContentType::const_new("audio/")))
+}
+
+pub(crate) async fn map(Authed(s): Authed, axum::extract::Query(q): axum::extract::Query<MapQuery>) -> ApiResult<Json<MapDto>> {
     use crate::database::places::{get_places_by_universe_id, Place};
     use crate::database::road::{get_roads_by_universe, Road};
     use crate::database::universe_maps::{get_universe_map, save_universe_map};
@@ -437,6 +525,16 @@ async fn map(Authed(s): Authed) -> ApiResult<Json<MapDto>> {
         }
     };
 
+    // Spectateur : toute la carte, sauf les routes secrètes ; pas de brouillard.
+    if spectator_view(&s, &q).await? {
+        let visible: HashSet<u64> = roads.iter().filter(|r| !r.secret).map(|r| r.channel_id).collect();
+        let always: Vec<u64> = places.iter().map(|p| p.category_id).collect();
+        let mut dto = build_map_dto(&universe_map, &places, &roads, &visible, &always, now_secs());
+        if let Some(b) = dto.background.as_mut() {
+            b.url.push_str("&view=spectator");
+        }
+        return Ok(Json(dto));
+    }
     let group = get_group_of_user(s.universe()?, s.user_id).await?;
     let known = crate::database::known_roads::known_road_ids(s.universe()?, s.user_id).await?;
     let current_road = group.as_ref().filter(|g| g.actual_space_type == SpaceType::Road).map(|g| g.actual_space_id);
@@ -450,9 +548,9 @@ async fn map(Authed(s): Authed) -> ApiResult<Json<MapDto>> {
         })
         .flatten()
         .collect();
-    let dto = build_map_dto(&universe_map, &places, &roads, &visible, &always, now_secs());
+    let mut dto = build_map_dto(&universe_map, &places, &roads, &visible, &always, now_secs());
     // Brouillard (E8) : les joueurs ne reçoivent que ce qu'ils ont découvert.
-    if fog_applies(&s).await? {
+    if fog_applies(&s, &q).await? {
         let discovery = crate::activity::fog::Discovery {
             here: group.as_ref().filter(|g| g.actual_space_type == SpaceType::Place).map(|g| g.actual_space_id),
             trip: group.as_ref().filter(|g| g.actual_space_type == SpaceType::Road).map(|g| [g.source_id, g.destination_id].into_iter().flatten().collect()).unwrap_or_default(),
@@ -461,25 +559,32 @@ async fn map(Authed(s): Authed) -> ApiResult<Json<MapDto>> {
         };
         return Ok(Json(crate::activity::fog::apply_fog(dto, &discovery)));
     }
+    // L'image de fond se demande dans la même vue que la carte.
+    if q.admin() {
+        if let Some(b) = dto.background.as_mut() {
+            b.url.push_str("&view=admin");
+        }
+    }
     Ok(Json(dto))
 }
 
-/// Le brouillard s'applique-t-il à cette session ? Option de l'univers, pour les joueurs
-/// seulement (les modérateurs et les administrateurs voient toute la carte).
-async fn fog_applies(s: &Session) -> ApiResult<bool> {
-    if s.access >= AccessLevel::Moderator {
+/// Le brouillard s'applique-t-il à cette requête ? Option de l'univers ; levé seulement en mode
+/// admin pour une session qui y a droit (voir `fog::fog_applies`).
+async fn fog_applies(s: &Session, q: &MapQuery) -> ApiResult<bool> {
+    let enabled = crate::database::universe::get_universe_by_id(s.universe()?).await?.is_some_and(|u| u.fog_enabled);
+    if enabled && spectator_view(s, q).await? {
         return Ok(false);
     }
-    Ok(crate::database::universe::get_universe_by_id(s.universe()?).await?.is_some_and(|u| u.fog_enabled))
+    Ok(crate::activity::fog::fog_applies(enabled, s.access, q.admin()))
 }
 
 /// Image de fond (export Azgaar) de l'univers de la session.
 ///
 /// Servie avec `Content-Security-Policy: sandbox` : même ouverte directement, elle ne peut rien
 /// exécuter. Mise en cache côté client : l'URL change avec l'image (`?v=<empreinte>`).
-async fn map_background(Authed(s): Authed) -> ApiResult<Response> {
-    // Sous brouillard, l'image entière dévoilerait la carte : jamais servie aux joueurs.
-    if fog_applies(&s).await? {
+async fn map_background(Authed(s): Authed, axum::extract::Query(q): axum::extract::Query<MapQuery>) -> ApiResult<Response> {
+    // Sous brouillard, l'image entière dévoilerait la carte : jamais servie hors du mode admin.
+    if fog_applies(&s, &q).await? {
         return Err(ApiError::not_found("activity__map_not_found"));
     }
     let background = crate::database::universe_maps::get_universe_map(s.universe()?)
@@ -531,13 +636,13 @@ pub fn service_error(e: &crate::discord::poise_structs::Error) -> ApiError {
 }
 
 /// Réserve le droit d'agir pour ce joueur jusqu'à la fin de l'action (libéré au `drop`).
-struct ActionGuard {
+pub(crate) struct ActionGuard {
     set: Arc<std::sync::Mutex<HashSet<u64>>>,
     user_id: u64,
 }
 
 impl ActionGuard {
-    fn acquire(state: &AppState, user_id: u64) -> ApiResult<Self> {
+    pub(crate) fn acquire(state: &AppState, user_id: u64) -> ApiResult<Self> {
         state.write_limiter.check(&format!("user:{user_id}")).map_err(ApiError::too_many)?;
         let mut set = state.actions_in_flight.lock().unwrap_or_else(|p| p.into_inner());
         if !set.insert(user_id) {
@@ -553,12 +658,12 @@ impl Drop for ActionGuard {
     }
 }
 
-fn bot_http(state: &AppState) -> ApiResult<Arc<serenity::all::Http>> {
+pub(crate) fn bot_http(state: &AppState) -> ApiResult<Arc<serenity::all::Http>> {
     state.bot_http.clone().ok_or_else(ApiError::upstream)
 }
 
 /// Corps JSON strict, avec les mêmes erreurs que `/api/auth/token`.
-fn json_body<T>(body: Result<Json<T>, axum::extract::rejection::JsonRejection>) -> ApiResult<T> {
+pub(crate) fn json_body<T>(body: Result<Json<T>, axum::extract::rejection::JsonRejection>) -> ApiResult<T> {
     body.map(|Json(v)| v).map_err(|r| {
         if r.status() == StatusCode::PAYLOAD_TOO_LARGE {
             ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "activity__payload_too_large")
@@ -588,17 +693,97 @@ struct TravelStateDto {
     location: Option<LocationDto>,
     travel: Option<TravelView>,
     group_members: Vec<String>,
+    /// Noms des membres du groupe (personnages), dans l'ordre de `group_members`.
+    group_names: Vec<String>,
     destinations: Vec<DestinationDto>,
+    /// Vitesse du groupe (km/h) : celle du membre le plus lent, effets compris.
+    group_speed_kmh: Option<f64>,
+    /// Groupes à la même position : on peut les rejoindre ou les inviter.
+    nearby: Vec<NearbyGroupDto>,
+    /// Invitations reçues, encore valides (« Créer un groupe » d'un autre joueur).
+    invites: Vec<InviteDto>,
     /// Clé Fluent du résultat de l'action (réponses des POST uniquement).
     #[serde(skip_serializing_if = "Option::is_none")]
     result: Option<&'static str>,
     server_time: u64,
 }
 
+#[derive(Serialize)]
+struct MemberDto {
+    user_id: String,
+    name: String,
+}
+
+#[derive(Serialize)]
+struct NearbyGroupDto {
+    /// Chef du groupe : c'est lui qu'on rejoint (`/travel_join`).
+    leader_id: String,
+    members: Vec<MemberDto>,
+    moving: bool,
+}
+
+#[derive(Serialize)]
+struct InviteDto {
+    from_user_id: String,
+    from_name: String,
+    expires_at: u64,
+}
+
+/// Vitesse actuelle d'un groupe : la plus petite de ses membres (même calcul que le voyage).
+async fn group_speed(universe_id: mongodb::bson::oid::ObjectId, g: &TravelGroup) -> ApiResult<Option<f64>> {
+    let Some(stat) = crate::database::stats::get_stat_by_name(universe_id, crate::database::stats::SPEED_STAT).await? else { return Ok(None) };
+    let mut slowest: Option<f64> = None;
+    for m in &g.members {
+        match stat.clone().resolve(g.actual_space_id, *m).await {
+            Ok((value, _)) => {
+                let v = value.as_f64();
+                slowest = Some(slowest.map_or(v, |s: f64| s.min(v)));
+            }
+            Err(e) => tracing::warn!(user = m, error = %e, "activity: vitesse non calculée"),
+        }
+    }
+    Ok(slowest.filter(|v| v.is_finite() && *v >= 0.0))
+}
+
+/// Nom du personnage d'un joueur, sinon sa mention.
+async fn character_name(universe_id: mongodb::bson::oid::ObjectId, user_id: u64) -> ApiResult<String> {
+    Ok(crate::database::characters::get_character_by_user_id(universe_id, user_id).await?.map(|c| c.name).unwrap_or_else(|| format!("<@{user_id}>")))
+}
+
 async fn travel_state(s: &Session, result: Option<&'static str>) -> ApiResult<Json<TravelStateDto>> {
     let now = now_secs();
-    let group = get_group_of_user(s.universe()?, s.user_id).await?;
-    let (location, travel, group_members) = group_state(s.universe()?, group.as_ref(), now).await?;
+    let universe_id = s.universe()?;
+    let group = get_group_of_user(universe_id, s.user_id).await?;
+    let (location, travel, group_members) = group_state(universe_id, group.as_ref(), now).await?;
+    let mut group_names = Vec::with_capacity(group_members.len());
+    for m in group.iter().flat_map(|g| g.members.iter()) {
+        group_names.push(character_name(universe_id, *m).await?);
+    }
+    let mut nearby = Vec::new();
+    if let Some(mine) = &group {
+        let all = crate::activity::admin_panel::groups_of(universe_id).await?;
+        for g in crate::activity::group_invites::nearby(mine, &all) {
+            let mut members = Vec::new();
+            for m in &g.members {
+                members.push(MemberDto { user_id: m.to_string(), name: character_name(universe_id, *m).await? });
+            }
+            nearby.push(NearbyGroupDto { leader_id: g.members[0].to_string(), members, moving: g.is_in_move });
+        }
+    }
+    // En route, la vitesse de l'étape en cours ; sinon, celle qu'aurait le groupe en partant.
+    let group_speed_kmh = match &group {
+        Some(g) if g.is_in_move && g.modified_speed > 0.0 => Some(g.modified_speed),
+        Some(g) => group_speed(universe_id, g).await?,
+        None => None,
+    };
+    let mut invites = Vec::new();
+    for i in crate::activity::group_invites::pending(universe_id, s.user_id, now) {
+        invites.push(InviteDto {
+            from_user_id: i.from.to_string(),
+            from_name: character_name(universe_id, i.from).await?,
+            expires_at: i.at + crate::activity::group_invites::INVITE_TTL_SECS,
+        });
+    }
     let destinations = match &group {
         Some(_) => crate::travel::service::destinations(s.guild_id, s.user_id)
             .await
@@ -608,7 +793,7 @@ async fn travel_state(s: &Session, result: Option<&'static str>) -> ApiResult<Js
             .collect(),
         None => vec![],
     };
-    Ok(Json(TravelStateDto { location, travel, group_members, destinations, result, server_time: now }))
+    Ok(Json(TravelStateDto { location, travel, group_members, group_names, destinations, group_speed_kmh, nearby, invites, result, server_time: now }))
 }
 
 async fn me_travel(Authed(s): Authed) -> ApiResult<Json<TravelStateDto>> {
@@ -668,11 +853,246 @@ async fn travel_join(
     travel_state(&s, Some(key)).await
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InviteRequest {
+    user_id: String,
+}
+
+/// « Créer un groupe » : invite un joueur à la même position à rejoindre son groupe.
+async fn travel_invite(
+    State(state): State<AppState>,
+    Authed(s): Authed,
+    body: Result<Json<InviteRequest>, axum::extract::rejection::JsonRejection>,
+) -> ApiResult<Json<TravelStateDto>> {
+    let req = json_body(body)?;
+    let target = parse_snowflake(&req.user_id)?;
+    state.write_limiter.check(&format!("user:{}", s.user_id)).map_err(ApiError::too_many)?;
+    let universe_id = s.universe()?;
+    if target == s.user_id {
+        return Err(ApiError::new(StatusCode::CONFLICT, "travel__cannot_join_self"));
+    }
+    let mine = get_group_of_user(universe_id, s.user_id).await?.ok_or_else(|| ApiError::not_found("travel__character_not_found"))?;
+    let theirs = get_group_of_user(universe_id, target).await?.ok_or_else(|| ApiError::not_found("travel__target_not_found"))?;
+    if mine._id == theirs._id {
+        return Err(ApiError::new(StatusCode::CONFLICT, "travel__already_in_same_group"));
+    }
+    if !crate::activity::group_invites::same_spot(&mine, &theirs) {
+        return Err(ApiError::new(StatusCode::CONFLICT, "travel__too_far_different_place"));
+    }
+    crate::activity::group_invites::invite(universe_id, s.user_id, target, now_secs());
+    // L'invité relit son état de voyage : l'invitation apparaît dans sa fenêtre.
+    state.hub.publish(crate::activity::events::Event { kind: crate::activity::events::EventKind::TravelUpdated, universe_id: Some(universe_id), users: vec![target] });
+    travel_state(&s, Some("activity__group_invite_sent")).await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InviteAnswer {
+    from_user_id: String,
+}
+
+/// Accepter une invitation : rejoindre le groupe de l'invitant (service de `/travel_join`).
+async fn travel_invite_accept(
+    State(state): State<AppState>,
+    Authed(s): Authed,
+    body: Result<Json<InviteAnswer>, axum::extract::rejection::JsonRejection>,
+) -> ApiResult<Json<TravelStateDto>> {
+    let req = json_body(body)?;
+    let from = parse_snowflake(&req.from_user_id)?;
+    let universe_id = s.universe()?;
+    let _guard = ActionGuard::acquire(&state, s.user_id)?;
+    if !crate::activity::group_invites::take(universe_id, from, s.user_id, now_secs()) {
+        return Err(ApiError::not_found("activity__group_invite_not_found"));
+    }
+    let http = bot_http(&state)?;
+    let fallback = format!("<@{from}>");
+    let key = crate::travel::service::join(&http, s.guild_id, actor(&s), from, &fallback, Announce::AtPosition)
+        .await
+        .map_err(|e| service_error(&e))?;
+    travel_state(&s, Some(key)).await
+}
+
+async fn travel_invite_decline(
+    Authed(s): Authed,
+    body: Result<Json<InviteAnswer>, axum::extract::rejection::JsonRejection>,
+) -> ApiResult<Json<TravelStateDto>> {
+    let req = json_body(body)?;
+    let from = parse_snowflake(&req.from_user_id)?;
+    crate::activity::group_invites::take(s.universe()?, from, s.user_id, now_secs());
+    travel_state(&s, Some("activity__group_invite_declined")).await
+}
+
 async fn travel_leave(State(state): State<AppState>, Authed(s): Authed) -> ApiResult<Json<TravelStateDto>> {
     let _guard = ActionGuard::acquire(&state, s.user_id)?;
     let http = bot_http(&state)?;
     let key = crate::travel::service::leave(&http, s.guild_id, actor(&s), Announce::AtPosition).await.map_err(|e| service_error(&e))?;
     travel_state(&s, Some(key)).await
+}
+
+// ---------------------------------------------------------------------------
+// Inventaire, recettes, craft et farm : mêmes services que les commandes slash
+// (`craft::service`, `loot::service`). Voyage, craft et farm s'excluent côté serveur
+// (`occupation`) ; l'interface ne fait que le refléter.
+// ---------------------------------------------------------------------------
+
+use crate::activity::craft_view::{self, CraftStateDto, FarmStateDto, InventoryDto, LootedDto, RecipeBookDto};
+use crate::craft::logic::MAX_CRAFT_QUANTITY;
+use crate::craft::service::{RecipeRef, ToolSpot};
+use crate::loot::service::{FarmOutcome, FarmSpot, LootLine};
+
+/// `ObjectId` transmis en chaîne : exactement 24 chiffres hexadécimaux.
+pub fn parse_object_id(s: &str) -> ApiResult<mongodb::bson::oid::ObjectId> {
+    if s.len() != 24 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(ApiError::bad_request("activity__invalid_request"));
+    }
+    mongodb::bson::oid::ObjectId::parse_str(s).map_err(|_| ApiError::bad_request("activity__invalid_request"))
+}
+
+/// Personnage de la session et son inventaire (lignes non vides).
+async fn my_inventory(s: &Session) -> ApiResult<(crate::database::characters::Character, Vec<crate::database::inventory::Inventory>)> {
+    let character = crate::database::characters::get_character_by_user_id(s.universe()?, s.user_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("activity__no_character"))?;
+    let inventory = crate::database::inventory::Inventory::get_by_character_id(s.universe()?, character._id).await?;
+    Ok((character, inventory))
+}
+
+async fn me_inventory(Authed(s): Authed) -> ApiResult<Json<InventoryDto>> {
+    let (_, inventory) = my_inventory(&s).await?;
+    let items = crate::database::items::get_items_by_universe(s.universe()?).await?;
+    let universe = crate::database::universe::get_universe_by_id(s.universe()?).await?.ok_or_else(|| ApiError::not_found("activity__universe_not_found"))?;
+    let stats: Vec<Stat> = universe.get_stats().await?.try_collect().await?;
+    Ok(Json(InventoryDto { items: craft_view::inventory_cards(&inventory, &items, &stats), server_time: now_secs() }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UseItemRequest {
+    item_id: String,
+}
+
+/// Consommer un objet de son inventaire (service partagé avec `/consume`) : effets appliqués
+/// tout de suite, vitesse d'un groupe en route recalculée. Renvoie l'inventaire à jour.
+async fn inventory_use(
+    State(state): State<AppState>,
+    Authed(s): Authed,
+    body: Result<Json<UseItemRequest>, axum::extract::rejection::JsonRejection>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let req = json_body(body)?;
+    let item_id = mongodb::bson::oid::ObjectId::parse_str(&req.item_id).map_err(|_| ApiError::bad_request("activity__invalid_request"))?;
+    let _guard = ActionGuard::acquire(&state, s.user_id)?;
+    let name = crate::item::service::consume_item(s.universe()?, s.user_id, item_id).await.map_err(|e| service_error(&e))?;
+    let Json(inventory) = me_inventory(Authed(s)).await?;
+    Ok(Json(serde_json::json!({ "inventory": inventory, "result": "activity__item_used", "item_name": name })))
+}
+
+async fn me_recipes(Authed(s): Authed) -> ApiResult<Json<RecipeBookDto>> {
+    let (_, inventory) = my_inventory(&s).await?;
+    let tools = crate::craft::service::available_tools(s.universe()?, s.user_id, &inventory, ToolSpot::Position)
+        .await
+        .map_err(|e| service_error(&e))?;
+    let recipes = crate::database::recipe::Recipe::get_by_universe(s.universe()?).await?;
+    let names = crate::database::items::get_items_by_universe(s.universe()?).await?.into_iter().map(|i| (i._id, i.item_name)).collect();
+    let stock = crate::craft::service::stock_of(&inventory);
+    Ok(Json(RecipeBookDto { recipes: craft_view::recipe_book(&recipes, &names, &stock, &tools), max_quantity: MAX_CRAFT_QUANTITY, server_time: now_secs() }))
+}
+
+async fn craft_state(s: &Session, result: Option<&'static str>, stopped: Option<(u64, u64)>) -> ApiResult<Json<CraftStateDto>> {
+    let now = now_secs();
+    let craft = match crate::database::craft::PlayerCraft::get_by_user_id(s.universe()?, s.user_id).await? {
+        Some(c) => {
+            let name = crate::database::recipe::Recipe::get_by_id(s.universe()?, c.recipe_id).await?.map(|r| r.recipe_name);
+            Some(craft_view::craft_view(&c, name, now))
+        }
+        None => None,
+    };
+    Ok(Json(CraftStateDto { craft, result, delivered: stopped.map(|s| s.0), refunded: stopped.map(|s| s.1), server_time: now }))
+}
+
+async fn me_craft(Authed(s): Authed) -> ApiResult<Json<CraftStateDto>> {
+    craft_state(&s, None, None).await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CraftStartRequest {
+    recipe_id: String,
+    quantity: u64,
+}
+
+async fn craft_start(
+    State(state): State<AppState>,
+    Authed(s): Authed,
+    body: Result<Json<CraftStartRequest>, axum::extract::rejection::JsonRejection>,
+) -> ApiResult<Json<CraftStateDto>> {
+    let req = json_body(body)?;
+    let recipe_id = parse_object_id(&req.recipe_id)?;
+    if !(1..=MAX_CRAFT_QUANTITY).contains(&req.quantity) {
+        return Err(ApiError::bad_request("activity__invalid_request"));
+    }
+    let _guard = ActionGuard::acquire(&state, s.user_id)?;
+    let http = bot_http(&state)?;
+    let started = crate::craft::service::start(&http, s.guild_id, s.user_id, RecipeRef::Id(recipe_id), req.quantity, ToolSpot::Position)
+        .await
+        .map_err(|e| service_error(&e))?;
+    let key = if started.delay > 0 { "recipe__craft_started" } else { "recipe__craft_success" };
+    craft_state(&s, Some(key), None).await
+}
+
+async fn craft_stop(State(state): State<AppState>, Authed(s): Authed) -> ApiResult<Json<CraftStateDto>> {
+    let _guard = ActionGuard::acquire(&state, s.user_id)?;
+    let stopped = crate::craft::service::stop(s.guild_id, s.user_id).await.map_err(|e| service_error(&e))?;
+    craft_state(&s, Some("recipe__craft_stopped"), Some((stopped.delivered, stopped.refunded))).await
+}
+
+async fn farm_state(s: &Session) -> ApiResult<FarmStateDto> {
+    let farm = crate::database::loot::PlayerLoot::get_by_user_id(s.universe()?, s.user_id).await?;
+    let now = now_secs();
+    let finished = crate::activity::farm_results::recent(s.universe()?, s.user_id, now).map(|f| craft_view::FinishedFarmDto {
+        at: f.at,
+        items: f.items.into_iter().map(|(name, quantity)| craft_view::LootedDto { name, quantity, unknown: false }).collect(),
+    });
+    Ok(FarmStateDto { farm: farm.as_ref().map(craft_view::farm_view), result: None, looted: vec![], finished, cooldown_secs: None, server_time: now })
+}
+
+async fn me_farm(Authed(s): Authed) -> ApiResult<Json<FarmStateDto>> {
+    farm_state(&s).await.map(Json)
+}
+
+async fn farm_start(State(state): State<AppState>, Authed(s): Authed) -> ApiResult<Json<FarmStateDto>> {
+    let _guard = ActionGuard::acquire(&state, s.user_id)?;
+    let http = bot_http(&state)?;
+    let outcome = crate::loot::service::start(&http, s.guild_id, s.user_id, s.locale, FarmSpot::Position).await.map_err(|e| service_error(&e))?;
+    let mut dto = farm_state(&s).await?;
+    match outcome {
+        FarmOutcome::Started { .. } => dto.result = Some("loot_table__loot_started"),
+        FarmOutcome::RateLimited { remaining_secs } => {
+            dto.result = Some("loot_table__rate_limited");
+            dto.cooldown_secs = Some(remaining_secs);
+        }
+        FarmOutcome::Looted(lines) => {
+            dto.result = Some("loot_table__loot_success");
+            dto.looted = lines
+                .into_iter()
+                .map(|line| match line {
+                    LootLine::Given { item_name, quantity, .. } | LootLine::DatabaseError { item_name, quantity, .. } => {
+                        LootedDto { name: item_name, quantity, unknown: false }
+                    }
+                    LootLine::UnknownItem { item_name, quantity } => LootedDto { name: item_name, quantity, unknown: true },
+                })
+                .collect();
+        }
+    }
+    Ok(Json(dto))
+}
+
+async fn farm_stop(State(state): State<AppState>, Authed(s): Authed) -> ApiResult<Json<FarmStateDto>> {
+    let _guard = ActionGuard::acquire(&state, s.user_id)?;
+    crate::loot::service::stop(s.guild_id, s.user_id).await.map_err(|e| service_error(&e))?;
+    let mut dto = farm_state(&s).await?;
+    dto.result = Some("loot_table__stopped");
+    Ok(Json(dto))
 }
 
 // ---------------------------------------------------------------------------
@@ -873,6 +1293,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn api_responses_are_gzipped_when_asked_but_never_audio() {
+        let (app, _) = app_with(Arc::default());
+        let res = app.clone().oneshot(Request::get("/api/i18n/fr").header("accept-encoding", "gzip").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(res.headers().get("content-encoding").map(|v| v.to_str().unwrap()), Some("gzip"));
+        let plain = app.clone().oneshot(Request::get("/api/i18n/fr").body(Body::empty()).unwrap()).await.unwrap();
+        assert!(plain.headers().get("content-encoding").is_none(), "only when the client accepts it");
+        // L'audio (lu par plages) n'est jamais compressé.
+        use tower::ServiceExt as _;
+        let audio = axum::Router::new()
+            .route("/a", axum::routing::get(|| async { ([(header::CONTENT_TYPE, "audio/mpeg")], vec![0u8; 4096]) }))
+            .layer(api_compression());
+        let res = audio.oneshot(Request::get("/a").header("accept-encoding", "gzip").body(Body::empty()).unwrap()).await.unwrap();
+        assert!(res.headers().get("content-encoding").is_none());
+    }
+
+    #[tokio::test]
     async fn i18n_serves_whitelisted_locales_only() {
         let (app, _) = app_with(Arc::default());
         let res = app.clone().oneshot(Request::get("/api/i18n/fr").body(Body::empty()).unwrap()).await.unwrap();
@@ -1010,6 +1446,14 @@ mod tests {
             ("POST", "/api/me/travel/stop"),
             ("POST", "/api/me/travel/join"),
             ("POST", "/api/me/travel/leave"),
+            ("GET", "/api/me/inventory"),
+            ("GET", "/api/me/recipes"),
+            ("GET", "/api/me/craft"),
+            ("POST", "/api/me/craft/start"),
+            ("POST", "/api/me/craft/stop"),
+            ("GET", "/api/me/farm"),
+            ("POST", "/api/me/farm/start"),
+            ("POST", "/api/me/farm/stop"),
         ] {
             let req = Request::builder().method(method).uri(uri).body(Body::empty()).unwrap();
             assert_eq!(call(app.clone(), req).await.0, StatusCode::UNAUTHORIZED, "{method} {uri}");
@@ -1028,6 +1472,12 @@ mod tests {
             ("/api/me/travel/start", r#"{"destination_id":"123456789012345678901"}"#),
             ("/api/me/travel/start", r#"{"destination_id":12}"#),
             ("/api/me/travel/join", r#"{"target_user_id":"-1"}"#),
+            ("/api/me/craft/start", r#"{"recipe_id":"zz","quantity":1}"#),
+            ("/api/me/craft/start", r#"{"recipe_id":"0123456789abcdef01234567"}"#),
+            ("/api/me/craft/start", r#"{"recipe_id":"0123456789abcdef01234567","quantity":0}"#),
+            ("/api/me/craft/start", r#"{"recipe_id":"0123456789abcdef01234567","quantity":1000}"#),
+            ("/api/me/craft/start", r#"{"recipe_id":"0123456789abcdef01234567","quantity":-1}"#),
+            ("/api/me/craft/start", r#"{"recipe_id":"0123456789abcdef01234567","quantity":1,"extra":true}"#),
         ] {
             let (st, b, _) = call(app.clone(), authed("POST", uri, &token, Some(body))).await;
             assert_eq!(st, StatusCode::BAD_REQUEST, "{uri} {body}");
@@ -1077,6 +1527,25 @@ mod tests {
         assert_eq!(universe_clock(&u), json!({"origin": 1_700_000_000u64, "phase_duration_secs": 10_800u64}));
         u.global_time_modifier = 0;
         assert_eq!(universe_clock(&u), serde_json::Value::Null, "time stopped");
+    }
+
+    #[tokio::test]
+    async fn craft_and_farm_actions_without_the_bot_client_are_a_502() {
+        let (app, state) = app_with(Arc::default());
+        let token = state.sessions.create(test_session(8));
+        for (uri, body) in [("/api/me/craft/start", Some(r#"{"recipe_id":"0123456789abcdef01234567","quantity":2}"#)), ("/api/me/farm/start", None)] {
+            let (st, b, _) = call(app.clone(), authed("POST", uri, &token, body)).await;
+            assert_eq!((st, b["error"].as_str()), (StatusCode::BAD_GATEWAY, Some("activity__discord_unavailable")), "{uri}");
+        }
+        assert!(state.actions_in_flight.lock().unwrap().is_empty(), "the guard is released");
+    }
+
+    #[test]
+    fn object_ids_are_parsed_strictly() {
+        assert!(parse_object_id("0123456789abcdef01234567").is_ok());
+        for bad in ["", "0123456789abcdef0123456", "0123456789abcdef012345678", "0123456789abcdef0123456g", " 123456789abcdef01234567"] {
+            assert!(parse_object_id(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]
@@ -1173,7 +1642,8 @@ mod tests {
     }
 
     /// E8, bout en bout contre MongoDB : sous brouillard, un joueur ne reçoit que ce qu'il a
-    /// découvert (ni lieu lointain, ni image de fond) ; un modérateur voit tout ; seul le
+    /// découvert (ni lieu lointain, ni image de fond) ; un modérateur ou un administrateur voit
+    /// comme lui hors du mode admin, et tout en mode admin ; seul le
     /// créateur peut couper le brouillard, et la carte redevient alors entière.
     #[test]
     #[ignore = "integration test: needs a running MongoDB (MONGODB_* env vars); run with --ignored"]
@@ -1192,7 +1662,7 @@ mod tests {
             universe.insert_universe().await.unwrap();
             let (a, b, c, d) = (random_id(), random_id(), random_id(), random_id());
             for (id, name) in [(a, "A"), (b, "B"), (c, "C"), (d, "D")] {
-                Place { _id: ObjectId::new(), universe_id, server_id: 1, category_id: id, role: 1, name: name.into(), modifiers: vec![], central_channel_id: None }.insert().await.unwrap();
+                Place { _id: ObjectId::new(), universe_id, server_id: 1, category_id: id, role: 1, name: name.into(), modifiers: vec![], central_channel_id: None, wiki: Default::default() }.insert().await.unwrap();
             }
             for (x, y) in [(a, b), (b, c), (c, d)] {
                 crate::travel::service::tests_support_road(universe_id, random_id(), x, y, false).insert().await.unwrap();
@@ -1211,12 +1681,33 @@ mod tests {
                 n
             };
 
-            let (st, full, _) = call(app.clone(), authed("GET", "/api/map", &moderator, None)).await;
+            let admin = state.sessions.create(session(4, AccessLevel::Admin));
+            let (st, full, _) = call(app.clone(), authed("GET", "/api/map?view=admin", &moderator, None)).await;
             assert_eq!(st, StatusCode::OK);
-            assert_eq!(names(&full), vec!["A", "B", "C", "D"], "a moderator sees everything");
+            assert_eq!(names(&full), vec!["A", "B", "C", "D"], "a moderator in admin mode sees everything");
             assert!(full["fog"].is_null());
             let png = crate::database::map_backgrounds::tests::png(30, 20);
             let bg = crate::database::map_backgrounds::set_map_background(universe_id, &png).await.unwrap();
+
+            // Hors du mode admin, un modérateur ou un administrateur voit comme un joueur (sans
+            // groupe : rien n'est découvert). Un joueur qui demande la vue admin n'obtient rien de plus.
+            for (who, token) in [("moderator", &moderator), ("admin", &admin)] {
+                let (_, as_player, _) = call(app.clone(), authed("GET", "/api/map", token, None)).await;
+                assert!(as_player["fog"].is_object(), "{who} outside admin mode is under fog");
+                assert!(names(&as_player).is_empty(), "{who} has discovered nothing");
+                let (st, _, _) = call(app.clone(), authed("GET", "/api/map/background", token, None)).await;
+                assert_eq!(st, StatusCode::NOT_FOUND, "{who} outside admin mode");
+            }
+            let (_, admin_view, _) = call(app.clone(), authed("GET", "/api/map?view=admin", &admin, None)).await;
+            assert_eq!(names(&admin_view), vec!["A", "B", "C", "D"]);
+            let bg_url = admin_view["background"]["url"].as_str().unwrap().to_string();
+            assert!(bg_url.ends_with("&view=admin"), "{bg_url}");
+            let (st, _, _) = call(app.clone(), authed("GET", &bg_url, &admin, None)).await;
+            assert_eq!(st, StatusCode::OK, "the background in admin mode");
+            let (_, cheat, _) = call(app.clone(), authed("GET", "/api/map?view=admin", &player, None)).await;
+            assert_eq!(names(&cheat), vec!["A", "B"], "a player asking for the admin view stays under fog");
+            let (st, _, _) = call(app.clone(), authed("GET", "/api/map/background?view=admin", &player, None)).await;
+            assert_eq!(st, StatusCode::NOT_FOUND);
 
             let (_, fogged, _) = call(app.clone(), authed("GET", "/api/map", &player, None)).await;
             assert_eq!(names(&fogged), vec!["A", "B"], "here and the next place only");
@@ -1225,7 +1716,7 @@ mod tests {
             assert!(fogged["background"].is_null());
             let (st, _, _) = call(app.clone(), authed("GET", "/api/map/background", &player, None)).await;
             assert_eq!(st, StatusCode::NOT_FOUND, "the whole image would reveal the map");
-            let (st, _, _) = call(app.clone(), authed("GET", "/api/map/background", &moderator, None)).await;
+            let (st, _, _) = call(app.clone(), authed("GET", "/api/map/background?view=admin", &moderator, None)).await;
             assert_eq!(st, StatusCode::OK);
 
             // Seul le créateur décide (I17).
@@ -1261,7 +1752,7 @@ mod tests {
             let user = random_id();
             let (a, b, c) = (random_id(), random_id(), random_id());
             for (id, name) in [(a, "A"), (b, "B"), (c, "C")] {
-                Place { _id: ObjectId::new(), universe_id, server_id: 1, category_id: id, role: 1, name: name.into(), modifiers: vec![], central_channel_id: None }.insert().await.unwrap();
+                Place { _id: ObjectId::new(), universe_id, server_id: 1, category_id: id, role: 1, name: name.into(), modifiers: vec![], central_channel_id: None, wiki: Default::default() }.insert().await.unwrap();
             }
             let (public, secret) = (random_id(), random_id());
             crate::travel::service::tests_support_road(universe_id, public, a, b, false).insert().await.unwrap();

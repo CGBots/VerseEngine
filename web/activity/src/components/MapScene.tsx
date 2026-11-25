@@ -16,6 +16,8 @@ const ABOVE_FOG = FOG_ORDER + 1;
 /** Hauteur de la brume (unités de scène), juste au-dessus de la mer. */
 const FOG_HEIGHT = 0.5;
 
+import type { OtherGroup } from '../map/motion';
+
 interface Props {
   map: MapView;
   currentPlaceId: string | null;
@@ -24,6 +26,8 @@ interface Props {
   playerPicture: string | null;
   playerName: string;
   onSelectPlace: (id: string) => void;
+  /** Autres groupes (mode spectateur). */
+  others?: OtherGroup[];
 }
 
 /** Relief de la carte : heightmap Azgaar si présente, sinon terrain généré ; aplani sous la brume. */
@@ -245,7 +249,7 @@ function Player({ map, hm, motion, picture, name }: { map: MapView; hm: Heightma
   );
 }
 
-export function MapScene({ map, currentPlaceId, reachable, motion, playerPicture, playerName, onSelectPlace }: Props) {
+export function MapScene({ map, currentPlaceId, reachable, motion, playerPicture, playerName, onSelectPlace, others }: Props) {
   const hm = useHeightmap(map);
   const scale = useMemo(() => markerScale(map), [map]);
   // Brume au ras de la mer : le relief est aplani sous elle (`useHeightmap`), les collines
@@ -282,6 +286,7 @@ export function MapScene({ map, currentPlaceId, reachable, motion, playerPicture
         return <Place key={p.id} x={s.x} y={elevation(hm, map, p.x, p.y)} z={s.z} name={p.name} color={color} aboveFog={!!map.fog} scale={scale} onClick={() => onSelectPlace(p.id)} />;
       })}
       {motion && <Player map={map} hm={hm} motion={motion} picture={playerPicture} name={playerName} />}
+      {others?.map((o) => <Player key={o.key} map={map} hm={hm} motion={o.motion} picture={null} name={o.name} />)}
       {/* Brouillard (E8) : au-dessus du plus haut relief. */}
       {map.fog && <FogLayer map={map} height={fogHeight} />}
     </Canvas>

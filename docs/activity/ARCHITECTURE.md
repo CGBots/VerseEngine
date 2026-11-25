@@ -85,7 +85,7 @@ Conventions :
 | POST | `/api/auth/token` | a | `{code, instance_id}` → `{access_token, session_token, expires_in, user, universe, is_admin}` |
 | GET | `/api/me` | a | session courante : utilisateur, univers, serveur, droits |
 | GET | `/api/me/character` | a | personnage : nom, description, image, stats résolues (dont vitesse), modificateurs actifs, position/voyage |
-| GET | `/api/map` | b | lieux (+ positions), routes non secrètes (+ route courante si secrète), source du placement, terrain éventuel |
+| GET | `/api/map` | b | lieux (+ positions, icône du bourg `burg`), routes non secrètes (+ route courante si secrète), source du placement, terrain éventuel, rendu façon Azgaar `style` ; `?view=admin` : toute la carte, seulement pour une session qui a droit au mode admin |
 | GET | `/api/me/travel` | b | état du voyage : `step_end_timestamp`, `eta_timestamp`, distance restante, vitesse, membres |
 | POST | `/api/me/travel/start` | b | `{destination_id}` → même service que `/travel_start` |
 | POST | `/api/me/travel/stop` | b | même service que l'arrêt de `/travel_start` (chef de groupe) |
@@ -106,7 +106,15 @@ Conventions :
 | POST | `/api/admin/import/plan` | d | aperçu de l'import |
 | POST | `/api/admin/import/execute` | d | création, après saisie du nom de l'univers |
 | GET | `/api/admin/import/jobs/{id}` | d | progression d'un import |
+| GET · POST | `/api/admin/players` · `/api/admin/teleport` | d | joueurs de l'univers et leur position ; téléportation d'un ou plusieurs joueurs (même service que `/teleport`, `teleport/service.rs`) — modérateur ou admin |
+| GET · POST · PUT · DELETE | `/api/admin/items[/{id}]` | d | objets de l'univers (mêmes services que `/item create` et `/item delete`, `item/service.rs`) — lecture : modérateur ; écriture : admin |
+| GET · POST · PUT · DELETE | `/api/admin/recipes[/{id}]` | d | recettes de l'univers (même service que `/recipe create`, `recipe/service.rs`, post wiki compris) — lecture : modérateur ; écriture : admin |
 | — | `/api/admin/*` | d | lieux, objets, fiches en attente, logs, positions des joueurs |
+| GET | `/api/admin/places/{id}` | d | fiche d'un lieu (clic en mode admin) : salons, bourg Azgaar, routes, joueurs présents, texte, posts du wiki ; modérateur ou admin |
+| PUT | `/api/admin/places/{id}/description` | d | `{description}` (4000 caractères au plus) : texte de la fiche, admin seulement |
+| POST | `/api/admin/places/{id}/publish` | d | publie le texte enregistré dans le forum wiki de chaque serveur (post créé, mis à jour ou recréé), compte rendu par serveur ; admin |
+| GET · PUT | `/api/admin/places/{id}/loot?target=category\|central` | d | table de butin de la catégorie ou du salon central, éditeur structuré (même enregistrement que `/loot_table edit`) ; écriture admin |
+| GET | `/api/places/{id}/lore` | d | joueur : dernier texte publié d'un lieu découvert (brouillard respecté, rien de la table de butin) |
 
 Validation des entrées : désérialisation stricte (`deny_unknown_fields`), ids parsés (`u64`/`ObjectId`) avant tout accès base, longueurs bornées (noms ≤ 100, descriptions ≤ 4000), corps limité à 64 Kio (import Azgaar : route admin dédiée à 32 Mio, traitée en flux).
 

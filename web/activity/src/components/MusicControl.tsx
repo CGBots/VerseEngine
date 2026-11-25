@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { clampDock, loadDock, saveDock, snapDock, type DockPos } from '../music/dock';
 import { musicApi } from '../api';
 import type { Translator } from '../i18n';
 import { MusicPlayer, type PlayerState } from '../music/player';
 import { loadSettings, saveSettings, type MusicSettings } from '../music/settings';
 import { MusicIcon, MutedIcon, SpeakerIcon } from './icons/Icons';
 import { YouTubeFrame, type VideoController } from './YouTubeFrame';
-import { command } from '../music/youtubeEmbed';
+import { command, insideDiscord } from '../music/youtubeEmbed';
 
 interface Props {
   t: Translator;
@@ -23,6 +24,48 @@ export function MusicControl({ t, version }: Props) {
   // Volume du lecteur YouTube, transmis par messages une fois le lecteur prêt.
   const video = useRef<VideoController>({ volume: 0, post: null });
   const [settings, setSettings] = useState<MusicSettings>(loadSettings);
+  // Lecteur flottant : déplacé par sa poignée, aimanté aux bords de la carte.
+  const dock = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<DockPos | null>(loadDock);
+  const drag = useRef<{ dx: number; dy: number; id: number } | null>(null);
+  const bounds = () => {
+    const el = dock.current;
+    const parent = el?.offsetParent as HTMLElement | null;
+    return el && parent ? { w: el.offsetWidth, h: el.offsetHeight, W: parent.clientWidth, H: parent.clientHeight } : null;
+  };
+  // Carte redimensionnée (rotation, volet) : le lecteur reste dedans.
+  useLayoutEffect(() => {
+    const parent = dock.current?.offsetParent as HTMLElement | null;
+    if (!parent || !pos) return;
+    const ro = new ResizeObserver(() => {
+      const b = bounds();
+      if (b) setPos((p) => (p ? clampDock(p, b.w, b.h, b.W, b.H) : p));
+    });
+    ro.observe(parent);
+    return () => ro.disconnect();
+  }, [pos === null]);
+  const onGripDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const el = dock.current;
+    if (!el) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { dx: e.clientX - el.offsetLeft, dy: e.clientY - el.offsetTop, id: e.pointerId };
+  };
+  const onGripMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const d = drag.current;
+    const b = bounds();
+    if (!d || d.id !== e.pointerId || !b) return;
+    setPos(clampDock({ x: e.clientX - d.dx, y: e.clientY - d.dy }, b.w, b.h, b.W, b.H));
+  };
+  const onGripUp = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const d = drag.current;
+    drag.current = null;
+    const b = bounds();
+    if (!d || d.id !== e.pointerId || !b || !pos) return;
+    const snapped = snapDock(pos, b.w, b.h, b.W, b.H);
+    setPos(snapped);
+    saveDock(snapped);
+  };
 
   useEffect(() => {
     const p = new MusicPlayer(
@@ -43,6 +86,9 @@ export function MusicControl({ t, version }: Props) {
         },
       },
     );
+    // Dans Discord, le lecteur YouTube ne peut pas jouer (la sécurité de Discord bloque les
+    // serveurs de YouTube) : les vidéos sont sautées d'emblée, seuls les fichiers audio jouent.
+    if (insideDiscord(window.location.hostname)) p.videoFailed();
     player.current = p;
     return () => {
       p.dispose();
@@ -73,8 +119,29 @@ export function MusicControl({ t, version }: Props) {
 
   if (!state.title && !state.hasVideos) return null;
   return (
-    <div className="music-dock">
+    <div
+      ref={dock}
+      className={`music-dock${pos ? ' placed' : ''}`}
+      style={pos ? { left: pos.x, top: pos.y } : undefined}
+    >
     <div className="music-control" role="group" aria-label={t('activity_ui__music')}>
+      <button
+        type="button"
+        className="icon-button music-grip"
+        aria-label={t('activity_ui__music_move')}
+        title={t('activity_ui__music_move')}
+        onPointerDown={onGripDown}
+        onPointerMove={onGripMove}
+        onPointerUp={onGripUp}
+        onPointerCancel={onGripUp}
+        onDoubleClick={() => {
+          // Double clic : retour à la place par défaut.
+          setPos(null);
+          try { localStorage.removeItem('ve.music.dock'); } catch { /* rien à oublier */ }
+        }}
+      >
+        ⠿
+      </button>
       {state.blocked ? (
         <button type="button" className="small" onClick={() => player.current?.unlock()}>
           <MusicIcon size={16} /> {t('activity_ui__music_enable')}

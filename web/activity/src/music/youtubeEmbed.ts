@@ -13,7 +13,16 @@ export const PLAYER_SIZE = 200;
  * directe.
  */
 export function embedBase(hostname: string): string {
-  return hostname.endsWith('.discordsays.com') ? '/.proxy/youtube' : 'https://www.youtube-nocookie.com';
+  return insideDiscord(hostname) ? '/.proxy/youtube' : 'https://www.youtube-nocookie.com';
+}
+
+/**
+ * L'activité tourne-t-elle dans Discord ? Le lecteur YouTube n'y joue pas : la page passe par le
+ * proxy de Discord, qui bloque les serveurs de flux de YouTube (`*.googlevideo.com`) et sert mal
+ * les scripts du lecteur (chemins absolus `/s/…`). Les vidéos y sont donc sautées.
+ */
+export function insideDiscord(hostname: string): boolean {
+  return hostname.endsWith('.discordsays.com');
 }
 
 export function embedUrl(base: string, videoId: string, origin: string): string {

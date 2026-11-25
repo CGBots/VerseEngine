@@ -68,6 +68,7 @@ async fn finalize_loot(mut loot: PlayerLoot, is_late: bool) -> Result<(), crate:
     };
 
     let mut inventory_ids = Vec::new();
+    let mut given: Vec<(String, u64)> = Vec::new();
 
     let client = get_db_client().await;
     let mut session = client.start_session().await?;
@@ -86,6 +87,7 @@ async fn finalize_loot(mut loot: PlayerLoot, is_late: bool) -> Result<(), crate:
                     quantity
                 ).await?;
                 inventory_ids.push(format!("{}:{}:{}", inv_id.to_hex(), item_name, quantity));
+                given.push((item_name.clone(), quantity));
             }
         }
 
@@ -99,6 +101,9 @@ async fn finalize_loot(mut loot: PlayerLoot, is_late: bool) -> Result<(), crate:
     match result {
         Ok(_) => {
             session.commit_transaction().await?;
+            // Avant l'évènement : l'activité relit l'état du farm et affiche ce butin.
+            crate::activity::farm_results::record(loot.universe_id, loot.user_id, given, chrono::Utc::now().timestamp() as u64);
+            crate::activity::events::notify_player(crate::activity::events::EventKind::FarmUpdated, loot.universe_id, loot.user_id);
         }
         Err(e) => {
             session.abort_transaction().await?;
@@ -260,6 +265,7 @@ pub async fn add_loot(http: Arc<Http>, player_loot: PlayerLoot) -> Result<(), cr
 
     // Ne repousse jamais un réveil plus proche déjà prévu pour un autre loot.
     LOOT_TIMER.schedule(player_loot.end_timestamp.saturating_sub(now_secs()), loot_job());
+    crate::activity::events::notify_player(crate::activity::events::EventKind::FarmUpdated, player_loot.universe_id, player_loot.user_id);
 
     Ok(())
 }
@@ -280,6 +286,9 @@ pub async fn stop_loot(universe_id: mongodb::bson::oid::ObjectId, user_id: u64) 
             let _ = loot.remove().await;
             removed_loot = Some(loot);
         }
+    }
+    if removed_loot.is_some() {
+        crate::activity::events::notify_player(crate::activity::events::EventKind::FarmUpdated, universe_id, user_id);
     }
 
     Ok(removed_loot)

@@ -13,6 +13,8 @@
 //! | 7 | hauteur de chaque cellule de la grille (`h`, 0–100, séparées par des virgules) |
 //! | 15 | bourgs (JSON, comme `pack.burgs` de l'export JSON) |
 //! | 37 | routes (JSON, comme `pack.routes`) : `points: [[x, y, cellule], …]` |
+//!
+//! Le rendu façon Azgaar (biomes, rivières, États…) lit d'autres lignes : voir `azgaar_style`.
 
 use std::io::Read;
 
@@ -120,6 +122,7 @@ pub fn parse_map_file(bytes: &[u8]) -> Result<MapFile, AzgaarError> {
     let width = size(4).unwrap_or_else(|| burgs.iter().map(|b| b.x).fold(1.0, f64::max));
     let height = size(5).unwrap_or_else(|| burgs.iter().map(|b| b.y).fold(1.0, f64::max));
     let svg = records.get(5).filter(|r| r.trim_start().starts_with("<svg")).map(|r| r.to_string());
+    let style = super::azgaar_style::build_style(&records, width, height);
 
     Ok(MapFile {
         version,
@@ -133,6 +136,7 @@ pub fn parse_map_file(bytes: &[u8]) -> Result<MapFile, AzgaarError> {
             burgs,
             cells,
             routes,
+            style,
         },
     })
 }

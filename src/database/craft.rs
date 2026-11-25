@@ -19,6 +19,20 @@ pub struct PlayerCraft {
     pub start_timestamp: u64,
     pub end_timestamp: u64,
     pub is_finished: bool,
+    /// Exemplaires fabriqués l'un après l'autre. Absent des crafts d'avant ce champ : 1.
+    #[serde(default = "one")]
+    pub quantity: u64,
+    /// Durée d'un exemplaire (s). 0 pour les crafts d'avant ce champ : déduite de start/end.
+    #[serde(default)]
+    pub unit_delay: u64,
+    /// Ingrédients consommés pour un exemplaire, copiés au départ : l'arrêt rend ce qui a été
+    /// pris, même si la recette a changé depuis. `None` pour les crafts d'avant ce champ.
+    #[serde(default)]
+    pub ingredients: Option<Vec<(u64, ObjectId)>>,
+}
+
+fn one() -> u64 {
+    1
 }
 
 impl PlayerCraft {
@@ -31,6 +45,7 @@ impl PlayerCraft {
             .await
     }
 
+    #[allow(dead_code)]
     pub async fn remove(&self) -> Result<DeleteResult, mongodb::error::Error> {
         let db_client = get_db_client().await;
         let db = db_client.database(VERSEENGINE_DB_NAME);
